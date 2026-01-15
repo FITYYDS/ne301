@@ -45,7 +45,7 @@ void HAL_UART9_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
 void HAL_UART9_ErrorCallback(UART_HandleTypeDef *huart)
 {
-    u9_rx_state = HAL_ERROR;
+    u9_rx_state = HAL_UARTEx_ReceiveToIdle_IT(&huart9, u9_rx_buf, U9_MAX_RECV_LEN);
 }
 
 int u0_module_send_func(uint8_t *buf, uint16_t len, uint32_t timeout_ms)
@@ -259,6 +259,16 @@ int u0_module_get_pir_value(uint32_t *pir_value)
 uint32_t u0_module_get_pir_value_ex(void)
 {
     return g_pir_value;
+}
+
+int u0_module_get_usbin_value(uint32_t *usbin_value)
+{
+    int ret = 0;
+
+    ret = ms_bridging_request_usbin_value(u0_handler, usbin_value);
+    if (ret != MS_BR_OK) return ret;
+
+    return ret;
 }
 
 int u0_module_get_version(ms_bridging_version_t *version)

@@ -539,8 +539,10 @@ int storage_flash_erase(uint32_t offset, size_t num_blk)
     return 0;
 }
 
-static int storage_flash_erase4K(uint32_t base, size_t offset)
+static int storage_flash_erase4K(uint32_t offset, size_t size)
 {
+    (void)size; //NVS and LFS only use 4K erase
+    
     storage_lock();
     XSPI_NOR_DisableMemoryMappedMode();
     if(offset % FS_FLASH_BLK != 0) {
@@ -549,7 +551,7 @@ static int storage_flash_erase4K(uint32_t base, size_t offset)
         return -1; 
     }
 
-    if (XSPI_NOR_Erase4K(base + offset) != 0) {
+    if (XSPI_NOR_Erase4K(offset) != 0) {
         XSPI_NOR_EnableMemoryMappedMode();
         storage_unlock();
         return -1; 

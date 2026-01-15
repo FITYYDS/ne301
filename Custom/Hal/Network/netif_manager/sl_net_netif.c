@@ -4,6 +4,7 @@
 #include "lwip/dhcp.h"
 #include "lwip/ethip6.h"
 #include "lwip/ip6_addr.h"
+#include "lwip/apps/mdns.h"
 #include "sl_wifi_callback_framework.h"
 #include "sl_net_wifi_types.h"
 #include "sl_wifi.h"
@@ -18,6 +19,7 @@
 #include "sl_net_netif.h"
 
 #define IS_TCP_IP_DUAL_MODE         1
+#define IS_ENABLE_NWP_DEBUG_PRINTS  0
 #ifdef SLI_SI91X_ENABLE_BLE
 #define IS_ENABLE_BLE               1
 #else
@@ -26,6 +28,7 @@
 
 #if IS_ENABLE_BLE
 #include "ble_config.h"
+#include "sl_rsi_ble.h"
 #include "rsi_bt_common_apis.h"
 #include "rsi_common_apis.h"
 #endif
@@ -60,6 +63,9 @@ static const sl_wifi_device_configuration_t device_configuration = {
                         SL_SI91X_TCP_IP_FEAT_EXTENSION_VALID),
                    .custom_feature_bit_map     = SL_SI91X_CUSTOM_FEAT_EXTENTION_VALID | SL_SI91X_CUSTOM_FEAT_DNS_SERVER_IN_DHCP_OFFER,
                    .ext_custom_feature_bit_map = (SL_SI91X_EXT_FEAT_LOW_POWER_MODE | SL_SI91X_EXT_FEAT_XTAL_CLK | MEMORY_CONFIG
+#if IS_ENABLE_NWP_DEBUG_PRINTS
+                    | SL_SI91X_EXT_FEAT_UART_SEL_FOR_DEBUG_PRINTS
+#endif
 #if defined(SLI_SI917) || defined(SLI_SI915)
                                                   | SL_SI91X_EXT_FEAT_FRONT_END_SWITCH_PINS_ULP_GPIO_4_5_0
 #endif
@@ -115,18 +121,14 @@ static const sl_wifi_device_configuration_t device_configuration = {
 #endif
                    .config_feature_bit_map = (SL_SI91X_FEAT_SLEEP_GPIO_SEL_BITMAP | SL_SI91X_ENABLE_ENHANCED_MAX_PSP) }
 };
-/// @brief Remote wake-up configuration
-static sl_wifi_device_configuration_t remote_wake_up_device_configuration = {
+/// @brief Remote wake-up configuration (wifi mode)
+static sl_wifi_device_configuration_t remote_wake_up_wifi_cfg = {
   .boot_option = LOAD_NWP_FW,
   .mac_address = NULL,
   .band        = SL_SI91X_WIFI_BAND_2_4GHZ,
   .region_code = SL_WIFI_REGION_US,
   .boot_config = { .oper_mode = SL_SI91X_CLIENT_MODE,
-#if IS_ENABLE_BLE
-                   .coex_mode = SL_SI91X_WLAN_BLE_MODE,
-#else
                    .coex_mode = SL_SI91X_WLAN_ONLY_MODE,
-#endif
                    .feature_bit_map =
                      (SL_SI91X_FEAT_SECURITY_OPEN | SL_SI91X_FEAT_AGGREGATION | SL_SI91X_FEAT_ULP_GPIO_BASED_HANDSHAKE
 #ifdef SLI_SI91X_MCU_INTERFACE
@@ -141,17 +143,31 @@ static sl_wifi_device_configuration_t remote_wake_up_device_configuration = {
 #if defined(SLI_SI917) || defined(SLI_SI915)
                                                   | SL_SI91X_EXT_FEAT_FRONT_END_SWITCH_PINS_ULP_GPIO_4_5_0
 #endif
-#if IS_ENABLE_BLE
-                                                  | SL_SI91X_EXT_FEAT_BT_CUSTOM_FEAT_ENABLE
-#endif
                                                   ),
-#if IS_ENABLE_BLE
-                   .bt_feature_bit_map         = (SL_SI91X_BT_RF_TYPE | SL_SI91X_ENABLE_BLE_PROTOCOL),
-#else
                    .bt_feature_bit_map         = 0,
-#endif
                    .ext_tcp_ip_feature_bit_map = (SL_SI91X_CONFIG_FEAT_EXTENTION_VALID | SL_SI91X_EXT_EMB_MQTT_ENABLE),
+                   .ble_feature_bit_map        = 0,
+                   .ble_ext_feature_bit_map    = 0,
+                   .config_feature_bit_map = (SL_SI91X_FEAT_SLEEP_GPIO_SEL_BITMAP | SL_SI91X_ENABLE_ENHANCED_MAX_PSP) }
+};
 #if IS_ENABLE_BLE
+/// @brief Remote wake-up configuration (ble mode)
+static sl_wifi_device_configuration_t remote_wake_up_ble_cfg = {
+  .boot_option = LOAD_NWP_FW,
+  .mac_address = NULL,
+  .band        = SL_SI91X_WIFI_BAND_2_4GHZ,
+  .region_code = SL_WIFI_REGION_US,
+  .boot_config = { .oper_mode = SL_SI91X_CLIENT_MODE,
+                   .coex_mode = SL_SI91X_WLAN_BLE_MODE,
+                   .feature_bit_map        = (SL_SI91X_FEAT_WPS_DISABLE | SL_SI91X_FEAT_ULP_GPIO_BASED_HANDSHAKE),
+                   .tcp_ip_feature_bit_map = (SL_SI91X_TCP_IP_FEAT_DHCPV4_CLIENT | SL_SI91X_TCP_IP_FEAT_EXTENSION_VALID),
+                   .custom_feature_bit_map = (SL_SI91X_CUSTOM_FEAT_EXTENTION_VALID),
+                   .ext_custom_feature_bit_map = (SL_SI91X_EXT_FEAT_LOW_POWER_MODE | SL_SI91X_EXT_FEAT_XTAL_CLK
+                                                  | SL_SI91X_EXT_FEAT_DISABLE_DEBUG_PRINTS | MEMORY_CONFIG
+                                                  | SL_SI91X_EXT_FEAT_FRONT_END_SWITCH_PINS_ULP_GPIO_4_5_0
+                                                  | SL_SI91X_EXT_FEAT_BT_CUSTOM_FEAT_ENABLE),
+                   .bt_feature_bit_map         = (SL_SI91X_BT_RF_TYPE | SL_SI91X_ENABLE_BLE_PROTOCOL),
+                   .ext_tcp_ip_feature_bit_map = (SL_SI91X_CONFIG_FEAT_EXTENTION_VALID | SL_SI91X_EXT_EMB_MQTT_ENABLE),
                    .ble_feature_bit_map =
                     ((SL_SI91X_BLE_MAX_NBR_PERIPHERALS(RSI_BLE_MAX_NBR_PERIPHERALS)
                     | SL_SI91X_BLE_MAX_NBR_CENTRALS(RSI_BLE_MAX_NBR_CENTRALS)
@@ -182,12 +198,9 @@ static sl_wifi_device_configuration_t remote_wake_up_device_configuration = {
                     | SL_SI91X_BLE_GATT_INIT
 #endif
                     ),
-#else
-                   .ble_feature_bit_map        = 0,
-                   .ble_ext_feature_bit_map    = 0,
-#endif
                    .config_feature_bit_map = (SL_SI91X_FEAT_SLEEP_GPIO_SEL_BITMAP | SL_SI91X_ENABLE_ENHANCED_MAX_PSP) }
 };
+#endif
 /// @brief Default wifi client profile
 static sl_net_wifi_client_profile_t wifi_client_profile = {
     .config = {
@@ -290,11 +303,57 @@ static const sl_wifi_advanced_client_configuration_t default_client_configuratio
     .beacon_missed_count     = 40,
     .first_time_retry_enable = 1,
 };
-static sl_wifi_scan_configuration_t wifi_scan_configuration = { 
+static const sl_wifi_scan_configuration_t ap_cnt_scan_cfg = { 
     .type = SL_WIFI_SCAN_TYPE_ADV_SCAN,
+    .flags = 0,
     .periodic_scan_interval = 20,
+    .channel_bitmap_2g4     = 0xFFFF,
+    .channel_bitmap_5g      = { 
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF 
+    }, 
+    .lp_mode = 0
 };
-static sl_wifi_advanced_scan_configuration_t advanced_scan_configuration = {
+// #define DEFAULT_SCAN_TYPE SL_WIFI_SCAN_TYPE_ACTIVE
+#define DEFAULT_SCAN_TYPE SL_WIFI_SCAN_TYPE_EXTENDED
+#if DEFAULT_SCAN_TYPE == SL_WIFI_SCAN_TYPE_EXTENDED
+#define DEFAULT_SCAN_RESULT_MAX 64
+static sl_wifi_scan_type_t now_scan_type = SL_WIFI_SCAN_TYPE_EXTENDED;
+static sl_wifi_extended_scan_result_t default_scan_results[DEFAULT_SCAN_RESULT_MAX] = {0};
+static sl_wifi_extended_scan_result_parameters_t default_scan_result_parameters = { 
+    .scan_results = default_scan_results,
+    .array_length = DEFAULT_SCAN_RESULT_MAX,
+    .result_count = NULL,
+    .channel_filter = NULL,
+    .security_mode_filter = NULL,
+    .rssi_filter = NULL,
+    .network_type_filter = NULL
+};
+#endif
+static const sl_wifi_scan_configuration_t default_wifi_scan_cfg = { 
+    .type  = DEFAULT_SCAN_TYPE,
+    .flags = 0,
+    .periodic_scan_interval = 0,
+    .channel_bitmap_2g4     = 0xFFFF,
+    .channel_bitmap_5g      = { 
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF 
+    }, 
+    .lp_mode = 0
+};
+static const sl_wifi_advanced_scan_configuration_t advanced_scan_configuration = {
     .active_channel_time = 30,
     .passive_channel_time = 40,
     .trigger_level = -40,
@@ -302,6 +361,8 @@ static sl_wifi_advanced_scan_configuration_t advanced_scan_configuration = {
     .enable_multi_probe = 1,
     .enable_instant_scan = 1
 };
+static uint8_t sl_net_is_recovering = 0;
+static sl_net_wakeup_mode_t remote_wakeup_mode = WAKEUP_MODE_NORMAL;
 static int global_scan_result_count = 0;
 static osSemaphoreId_t wifi_scan_sem = NULL;
 static wireless_scan_result_t wifi_storage_scan_result = {0};
@@ -345,7 +406,7 @@ static void sl_net_low_level_input(struct netif *netif, uint8_t *b, uint16_t len
         ret = netif->input(p, netif);
         if (ret != ERR_OK) {
             pbuf_free(p);
-            osDelay(10);
+            osDelay(5);
             // LOG_DRV_ERROR(NETIF_NAME_STR_FMT ":Input failed(ret = %d)!\r\n", NETIF_NAME_PARAMETER(netif), ret);
         }
     } else {
@@ -375,10 +436,9 @@ static err_t sl_net_low_level_output(struct netif *netif, struct pbuf *p)
             else status = sl_wifi_send_raw_data_frame(SL_WIFI_AP_INTERFACE, out_buf, p->tot_len);
             hal_mem_free(out_buf);
             if (status != SL_STATUS_OK) {
-                printf(NETIF_NAME_STR_FMT ": Failed to send data frame: 0x%0lX.\r\n", NETIF_NAME_PARAMETER(netif), status);
+                LOG_DRV_ERROR(NETIF_NAME_STR_FMT ": Failed to send data frame: 0x%0lX.\r\n", NETIF_NAME_PARAMETER(netif), status);
                 return ERR_IF;
             }
-            return ERR_OK;
         }
     }
     for (q = p; q != NULL; q = q->next) {
@@ -386,7 +446,7 @@ static err_t sl_net_low_level_output(struct netif *netif, struct pbuf *p)
         if (netif == &client_netif) status = sl_wifi_send_raw_data_frame(SL_WIFI_CLIENT_INTERFACE, (uint8_t *)q->payload, q->len);
         else status = sl_wifi_send_raw_data_frame(SL_WIFI_AP_INTERFACE, (uint8_t *)q->payload, q->len);
         if (status != SL_STATUS_OK) {
-            printf(NETIF_NAME_STR_FMT ": Failed to send data frame: 0x%0lX.\r\n", NETIF_NAME_PARAMETER(netif), status);
+            LOG_DRV_ERROR(NETIF_NAME_STR_FMT ": Failed to send data frame: 0x%0lX.\r\n", NETIF_NAME_PARAMETER(netif), status);
             return ERR_IF;
         }
     }
@@ -1124,6 +1184,10 @@ static uint8_t sl_net_get_channel_from_scan_result(const char *ssid, size_t leng
 static sl_status_t sl_net_client_scan_callback_handler(sl_wifi_event_t event, sl_wifi_scan_result_t *result, uint32_t result_length, void *arg)
 {
     int i = 0;
+#if DEFAULT_SCAN_TYPE == SL_WIFI_SCAN_TYPE_EXTENDED
+    uint16_t scan_result_num = 0;
+    sl_status_t status = SL_STATUS_OK;
+#endif
     wireless_scan_result_t scan_result = {0};
     wireless_scan_callback_t callback = NULL;
 
@@ -1137,11 +1201,51 @@ static sl_status_t sl_net_client_scan_callback_handler(sl_wifi_event_t event, sl
     }
 
     if (result_length == 0) {
+#if DEFAULT_SCAN_TYPE == SL_WIFI_SCAN_TYPE_EXTENDED
+        if (now_scan_type == SL_WIFI_SCAN_TYPE_EXTENDED) {
+            default_scan_result_parameters.result_count = &scan_result_num;
+            status = sl_wifi_get_stored_scan_results(SL_WIFI_CLIENT_INTERFACE, &default_scan_result_parameters);
+            if (status != SL_STATUS_OK) {
+                LOG_DRV_ERROR("get scan result failed: 0x%X\r\n", status);
+                if (callback != NULL) callback(-1, NULL);
+                else if (arg == (void *)&wifi_storage_scan_result && wifi_scan_sem != NULL) osSemaphoreRelease(wifi_scan_sem);
+                return SL_STATUS_FAIL;
+            }
+            global_scan_result_count = scan_result_num;
+            if (scan_result_num > 0) {
+                LOG_DRV_INFO("extended scan result count: %d\r\n", global_scan_result_count);
+                scan_result.scan_count = scan_result_num;
+                scan_result.scan_info = hal_mem_alloc_large(scan_result_num * sizeof(wireless_scan_info_t));
+                if (scan_result.scan_info == NULL) {
+                    if (callback != NULL) callback(-2, NULL);
+                    return SL_STATUS_FAIL;
+                }
+                for (i = 0; i < scan_result_num; i++) {
+                    scan_result.scan_info[i].rssi = -default_scan_results[i].rssi;
+                    memcpy(scan_result.scan_info[i].ssid, default_scan_results[i].ssid, sizeof(scan_result.scan_info[i].ssid));
+                    memcpy(scan_result.scan_info[i].bssid, default_scan_results[i].bssid, sizeof(scan_result.scan_info[i].bssid));
+                    scan_result.scan_info[i].channel = default_scan_results[i].rf_channel;
+                    scan_result.scan_info[i].security = default_scan_results[i].security_mode;
+                }
+                if (callback != NULL) callback(0, &scan_result);
+                else if (arg == (void *)&wifi_storage_scan_result && wifi_scan_sem != NULL) {
+                    if (wifi_storage_scan_result.scan_info != NULL) {
+                        wifi_storage_scan_result.scan_count = scan_result.scan_count;
+                        memcpy(wifi_storage_scan_result.scan_info, scan_result.scan_info, scan_result.scan_count * sizeof(wireless_scan_info_t));
+                    }
+                    osSemaphoreRelease(wifi_scan_sem);
+                }
+                hal_mem_free(scan_result.scan_info);
+                return SL_STATUS_OK;
+            }
+        }
+#endif
         global_scan_result_count = 0;
         LOG_DRV_ERROR("scan result length is 0\r\n");
         if (callback != NULL) callback(0, &scan_result);
         else if (arg == (void *)&wifi_storage_scan_result && wifi_scan_sem != NULL) osSemaphoreRelease(wifi_scan_sem);
     } else {
+        LOG_DRV_INFO("normal scan result count: %d\r\n", result->scan_count);
         global_scan_result_count = result->scan_count;
         scan_result.scan_count = result->scan_count;
         scan_result.scan_info = hal_mem_alloc_large(result->scan_count * sizeof(wireless_scan_info_t));
@@ -1174,7 +1278,7 @@ int sl_net_start_scan(wireless_scan_callback_t callback)
     struct netif *_if_ = NULL;
     sl_status_t status = SL_STATUS_OK;
     sl_wifi_interface_t interface = SL_WIFI_INVALID_INTERFACE;
-    const sl_wifi_scan_configuration_t *scan_configuration = &default_wifi_scan_configuration;
+    const sl_wifi_scan_configuration_t *scan_configuration = &default_wifi_scan_cfg;
 
     osMutexAcquire(sl_net_mutex, osWaitForever);
     _if_ = netif_get_by_index(client_netif.num + 1);
@@ -1196,7 +1300,7 @@ int sl_net_start_scan(wireless_scan_callback_t callback)
             LOG_DRV_ERROR("Failed to set advanced scan configuration: 0x%lX\r\n", status);
             goto sl_net_start_scan_end;
         }
-        scan_configuration = &wifi_scan_configuration;
+        scan_configuration = &ap_cnt_scan_cfg;
     }
     
     sl_wifi_set_scan_callback(sl_net_client_scan_callback_handler, callback);
@@ -1206,6 +1310,9 @@ int sl_net_start_scan(wireless_scan_callback_t callback)
         LOG_DRV_ERROR("Failed to start scan: 0x%lX\r\n", status);
         goto sl_net_start_scan_end;
     }
+#if DEFAULT_SCAN_TYPE == SL_WIFI_SCAN_TYPE_EXTENDED
+    now_scan_type = scan_configuration->type;
+#endif
     status = SL_STATUS_OK;
 
 sl_net_start_scan_end:
@@ -1230,7 +1337,11 @@ int sl_net_update_strorage_scan_result(uint32_t timeout_ms)
         if (wifi_scan_sem == NULL) return SL_STATUS_ALLOCATION_FAILED;
     }
     if (wifi_storage_scan_result.scan_info == NULL) {
+#if DEFAULT_SCAN_TYPE == SL_WIFI_SCAN_TYPE_EXTENDED
+        wifi_storage_scan_result.scan_info = hal_mem_alloc_large(DEFAULT_SCAN_RESULT_MAX * sizeof(wireless_scan_info_t));
+#else
         wifi_storage_scan_result.scan_info = hal_mem_alloc_large(SL_WIFI_MAX_SCANNED_AP * sizeof(wireless_scan_info_t));
+#endif
         if (wifi_storage_scan_result.scan_info == NULL) return SL_STATUS_ALLOCATION_FAILED;
     }
     
@@ -1252,8 +1363,11 @@ int sl_net_update_strorage_scan_result(uint32_t timeout_ms)
     // Then perform scan
     osSemaphoreAcquire(wifi_scan_sem, 0);
     sl_wifi_set_scan_callback(sl_net_client_scan_callback_handler, &wifi_storage_scan_result);
-    ret = sl_wifi_start_scan(SL_WIFI_CLIENT_INTERFACE, NULL, &default_wifi_scan_configuration);
+    ret = sl_wifi_start_scan(SL_WIFI_CLIENT_INTERFACE, NULL, &default_wifi_scan_cfg);
     if (ret == SL_STATUS_OK || ret == SL_STATUS_IN_PROGRESS) {
+#if DEFAULT_SCAN_TYPE == SL_WIFI_SCAN_TYPE_EXTENDED
+        now_scan_type = default_wifi_scan_cfg.type;
+#endif
         if (osSemaphoreAcquire(wifi_scan_sem, timeout_ms) == osOK) {
             if (wifi_storage_scan_result.scan_count > 0) ret = SL_STATUS_OK;
             else ret = SL_STATUS_FAIL;
@@ -1622,6 +1736,13 @@ int sl_net_ap_netif_init(void)
         return status;
     }
 
+#if IS_ENABLE_NWP_DEBUG_PRINTS
+    sl_si91x_assertion_t assertion = {
+        .assert_type = SL_SI91X_ASSERTION_TYPE_ALL,
+        .assert_level = SL_SI91X_ASSERTION_LEVEL_MAX
+    };
+    sl_si91x_debug_log(&assertion);
+#endif
     sl_wifi_set_callback(SL_WIFI_CLIENT_CONNECTED_EVENTS, ap_connected_event_handler, NULL);
     sl_wifi_set_callback(SL_WIFI_CLIENT_DISCONNECTED_EVENTS, ap_disconnected_event_handler, NULL);
     
@@ -1679,6 +1800,15 @@ int sl_net_ap_netif_up(void)
     if (status != SL_STATUS_OK) {
         LOG_DRV_ERROR("Failed to bring Wi-Fi AP interface up: 0x%lX\r\n", status);
         return status;
+    } else {
+#if LWIP_MDNS_RESPONDER
+        /* Set mDNS host name */
+        mdns_resp_add_netif(&ap_netif, "ne301");
+        mdns_resp_add_service(&ap_netif, "Web Server", "_http", 
+                            DNSSD_PROTO_TCP, 80, NULL, NULL);
+        mdns_resp_add_service(&ap_netif, "WebSocket Server", "_ws", 
+                            DNSSD_PROTO_TCP, 8081, NULL, NULL);
+#endif /* LWIP_MDNS_RESPONDER */
     }
     return status;
 }
@@ -1699,6 +1829,10 @@ int sl_net_ap_netif_down(void)
         LOG_DRV_ERROR("Failed to bring Wi-Fi AP interface down: 0x%lX\r\n", status);
         return status;
     }
+#if LWIP_MDNS_RESPONDER
+    /* Remove mDNS host name */
+    mdns_resp_remove_netif(&ap_netif);
+#endif /* LWIP_MDNS_RESPONDER */
     return status;
 }
 /// @brief Network interface destruction function provided externally (AP)
@@ -1860,6 +1994,11 @@ struct netif *sl_net_ap_netif_ptr(void)
     return &ap_netif;
 }
 
+extern void netif_manager_change_default_if(void);
+#ifdef SLI_SI91X_SIMULATION_C1C2_ERROR
+extern void sli_generate_c1c2_error(void);
+extern void sli_reset_c1c2_error(void);
+#endif
 void sl_net_thread(void *arg)
 {
     int event_flag = 0, ret = 0;
@@ -1871,25 +2010,25 @@ void sl_net_thread(void *arg)
         event_flag = (int)osEventFlagsWait(sl_net_events, SL_NET_EVENT_ALL, osFlagsWaitAny | osFlagsNoClear, osWaitForever);
         if (event_flag > 0) {
             if (event_flag & SL_NET_EVENT_FIRMWARE_ERROR) {
-                osMutexAcquire(sl_net_mutex, osWaitForever);
+                sl_net_is_recovering = 1;
                 LOG_DRV_INFO("WIFI firmware abnormal, attempting to recover...");
+                osMutexAcquire(sl_net_mutex, osWaitForever);
                 ap_state = sl_net_ap_netif_state();
                 client_state = sl_net_client_netif_state();
+                osMutexRelease(sl_net_mutex);
                 LOG_DRV_INFO("Save the current network card status: ap_state = %d, client_state = %d\r\n", ap_state, client_state);
                 try_times = 0;
                 do {
                     ret = 0;
+                    osMutexAcquire(sl_net_mutex, osWaitForever);
                     sl_net_ap_netif_deinit();
-                    sl_net_client_netif_deinit();
-                    osDelay(1000);
-                    if (ap_state > NETIF_STATE_DEINIT) {
-                        ret = sl_net_ap_netif_init();
-                        if (ret) goto recover_end;
-                        if (ap_state == NETIF_STATE_UP) {
-                            ret = sl_net_ap_netif_up();
-                            if (ret) goto recover_end;
-                        }
-                    }
+                    sl_net_client_netif_deinit(); 
+                    osMutexRelease(sl_net_mutex);
+                    osDelay(try_times * 500 + 500);
+                    osMutexAcquire(sl_net_mutex, osWaitForever);
+                #ifdef SLI_SI91X_SIMULATION_C1C2_ERROR
+                    sli_reset_c1c2_error();
+                #endif
                     if (client_state > NETIF_STATE_DEINIT) {
                         ret = sl_net_client_netif_init();
                         if (ret) goto recover_end;
@@ -1898,14 +2037,24 @@ void sl_net_thread(void *arg)
                             if (ret) goto recover_end;
                         }
                     }
+                    if (ap_state > NETIF_STATE_DEINIT) {
+                        ret = sl_net_ap_netif_init();
+                        if (ret) goto recover_end;
+                        if (ap_state == NETIF_STATE_UP) {
+                            ret = sl_net_ap_netif_up();
+                            if (ret) goto recover_end;
+                        }
+                    }
                 recover_end:
+                    osMutexRelease(sl_net_mutex);
                     LOG_DRV_INFO("%dth recovery result: 0x%X", (try_times + 1), ret);
-                } while (++try_times < 3 && ret != 0);
+                } while (++try_times < 10 && ret != 0);
+                sl_net_is_recovering = 0;
                 if (ret == 0) {
+                    netif_manager_change_default_if();
                     osEventFlagsClear(sl_net_events, SL_NET_EVENT_FIRMWARE_ERROR);
                 	LOG_DRV_INFO("WIFI firmware recovery successful!");
                 } else LOG_DRV_INFO("WIFI firmware recovery failed!");
-                osMutexRelease(sl_net_mutex);
             } else if (event_flag & SL_NET_EVENT_STA_DISCONNECTED) {
                 osMutexAcquire(sl_net_mutex, osWaitForever);
                 client_state = sl_net_client_netif_state();
@@ -1933,12 +2082,20 @@ void sl_net_thread(void *arg)
 /// @param error_code Error code
 void sli_firmware_error_callback(int error_code)
 {
+    if (remote_wakeup_mode != WAKEUP_MODE_NORMAL) return;
     if (error_code == (SL_WIFI_EVENT_FAIL_INDICATION_EVENTS | SL_WIFI_JOIN_EVENTS)) {
         LOG_DRV_WARN("WIFI STA Disconnected.");
         osEventFlagsSet(sl_net_events, SL_NET_EVENT_STA_DISCONNECTED);
     } else {
         LOG_DRV_ERROR("WIFI firmware error: 0x%X", error_code);
-        osEventFlagsSet(sl_net_events, SL_NET_EVENT_FIRMWARE_ERROR);
+    #ifdef SLI_SI91X_SIMULATION_C1C2_ERROR
+        if (error_code == 0x1234) sli_generate_c1c2_error();
+        else {
+    #endif
+            osEventFlagsSet(sl_net_events, SL_NET_EVENT_FIRMWARE_ERROR);
+    #ifdef SLI_SI91X_SIMULATION_C1C2_ERROR
+        }
+    #endif
     }
 }
 
@@ -1963,7 +2120,6 @@ int sl_net_netif_init(void)
     return 0;
 }
 
-static sl_net_wakeup_mode_t remote_wakeup_mode = WAKEUP_MODE_NORMAL;
 sl_net_wakeup_mode_t sl_net_netif_get_wakeup_mode(void)
 {
     return remote_wakeup_mode;
@@ -1984,15 +2140,15 @@ int sl_net_netif_romote_wakeup_mode_ctrl(sl_net_wakeup_mode_t wakeup_mode)
             if (ap_state != NETIF_STATE_DEINIT) sl_net_ap_netif_deinit();
             if (client_state != NETIF_STATE_DEINIT) sl_net_client_netif_deinit();
             if (ap_state != NETIF_STATE_DEINIT || client_state != NETIF_STATE_DEINIT) osDelay(500);
-            
-            status = sl_net_init(SL_NET_WIFI_CLIENT_INTERFACE, &remote_wake_up_device_configuration, NULL, NULL);
-            if (status != SL_STATUS_OK) {
-                sl_net_deinit(SL_NET_WIFI_CLIENT_INTERFACE);
-                LOG_DRV_ERROR("Failed to init Wi-Fi Client interface: 0x%lX\r\n", status);
-                break;
-            }
 
             if (wakeup_mode == WAKEUP_MODE_WIFI) {
+                status = sl_net_init(SL_NET_WIFI_CLIENT_INTERFACE, &remote_wake_up_wifi_cfg, NULL, NULL);
+                if (status != SL_STATUS_OK) {
+                    sl_net_deinit(SL_NET_WIFI_CLIENT_INTERFACE);
+                    LOG_DRV_ERROR("Failed to init Wi-Fi Client interface: 0x%lX\r\n", status);
+                    break;
+                }
+
                 status = sl_si91x_configure_timeout(SL_SI91X_KEEP_ALIVE_TIMEOUT, 60);
                 if (status != SL_STATUS_OK) {
                     sl_net_deinit(SL_NET_WIFI_CLIENT_INTERFACE);
@@ -2049,15 +2205,32 @@ int sl_net_netif_romote_wakeup_mode_ctrl(sl_net_wakeup_mode_t wakeup_mode)
                     LOG_DRV_ERROR("Failed to set client profile: 0x%lX\r\n", status);
                     break;
                 }
+            } else if (wakeup_mode == WAKEUP_MODE_BLE) {
+#if IS_ENABLE_BLE
+                status = sl_wifi_init(&remote_wake_up_ble_cfg, NULL, sl_wifi_default_event_handler);
+                if (status != SL_STATUS_OK) {
+                    LOG_DRV_ERROR("Failed to init BLE: 0x%lX\r\n", status);
+                    break;
+                }
+#else
+                status = SL_STATUS_NOT_SUPPORTED;
+#endif
             }
 
-            remote_wakeup_mode = wakeup_mode;
+            if (status == SL_STATUS_OK) remote_wakeup_mode = wakeup_mode;
         } else if (remote_wakeup_mode != WAKEUP_MODE_NORMAL && wakeup_mode == WAKEUP_MODE_NORMAL) {
             if (remote_wakeup_mode == WAKEUP_MODE_WIFI) {
                 sl_wifi_disconnect(SL_WIFI_CLIENT_INTERFACE);
+                status = sl_net_deinit(SL_NET_WIFI_CLIENT_INTERFACE);
+            } else if (remote_wakeup_mode == WAKEUP_MODE_BLE) {
+#if IS_ENABLE_BLE
+                status = sl_wifi_deinit();
+#else
+                status = SL_STATUS_NOT_SUPPORTED;
+#endif
             }
-            sl_net_deinit(SL_NET_WIFI_CLIENT_INTERFACE);
-            remote_wakeup_mode = WAKEUP_MODE_NORMAL;
+            
+            if (status == SL_STATUS_OK) remote_wakeup_mode = wakeup_mode;
         }
     } while (0);
 
@@ -2077,6 +2250,7 @@ int sl_net_netif_romote_wakeup_mode_ctrl(sl_net_wakeup_mode_t wakeup_mode)
     }
 
     osMutexRelease(sl_net_mutex);
+    if (status == SL_STATUS_OK && remote_wakeup_mode != wakeup_mode) status = SL_STATUS_INVALID_STATE;
     return status;
 }
 
@@ -2103,6 +2277,7 @@ int sl_net_netif_filter_broadcast_ctrl(uint8_t enable)
     return status;
 }
 
+extern sl_wifi_system_performance_profile_t current_performance_profile;
 int sl_net_netif_low_power_mode_ctrl(uint8_t enable)
 {
     sl_status_t status = SL_STATUS_OK;
@@ -2116,12 +2291,22 @@ int sl_net_netif_low_power_mode_ctrl(uint8_t enable)
             break;
         }
 
-        if (enable) {
-            performance_profile.profile = ASSOCIATED_POWER_SAVE_LOW_LATENCY;
-            status = sl_wifi_filter_broadcast(5000, 1, 1);
-            if (status != SL_STATUS_OK) {
-                LOG_DRV_ERROR("Failed to enable/disable broadcast filter: 0x%lX\r\n", status);
+        if (enable && current_performance_profile == HIGH_PERFORMANCE) {
+#if IS_ENABLE_BLE
+            // If BLE wakeup mode and not scanning / connecting, return not supported
+            if (remote_wakeup_mode == WAKEUP_MODE_BLE && !sl_ble_is_scanning() && sl_ble_connected_num() == 0) {
+                status = SL_STATUS_NOT_SUPPORTED;
                 break;
+            }
+#endif
+            
+            performance_profile.profile = ASSOCIATED_POWER_SAVE_LOW_LATENCY;
+            if (remote_wakeup_mode == WAKEUP_MODE_WIFI || remote_wakeup_mode == WAKEUP_MODE_NORMAL) {
+                status = sl_wifi_filter_broadcast(5000, 1, 1);
+                if (status != SL_STATUS_OK) {
+                    LOG_DRV_ERROR("Failed to enable/disable broadcast filter: 0x%lX\r\n", status);
+                    break;
+                }
             }
 #if IS_ENABLE_BLE
             if (remote_wakeup_mode == WAKEUP_MODE_BLE) {
@@ -2132,7 +2317,12 @@ int sl_net_netif_low_power_mode_ctrl(uint8_t enable)
                 }
             }
 #endif
-        } else {
+            status = sl_wifi_set_performance_profile_v2(&performance_profile);
+            if (status != SL_STATUS_OK) {
+                LOG_DRV_ERROR("Failed to set performance profile: 0x%lX\r\n", status);
+                break;
+            }
+        } else if (current_performance_profile != HIGH_PERFORMANCE) {
             performance_profile.profile = HIGH_PERFORMANCE;
 #if IS_ENABLE_BLE
             if (remote_wakeup_mode == WAKEUP_MODE_BLE) {
@@ -2143,16 +2333,14 @@ int sl_net_netif_low_power_mode_ctrl(uint8_t enable)
                 }
             }
 #endif
-        }
-
-        if (remote_wakeup_mode == WAKEUP_MODE_WIFI || remote_wakeup_mode == WAKEUP_MODE_NORMAL) {
             status = sl_wifi_set_performance_profile_v2(&performance_profile);
             if (status != SL_STATUS_OK) {
                 LOG_DRV_ERROR("Failed to set performance profile: 0x%lX\r\n", status);
                 break;
             }
-
-            if (!enable) sl_wifi_set_performance_profile_v2(&performance_profile);
+            if (status == SL_STATUS_OK && current_performance_profile != performance_profile.profile) {
+                status = sl_wifi_set_performance_profile_v2(&performance_profile);
+            }
         }
     } while (0);
     
@@ -2272,6 +2460,7 @@ int sl_net_netif_ctrl(const char *if_name, netif_cmd_t cmd, void *param)
     int ret = SL_STATUS_NOT_FOUND;
     netif_state_t if_state = NETIF_STATE_DEINIT;
     if (sl_net_thread_ID == NULL) return SL_STATUS_INVALID_STATE;
+    if (sl_net_is_recovering == 1) return SL_STATUS_BUSY;
 
     osMutexAcquire(sl_net_mutex, osWaitForever);
     if (remote_wakeup_mode == WAKEUP_MODE_NORMAL || cmd == NETIF_CMD_INFO || cmd == NETIF_CMD_STATE) {
@@ -2342,7 +2531,7 @@ int sl_net_netif_ctrl(const char *if_name, netif_cmd_t cmd, void *param)
             default:
                 break;
         }
-    }
+    } else ret = SL_STATUS_NOT_SUPPORTED;
     
     osMutexRelease(sl_net_mutex);
     // if (ret == SL_STATUS_TIMEOUT) {

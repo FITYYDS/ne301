@@ -333,6 +333,10 @@ void usb_ecm_netif_deinit(void)
     netifapi_netif_set_down(&ecm_netif);
     netifapi_netif_set_link_down(&ecm_netif);
     netif_remove(&ecm_netif);
+
+#if NETIF_USB_ECM_IS_CAT1_MODULE
+    modem_device_deinit();
+#endif
     usb_host_ecm_deinit();
     if (usb_ecm_netif_events != NULL) {
         osEventFlagsDelete(usb_ecm_netif_events);
@@ -342,10 +346,6 @@ void usb_ecm_netif_deinit(void)
         osMutexDelete(usb_ecm_netif_mutex);
         usb_ecm_netif_mutex = NULL;
     }
-
-#if NETIF_USB_ECM_IS_CAT1_MODULE
-    modem_device_deinit();
-#endif
 }
 
 int usb_ecm_netif_config(netif_config_t *netif_cfg)

@@ -25,6 +25,7 @@
 #include "uvc.h"
 #include "debug.h"
 #include "uvcl.h"
+#include "usb_otg.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -61,8 +62,6 @@
 
 /* External variables --------------------------------------------------------*/
 extern DMA_HandleTypeDef handle_HPDMA1_Channel7;
-extern DMA_NodeTypeDef Node_HPDMA1_Channel6;
-extern DMA_QListTypeDef List_HPDMA1_Channel6;
 extern DMA_HandleTypeDef handle_HPDMA1_Channel6;
 extern DMA_HandleTypeDef handle_HPDMA1_Channel1;
 extern DMA_HandleTypeDef handle_HPDMA1_Channel0;
@@ -82,19 +81,24 @@ extern DMA_HandleTypeDef handle_HPDMA1_Channel3;
 extern DMA_HandleTypeDef handle_HPDMA1_Channel2;
 extern SPI_HandleTypeDef hspi2;
 extern SPI_HandleTypeDef hspi4;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel1;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel0;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel4;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel3;
+extern DMA_HandleTypeDef handle_GPDMA1_Channel2;
+extern DMA_HandleTypeDef handle_GPDMA1_Channel1;
 extern UART_HandleTypeDef huart7;
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
+extern UART_HandleTypeDef huart3;
 extern UART_HandleTypeDef huart9;
 extern RTC_HandleTypeDef hrtc;
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
 extern PCD_HandleTypeDef hpcd_CDC;
 #else
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+extern HCD_HandleTypeDef hhcd_USB_OTG_HS1;
+#else
 extern PCD_HandleTypeDef hpcd_USB_OTG_HS1;
+#endif
 #endif
 extern HCD_HandleTypeDef hhcd_USB_OTG_HS2;
 extern XSPI_HandleTypeDef hxspi1;
@@ -340,35 +344,33 @@ void HPDMA1_Channel1_IRQHandler(void)
 
   /* USER CODE END HPDMA1_Channel1_IRQn 1 */
 }
+/**
+* @brief This function handles GPDMA1 Channel 1 global interrupt.
+*/
+void GPDMA1_Channel1_IRQHandler(void)
+{
+  /* USER CODE BEGIN GPDMA1_Channel1_IRQn 0 */
 
-// /**
-//   * @brief This function handles GPDMA1 Channel 0 global interrupt.
-//   */
-// void GPDMA1_Channel0_IRQHandler(void)
-// {
-//   /* USER CODE BEGIN GPDMA1_Channel0_IRQn 0 */
+  /* USER CODE END GPDMA1_Channel1_IRQn 0 */
+  HAL_DMA_IRQHandler(&handle_GPDMA1_Channel1);
+  /* USER CODE BEGIN GPDMA1_Channel1_IRQn 1 */
 
-//   /* USER CODE END GPDMA1_Channel0_IRQn 0 */
-//   HAL_DMA_IRQHandler(&handle_GPDMA1_Channel0);
-//   /* USER CODE BEGIN GPDMA1_Channel0_IRQn 1 */
+  /* USER CODE END GPDMA1_Channel1_IRQn 1 */
+}
 
-//   /* USER CODE END GPDMA1_Channel0_IRQn 1 */
-// }
+/**
+  * @brief This function handles GPDMA1 Channel 2 global interrupt.
+  */
+void GPDMA1_Channel2_IRQHandler(void)
+{
+  /* USER CODE BEGIN GPDMA1_Channel2_IRQn 0 */
 
-// /**
-//   * @brief This function handles GPDMA1 Channel 1 global interrupt.
-//   */
-// void GPDMA1_Channel1_IRQHandler(void)
-// {
-//   /* USER CODE BEGIN GPDMA1_Channel1_IRQn 0 */
+  /* USER CODE END GPDMA1_Channel2_IRQn 0 */
+  HAL_DMA_IRQHandler(&handle_GPDMA1_Channel2);
+  /* USER CODE BEGIN GPDMA1_Channel2_IRQn 1 */
 
-//   /* USER CODE END GPDMA1_Channel1_IRQn 0 */
-//   HAL_DMA_IRQHandler(&handle_GPDMA1_Channel1);
-//   /* USER CODE BEGIN GPDMA1_Channel1_IRQn 1 */
-
-//   /* USER CODE END GPDMA1_Channel1_IRQn 1 */
-// }
-
+  /* USER CODE END GPDMA1_Channel2_IRQn 1 */
+}
 /**
   * @brief This function handles GPDMA1 Channel 3 global interrupt.
   */
@@ -507,6 +509,19 @@ void USART2_IRQHandler(void)
   /* USER CODE END USART1_IRQn 1 */
 }
 /**
+* @brief This function handles USART3 global interrupt.
+*/
+void USART3_IRQHandler(void)
+{
+  /* USER CODE BEGIN USART3_IRQn 0 */
+
+  /* USER CODE END USART3_IRQn 0 */
+  HAL_UART_IRQHandler(&huart3);
+  /* USER CODE BEGIN USART3_IRQn 1 */
+
+  /* USER CODE END USART3_IRQn 1 */
+}
+/**
   * @brief This function handles UART7 global interrupt.
   */
 void UART7_IRQHandler(void)
@@ -586,7 +601,11 @@ void USB1_OTG_HS_IRQHandler(void)
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
   HAL_PCD_IRQHandler(&hpcd_CDC);
 #else
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+  HAL_HCD_IRQHandler(&hhcd_USB_OTG_HS1);
+#else
   UVCL_IRQHandler();
+#endif
 #endif
   /* USER CODE END USB2_OTG_HS_IRQn 1 */
 }
@@ -611,6 +630,15 @@ void RTC_S_IRQHandler(void)
 void EXTI0_IRQHandler(void)
 {
     HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
+}
+
+/* USER CODE BEGIN 1 */
+/**
+  * @brief This function handles EXTI8 global interrupt.
+  */
+void EXTI5_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_5);
 }
 
 /**

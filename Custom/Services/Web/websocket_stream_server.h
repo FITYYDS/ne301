@@ -90,6 +90,7 @@ typedef struct {
     uint32_t stream_size;             // Encoded stream size (network byte order)
     uint32_t num_nalus;               // Number of NAL units (network byte order)
     uint32_t mse_mul256;              // Mean Squared Error * 256 (network byte order)
+    uint32_t header_size;             // Header size (network byte order)
 } websocket_frame_header_t;
 #pragma pack(pop)
 
@@ -219,6 +220,19 @@ aicam_bool_t websocket_stream_server_is_initialized(void);
  * @return Running status
  */
 aicam_bool_t websocket_stream_server_is_running(void);
+
+/**
+ * @brief subscribe to Video Hub to receive encoded frames (Video Hub mode)
+ * @return AICAM_OK success, other failure
+ * @note When using Hub mode, you don't need to call send_frame, frames will be automatically received from the Hub
+ */
+aicam_result_t websocket_stream_server_subscribe_hub(void);
+
+/**
+ * @brief unsubscribe from Video Hub (Video Hub mode)
+ * @return AICAM_OK success
+ */
+aicam_result_t websocket_stream_server_unsubscribe_hub(void);
 
 /**
  * @brief Register WebSocket stream server debug commands

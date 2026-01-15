@@ -5,7 +5,11 @@
 #include "ux_system.h"
 #include "ux_utility.h"
 
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+extern HCD_HandleTypeDef hhcd_USB_OTG_HS1;
+#else
 extern HCD_HandleTypeDef hhcd_USB_OTG_HS2;
+#endif
 static uint8_t usbx_mem_pool[H_USBX_MEM_SIZE] IN_PSRAM ALIGN_32;
 static uint8_t usbx_mem_pool_uncached[H_USBX_MEM_SIZE_UNCACHED] UNCACHED ALIGN_32;
 static uint8_t usbx_is_init = 0;
@@ -14,10 +18,15 @@ int USBX_Host_Init(ux_host_config_t *config)
 {
     int ret = 0;
     if (config == NULL) return UX_INVALID_PARAMETER;
-    if (usbx_is_init) return UX_INVALID_STATE;
+    if (usbx_is_init) return UX_SUCCESS;
+    // if (usbx_is_init) return UX_INVALID_STATE;
 
     /* Initialize the USB OTG HS2 */
-    MX_USB2_OTG_HS_HCD_Init();
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+    if (hhcd_USB_OTG_HS1.State == HAL_HCD_STATE_RESET) MX_USB1_OTG_HS_HCD_Init();
+#else
+    if (hhcd_USB_OTG_HS2.State == HAL_HCD_STATE_RESET) MX_USB2_OTG_HS_HCD_Init();
+#endif
 
     if (!config->is_uninit_memory) {
         /* Initialize USBX Memory */
@@ -46,13 +55,21 @@ int USBX_Host_Init(ux_host_config_t *config)
     }
 
     /* Register the host HCD */
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+    ret = ux_host_stack_hcd_register(config->hcd_name, config->hcd_init_function, USB1_OTG_HS_BASE, (ULONG)&hhcd_USB_OTG_HS1);
+#else
     ret = ux_host_stack_hcd_register(config->hcd_name, config->hcd_init_function, USB2_OTG_HS_BASE, (ULONG)&hhcd_USB_OTG_HS2);
+#endif
     if (ret != UX_SUCCESS) {
         LOG_DRV_ERROR("USBX Host HCD Registration Failed: 0x%X", ret);
         goto USBX_Host_Init_Exit;
     }
 
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+    ret = HAL_HCD_Start(&hhcd_USB_OTG_HS1);
+#else
     ret = HAL_HCD_Start(&hhcd_USB_OTG_HS2);
+#endif
     if (ret != HAL_OK) {
         LOG_DRV_ERROR("USBX Host HCD Start Failed: 0x%X", ret);
         goto USBX_Host_Init_Exit;
@@ -67,32 +84,44 @@ USBX_Host_Init_Exit:
 
 void USBX_Host_Deinit(ux_host_config_t *config)
 {
-    int ret = 0;
-    if (config == NULL || !usbx_is_init) return;
+//     int ret = 0;
+//     if (config == NULL || !usbx_is_init) return;
 
-    ret = HAL_HCD_Stop(&hhcd_USB_OTG_HS2);
-    if (ret != HAL_OK) {
-        LOG_DRV_ERROR("USBX Host HCD Stop Failed: 0x%X", ret);
-    }
-    ret = ux_host_stack_hcd_unregister(config->hcd_name, USB2_OTG_HS_BASE, (ULONG)&hhcd_USB_OTG_HS2);
-    if (ret != UX_SUCCESS) {
-        LOG_DRV_ERROR("USBX Host HCD Unregistration Failed: 0x%X", ret);
-    }
-    ret = ux_host_stack_class_unregister(config->class_entry_function);
-    if (ret != UX_SUCCESS) {
-        LOG_DRV_ERROR("USBX Host Class Unregistration Failed: 0x%X", ret);
-    }
-    ret = ux_host_stack_uninitialize();
-    if (ret != UX_SUCCESS) {
-        LOG_DRV_ERROR("USBX Host Uninitialization Failed: 0x%X", ret);
-    }
-    if (!config->is_uninit_memory) {
-        ret = ux_system_uninitialize();
-        if (ret != UX_SUCCESS) {
-            LOG_DRV_ERROR("USBX Memory Uninitialization Failed: 0x%X", ret);
-        }
-    }
-    // TODO: Using HAL library to reinitialize functions can cause system crashes, to be investigated
-    // HAL_HCD_DeInit(&hhcd_USB_OTG_HS2);
-    usbx_is_init = 0;
+// #ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+//     ret = HAL_HCD_Stop(&hhcd_USB_OTG_HS1);
+// #else
+//     ret = HAL_HCD_Stop(&hhcd_USB_OTG_HS2);
+// #endif
+//     if (ret != HAL_OK) {
+//         LOG_DRV_ERROR("USBX Host HCD Stop Failed: 0x%X", ret);
+//     }
+// #ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+//     ret = ux_host_stack_hcd_unregister(config->hcd_name, USB1_OTG_HS_BASE, (ULONG)&hhcd_USB_OTG_HS1);
+// #else
+//     ret = ux_host_stack_hcd_unregister(config->hcd_name, USB2_OTG_HS_BASE, (ULONG)&hhcd_USB_OTG_HS2);
+// #endif
+//     if (ret != UX_SUCCESS) {
+//         LOG_DRV_ERROR("USBX Host HCD Unregistration Failed: 0x%X", ret);
+//     }
+//     ret = ux_host_stack_class_unregister(config->class_entry_function);
+//     if (ret != UX_SUCCESS) {
+//         LOG_DRV_ERROR("USBX Host Class Unregistration Failed: 0x%X", ret);
+//     }
+//     ret = ux_host_stack_uninitialize();
+//     if (ret != UX_SUCCESS) {
+//         LOG_DRV_ERROR("USBX Host Uninitialization Failed: 0x%X", ret);
+//     }
+//     if (!config->is_uninit_memory) {
+//         ret = ux_system_uninitialize();
+//         if (ret != UX_SUCCESS) {
+//             LOG_DRV_ERROR("USBX Memory Uninitialization Failed: 0x%X", ret);
+//         }
+//     }
+//     // TODO: Using HAL library to reinitialize functions can cause system crashes, to be investigated
+// #ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+//     HAL_HCD_DeInit(&hhcd_USB_OTG_HS1);
+// #else
+//     HAL_HCD_DeInit(&hhcd_USB_OTG_HS2);
+// #endif
+//     usbx_is_init = 0;
 }

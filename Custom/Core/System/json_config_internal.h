@@ -12,6 +12,7 @@
  #include "debug.h"
  #include "system_service.h"
  #include "version.h"         // For FW_VERSION_STRING
+ #include "storage.h"         // For NVS access
  #include <string.h>
  #include <stdlib.h>
  #include <stdio.h>
@@ -89,6 +90,7 @@
  #define NVS_KEY_IMAGE_HFLIP             "img_hflip"
  #define NVS_KEY_IMAGE_VFLIP             "img_vflip"
  #define NVS_KEY_IMAGE_AEC               "img_aec"
+ #define NVS_KEY_IMAGE_SKIP_FRAMES       "img_skip"
  #define NVS_KEY_LIGHT_CONNECTED         "light_conn"
  #define NVS_KEY_LIGHT_MODE              "light_mode"
  #define NVS_KEY_LIGHT_START_HOUR        "light_s_h"
@@ -106,6 +108,36 @@
 #define NVS_KEY_NETWORK_KNOWN_COUNT     "net_known_cnt"
 // Note: Individual known network entries use format "net_<idx>_<field>"
 // where <idx> is 0-15 and <field> is ssid/bssid/pwd/rssi/ch/sec/conn/known/time
+
+// Communication type configuration key names
+#define NVS_KEY_COMM_PREFERRED_TYPE     "comm_pref"
+#define NVS_KEY_COMM_AUTO_PRIORITY      "comm_auto_pri"
+
+// Cellular/4G configuration key names
+#define NVS_KEY_CELLULAR_APN            "cell_apn"
+#define NVS_KEY_CELLULAR_USERNAME       "cell_user"
+#define NVS_KEY_CELLULAR_PASSWORD       "cell_pass"
+#define NVS_KEY_CELLULAR_PIN            "cell_pin"
+#define NVS_KEY_CELLULAR_AUTH           "cell_auth"
+#define NVS_KEY_CELLULAR_ROAMING        "cell_roam"
+
+// PoE/Ethernet configuration key names
+#define NVS_KEY_POE_IP_MODE             "poe_ip_mode"
+#define NVS_KEY_POE_IP_ADDR             "poe_ip"
+#define NVS_KEY_POE_NETMASK             "poe_mask"
+#define NVS_KEY_POE_GATEWAY             "poe_gw"
+#define NVS_KEY_POE_DNS_PRIMARY         "poe_dns1"
+#define NVS_KEY_POE_DNS_SECONDARY       "poe_dns2"
+#define NVS_KEY_POE_HOSTNAME            "poe_host"
+#define NVS_KEY_POE_DHCP_TIMEOUT        "poe_dhcp_to"
+#define NVS_KEY_POE_DHCP_RETRY_COUNT    "poe_dhcp_cnt"
+#define NVS_KEY_POE_DHCP_RETRY_INTERVAL "poe_dhcp_iv"
+#define NVS_KEY_POE_RECOVERY_DELAY      "poe_rec_dly"
+#define NVS_KEY_POE_AUTO_RECONNECT      "poe_auto_rcn"
+#define NVS_KEY_POE_PERSIST_LAST_IP     "poe_persist"
+#define NVS_KEY_POE_LAST_DHCP_IP        "poe_last_ip"
+#define NVS_KEY_POE_VALIDATE_GATEWAY    "poe_val_gw"
+#define NVS_KEY_POE_DETECT_CONFLICT     "poe_det_conf"
 
 // MQTT service configuration key names
 // Basic connection
@@ -195,6 +227,11 @@
  #define NVS_KEY_REMOTE_TRIGGER_ENABLE "remote_trigger_enable"
  // IO (Indexed)
  #define NVS_KEY_IO_ENABLE_PREFIX    "io_enable" // Removed trailing underscore to match original
+
+// RTMP configuration (simplified, part of video_stream_mode)
+#define NVS_KEY_RTMP_ENABLE             "rtmp_en"
+#define NVS_KEY_RTMP_URL                "rtmp_url"
+#define NVS_KEY_RTMP_STREAM_KEY         "rtmp_key"
  #define NVS_KEY_IO_PIN_PREFIX       "io_pin"
  #define NVS_KEY_IO_INPUT_EN_PREFIX  "io_in_en"
  #define NVS_KEY_IO_OUTPUT_EN_PREFIX "io_out_en"
@@ -222,7 +259,10 @@ aicam_result_t json_config_save_device_info_config_to_nvs(const device_info_conf
 aicam_result_t json_config_save_device_service_image_config_to_nvs(const image_config_t *config);
 aicam_result_t json_config_save_device_service_light_config_to_nvs(const light_config_t *config);
 aicam_result_t json_config_save_network_service_config_to_nvs(const network_service_config_t *config);
+aicam_result_t json_config_save_poe_config_to_nvs(const poe_config_persist_t *config);
+aicam_result_t json_config_load_poe_config_from_nvs(poe_config_persist_t *config);
 aicam_result_t json_config_save_mqtt_service_config_to_nvs(const mqtt_service_config_t *config);
+// RTMP config now part of video_stream_mode, use json_config_get/set_video_stream_mode()
 aicam_result_t json_config_save_auth_mgr_config_to_nvs(const auth_mgr_config_t *config);
  aicam_result_t json_config_save_to_nvs(const aicam_global_config_t *config);
  aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config);

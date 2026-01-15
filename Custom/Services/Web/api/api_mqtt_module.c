@@ -8,11 +8,13 @@
 #include "mqtt_service.h"
 #include "web_api.h"
 #include "web_server.h"
+#include "system_service.h"
 #include "cJSON.h"
 #include "buffer_mgr.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "debug.h"
 
 /* ==================== Helper Functions ==================== */
@@ -191,19 +193,21 @@ static aicam_result_t update_number_config(uint16_t *config_field,
  */
 static aicam_result_t mqtt_config_get_handler(http_handler_context_t* ctx)
 {
+    char *json_string = NULL;
+    aicam_result_t result;
     // Verify HTTP method
     if (!web_api_verify_method(ctx, "GET")) {
         return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
     }
     
     // Check if MQTT service is initialized
-    if (!mqtt_service_is_running()) {
+    if (!mqtt_service_is_initialized()) {
         return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
     }
     
     // Get MQTT configuration
     ms_mqtt_config_t config;
-    aicam_result_t result = mqtt_service_get_config(&config);
+    result = mqtt_service_get_config(&config);
     if (result != AICAM_OK) {
         return api_response_error(ctx, API_ERROR_INTERNAL_ERROR, "Failed to get MQTT configuration");
     }
@@ -299,13 +303,13 @@ static aicam_result_t mqtt_config_get_handler(http_handler_context_t* ctx)
     
     // Add service status
     cJSON *status = cJSON_CreateObject();
-    cJSON_AddBoolToObject(status, "running", mqtt_service_is_running());
+    cJSON_AddBoolToObject(status, "running", mqtt_service_is_initialized());
     cJSON_AddBoolToObject(status, "connected", mqtt_service_is_connected());
     cJSON_AddNumberToObject(status, "state", mqtt_service_get_state());
     cJSON_AddStringToObject(status, "version", mqtt_service_get_version());
     cJSON_AddItemToObject(response_json, "status", status);
     
-    char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
     cJSON_Delete(response_json);
     
     // Free allocated MQTT configuration strings
@@ -324,6 +328,7 @@ static aicam_result_t mqtt_config_get_handler(http_handler_context_t* ctx)
  */
 static aicam_result_t mqtt_config_set_handler(http_handler_context_t* ctx)
 {
+    char *json_string = NULL;
     // Verify HTTP method
     if (!web_api_verify_method(ctx, "POST")) {
         return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
@@ -335,7 +340,7 @@ static aicam_result_t mqtt_config_set_handler(http_handler_context_t* ctx)
     }
     
     // Check if MQTT service is initialized
-    if (!mqtt_service_is_running()) {
+    if (!mqtt_service_is_initialized()) {
         return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
     }
     
@@ -568,7 +573,7 @@ static aicam_result_t mqtt_config_set_handler(http_handler_context_t* ctx)
         cJSON_AddStringToObject(response_json, "action_taken", "configuration_updated_only");
     }
     
-    char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
     cJSON_Delete(response_json);
     cJSON_Delete(request_json);
     
@@ -589,13 +594,14 @@ static aicam_result_t mqtt_config_set_handler(http_handler_context_t* ctx)
  */
 static aicam_result_t mqtt_connect_handler(http_handler_context_t* ctx)
 {
+    char *json_string = NULL;
     // Verify HTTP method
     if (!web_api_verify_method(ctx, "POST")) {
         return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
     }
     
     // Check if MQTT service is initialized
-    if (!mqtt_service_is_running()) {
+    if (!mqtt_service_is_initialized()) {
         return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
     }
     
@@ -623,7 +629,7 @@ static aicam_result_t mqtt_connect_handler(http_handler_context_t* ctx)
             cJSON_AddItemToObject(response_json, "statistics", statistics);
         }
         
-        char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
         cJSON_Delete(response_json);
         
         if (!json_string) {
@@ -683,7 +689,7 @@ static aicam_result_t mqtt_connect_handler(http_handler_context_t* ctx)
         cJSON_AddItemToObject(response_json, "statistics", statistics);
     }
     
-    char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
     cJSON_Delete(response_json);
     
     if (!json_string) {
@@ -699,13 +705,14 @@ static aicam_result_t mqtt_connect_handler(http_handler_context_t* ctx)
  */
 static aicam_result_t mqtt_disconnect_handler(http_handler_context_t* ctx)
 {
+    char *json_string = NULL;
     // Verify HTTP method
     if (!web_api_verify_method(ctx, "POST")) {
         return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
     }
     
     // Check if MQTT service is initialized
-    if (!mqtt_service_is_running()) {
+    if (!mqtt_service_is_initialized()) {
         return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
     }
     
@@ -793,7 +800,7 @@ static aicam_result_t mqtt_disconnect_handler(http_handler_context_t* ctx)
         cJSON_AddItemToObject(response_json, "statistics", statistics);
     }
     
-    char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
     cJSON_Delete(response_json);
     
     if (!json_string) {
@@ -809,6 +816,7 @@ static aicam_result_t mqtt_disconnect_handler(http_handler_context_t* ctx)
  */
 static aicam_result_t mqtt_publish_data_handler(http_handler_context_t* ctx)
 {
+    char *json_string = NULL;
     // Verify HTTP method
     if (!web_api_verify_method(ctx, "POST")) {
         return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
@@ -820,7 +828,7 @@ static aicam_result_t mqtt_publish_data_handler(http_handler_context_t* ctx)
     }
     
     // Check if MQTT service is initialized
-    if (!mqtt_service_is_running()) {
+    if (!mqtt_service_is_initialized()) {
         return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
     }
     
@@ -851,7 +859,7 @@ static aicam_result_t mqtt_publish_data_handler(http_handler_context_t* ctx)
     cJSON_AddNumberToObject(response_json, "message_id", result);
     cJSON_AddBoolToObject(response_json, "success", true);
     
-    char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
     cJSON_Delete(response_json);
     
     if (!json_string) {
@@ -868,6 +876,7 @@ static aicam_result_t mqtt_publish_data_handler(http_handler_context_t* ctx)
  */
 static aicam_result_t mqtt_publish_status_handler(http_handler_context_t* ctx)
 {
+    char *json_string = NULL;
     // Verify HTTP method
     if (!web_api_verify_method(ctx, "POST")) {
         return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
@@ -879,7 +888,7 @@ static aicam_result_t mqtt_publish_status_handler(http_handler_context_t* ctx)
     }
     
     // Check if MQTT service is initialized
-    if (!mqtt_service_is_running()) {
+    if (!mqtt_service_is_initialized()) {
         return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
     }
     
@@ -910,7 +919,7 @@ static aicam_result_t mqtt_publish_status_handler(http_handler_context_t* ctx)
     cJSON_AddNumberToObject(response_json, "message_id", result);
     cJSON_AddBoolToObject(response_json, "success", true);
     
-    char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
     cJSON_Delete(response_json);
     
     if (!json_string) {
@@ -927,6 +936,7 @@ static aicam_result_t mqtt_publish_status_handler(http_handler_context_t* ctx)
  */
 static aicam_result_t mqtt_publish_data_json_handler(http_handler_context_t* ctx)
 {
+    char *json_string = NULL;
     // Verify HTTP method
     if (!web_api_verify_method(ctx, "POST")) {
         return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
@@ -938,7 +948,7 @@ static aicam_result_t mqtt_publish_data_json_handler(http_handler_context_t* ctx
     }
     
     // Check if MQTT service is initialized
-    if (!mqtt_service_is_running()) {
+    if (!mqtt_service_is_initialized()) {
         return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
     }
     
@@ -969,7 +979,7 @@ static aicam_result_t mqtt_publish_data_json_handler(http_handler_context_t* ctx
     cJSON_AddNumberToObject(response_json, "message_id", result);
     cJSON_AddBoolToObject(response_json, "success", true);
     
-    char *json_string = cJSON_Print(response_json);
+    json_string = cJSON_Print(response_json);
     cJSON_Delete(response_json);
     
     if (!json_string) {
@@ -978,6 +988,129 @@ static aicam_result_t mqtt_publish_data_json_handler(http_handler_context_t* ctx
     
     aicam_result_t api_result = api_response_success(ctx, json_string, "JSON data published successfully");
     return api_result;
+}
+
+/**
+ * @brief Capture image and upload via MQTT handler
+ */
+static aicam_result_t mqtt_capture_handler(http_handler_context_t* ctx)
+{
+    /* variable declarations */
+    aicam_bool_t enable_ai;
+    aicam_bool_t store_to_sd;
+    unsigned int chunk_size;
+    cJSON *request_json;
+    system_capture_request_t req;
+    system_capture_response_t resp;
+    aicam_result_t result;
+    api_business_error_code_t biz_code;
+    const char *biz_msg;
+    aicam_bool_t success;
+    char *json_string;
+
+    enable_ai = AICAM_TRUE;
+    store_to_sd = AICAM_FALSE;
+    chunk_size = 0;
+    request_json = NULL;
+    memset(&resp, 0, sizeof(resp));
+    result = AICAM_OK;
+    biz_code = API_BUSINESS_ERROR_NONE;
+    biz_msg = "Capture and MQTT upload completed";
+    success = AICAM_FALSE;
+    json_string = NULL;
+
+    if (!web_api_verify_method(ctx, "POST")) {
+        return api_response_error(ctx, API_ERROR_METHOD_NOT_ALLOWED, "Method Not Allowed");
+    }
+
+    if (!web_api_verify_content_type(ctx, "application/json")) {
+        return api_response_error(ctx, API_ERROR_INVALID_REQUEST, "Invalid Content-Type");
+    }
+
+    if (!mqtt_service_is_initialized()) {
+        return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "MQTT service is not running");
+    }
+
+    if (system_service_get_status() != AICAM_OK) {
+        return api_response_error(ctx, API_ERROR_SERVICE_UNAVAILABLE, "System service not ready");
+    }
+
+    if (ctx && ctx->request.content_length > 0 && ctx->request.body) {
+        request_json = web_api_parse_body(ctx);
+        if (!request_json) {
+            return api_response_error(ctx, API_ERROR_INVALID_REQUEST, "Invalid JSON");
+        }
+
+        cJSON *enable_ai_item = cJSON_GetObjectItem(request_json, "enable_ai");
+        if (enable_ai_item && cJSON_IsBool(enable_ai_item)) {
+            enable_ai = cJSON_IsTrue(enable_ai_item) ? AICAM_TRUE : AICAM_FALSE;
+        }
+
+        cJSON *chunk_size_item = cJSON_GetObjectItem(request_json, "chunk_size");
+        if (chunk_size_item && cJSON_IsNumber(chunk_size_item) && chunk_size_item->valueint > 0) {
+            chunk_size = (unsigned int)chunk_size_item->valueint;
+        }
+
+        cJSON *store_to_sd_item = cJSON_GetObjectItem(request_json, "store_to_sd");
+        if (store_to_sd_item && cJSON_IsBool(store_to_sd_item)) {
+            store_to_sd = cJSON_IsTrue(store_to_sd_item) ? AICAM_TRUE : AICAM_FALSE;
+        }
+    }
+
+    req.enable_ai = enable_ai;
+    req.chunk_size = chunk_size;
+    req.store_to_sd = store_to_sd;
+    req.fast_fail_mqtt = AICAM_TRUE;
+
+    result = system_service_capture_request(&req, &resp);
+
+    if (request_json) {
+        cJSON_Delete(request_json);
+    }
+
+    // Build unified response (success/failure) using api_response_success
+    success = (result == AICAM_OK);
+
+    if (!success) {
+        biz_code = API_BUSINESS_ERROR_OPERATION_FAILED;
+        biz_msg = "Capture failed";
+
+        if (result == AICAM_ERROR_BUSY) {
+            biz_code = API_BUSINESS_ERROR_OPERATION_IN_PROGRESS;
+            biz_msg = "Capture in progress";
+        } else if (result == AICAM_ERROR_UNAVAILABLE) {
+            biz_code = API_BUSINESS_ERROR_MQTT_NOT_CONNECTED;
+            biz_msg = "MQTT not connected";
+        } else if (result == AICAM_ERROR_TIMEOUT) {
+            biz_code = API_BUSINESS_ERROR_OPERATION_TIMEOUT;
+            biz_msg = "MQTT wait timeout";
+        } else if (result == AICAM_ERROR_NOT_INITIALIZED) {
+            biz_code = API_BUSINESS_ERROR_OPERATION_FAILED;
+            biz_msg = "System not initialized";
+        }
+    }
+
+    if (!success) {
+        return api_response_error(ctx, biz_code, biz_msg);
+    }
+
+    cJSON *response_json = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response_json, "success", success);
+    cJSON_AddNumberToObject(response_json, "code", biz_code);
+    cJSON_AddNumberToObject(response_json, "result", result);
+    cJSON_AddStringToObject(response_json, "message", biz_msg);
+    cJSON_AddBoolToObject(response_json, "enable_ai", enable_ai);
+    cJSON_AddBoolToObject(response_json, "store_to_sd", store_to_sd);
+    cJSON_AddNumberToObject(response_json, "chunk_size", chunk_size);
+    cJSON_AddNumberToObject(response_json, "duration_ms", resp.duration_ms);
+
+    json_string = cJSON_Print(response_json);
+    cJSON_Delete(response_json);
+    if (!json_string) {
+        return api_response_error(ctx, API_ERROR_INTERNAL_ERROR, "Failed to serialize response");
+    }
+
+    return api_response_success(ctx, json_string, biz_msg);
 }
 
 /* ==================== API Module Registration ==================== */
@@ -1029,6 +1162,12 @@ aicam_result_t web_api_register_mqtt_module(void)
             .path = API_PATH_PREFIX"/apps/mqtt/publish/json",
             .method = "POST",
             .handler = mqtt_publish_data_json_handler,
+            .require_auth = AICAM_TRUE
+        },
+        {
+            .path = API_PATH_PREFIX"/device/capture",
+            .method = "POST",
+            .handler = mqtt_capture_handler,
             .require_auth = AICAM_TRUE
         }
     };

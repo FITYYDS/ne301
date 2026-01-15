@@ -235,10 +235,11 @@ static int nvs_flash_erase_sector(nvs_fs_t *fs, uint32_t addr)
 
     if(fs->flash_ops.flash_write_protection_set != NULL) {
         rc = fs->flash_ops.flash_write_protection_set(false);
+        if (rc) {
+            return rc;
+        }
     }
-    if (rc) {
-        return rc;
-    }
+  
 
     rc = fs->flash_ops.flash_erase(offset, fs->sector_size);
     if (rc) {

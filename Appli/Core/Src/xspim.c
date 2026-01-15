@@ -483,6 +483,7 @@ static void XSPI_AutoPollingMemReady(XSPI_HandleTypeDef *hxspi)
 */
 static void XSPI_NOR_OctalDTRModeCfg(XSPI_HandleTypeDef *hxspi)
 {
+    // HAL_StatusTypeDef ret = HAL_OK;
     uint8_t reg = 0;
     XSPI_RegularCmdTypeDef  sCommand = {0};
     XSPI_AutoPollingTypeDef sConfig  = {0};
@@ -548,6 +549,10 @@ static void XSPI_NOR_OctalDTRModeCfg(XSPI_HandleTypeDef *hxspi)
         Error_Handler();
     }
 
+    // /* Wait for write operation to complete by polling WIP (Write In Progress) bit */
+    // sConfig.MatchMask           = 0x01;  /* WIP bit (bit 0) */
+    // sConfig.MatchValue          = 0x00;  /* Wait for WIP bit to be cleared (0 = ready) */
+    
     sCommand.Instruction    = READ_STATUS_REG_CMD;
     sCommand.DataMode       = HAL_XSPI_DATA_1_LINE;
     sCommand.DataLength     = 1;
@@ -557,6 +562,10 @@ static void XSPI_NOR_OctalDTRModeCfg(XSPI_HandleTypeDef *hxspi)
         Error_Handler();
     }
 
+    // ret = HAL_XSPI_AutoPolling(hxspi, &sConfig, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+    // if (ret != HAL_OK) {
+    //     printf("HAL_XSPI_AutoPolling failed: %d\r\n", ret);
+    // }
     if (HAL_XSPI_AutoPolling(hxspi, &sConfig, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK)
     {
         Error_Handler();

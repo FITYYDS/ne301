@@ -79,6 +79,7 @@ static void w5500_low_level_input(struct netif *netif, uint8_t *b, uint16_t len)
     if (len <= 0) return;
     if (len < NETIF_LWIP_FRAME_ALIGNMENT) len = NETIF_LWIP_FRAME_ALIGNMENT;
 
+    // W5500_LOGD("LWIP RX len : %d", len);
     /* We allocate a pbuf chain of pbufs from the Lwip buffer pool
     * and copy the data to the pbuf chain
     */
@@ -90,7 +91,7 @@ static void w5500_low_level_input(struct netif *netif, uint8_t *b, uint16_t len)
         ret = netif->input(p, netif);
         if (ret != ERR_OK) {
             pbuf_free(p);
-            osDelay(10);
+            osDelay(5);
             // printf(NETIF_NAME_STR_FMT ": Input failed(ret = %d)!", NETIF_NAME_PARAMETER(netif), ret);
         }
     } else {
@@ -132,7 +133,6 @@ static err_t w5500_low_level_output(struct netif *netif, struct pbuf *p)
             }
             w5500_send_macraw_data(out_buf, p->tot_len);
             hal_mem_free(out_buf);
-            return ERR_OK;
         }
     }
     for (q = p; q != NULL; q = q->next) {
@@ -391,14 +391,6 @@ int w5500_netif_up(void)
     if (eth == NULL || eth != &eth_netif) return W5500_ERR_INVALID_STATE;
     if (netif_is_link_up(eth)) return W5500_OK;
 
-    ret = netifapi_netif_set_up(&eth_netif);
-    if (ret != ERR_OK) return W5500_ERR_FAILED;
-    ret = netifapi_netif_set_link_up(&eth_netif);
-    if (ret != ERR_OK) {
-        netifapi_netif_set_down(&eth_netif);
-        return W5500_ERR_FAILED;
-    }
-
     // Config IP
     ret = W5500_Cfg_Net(eth_config.ip_addr, eth_config.gw, eth_config.netmask);
     if (ret != W5500_OK) goto w5500_netif_up_end;
@@ -410,6 +402,17 @@ int w5500_netif_up(void)
     IP4_ADDR(&netmask, eth_config.netmask[0], eth_config.netmask[1], eth_config.netmask[2], eth_config.netmask[3]);
 
     ret = netifapi_netif_set_addr(&eth_netif, &ipaddr, &netmask, &gateway);
+    if (ret != ERR_OK) {
+        ret = W5500_ERR_FAILED;
+        goto w5500_netif_up_end;
+    }
+
+    ret = netifapi_netif_set_up(&eth_netif);
+    if (ret != ERR_OK) {
+        ret = W5500_ERR_FAILED;
+        goto w5500_netif_up_end;
+    }
+    ret = netifapi_netif_set_link_up(&eth_netif);
     if (ret != ERR_OK) {
         ret = W5500_ERR_FAILED;
         goto w5500_netif_up_end;
@@ -485,12 +488,12 @@ void w5500_netif_deinit(void)
     if (netif_is_link_up(eth)) w5500_netif_down();
 
     osEventFlagsSet(w5500_events, W5500_EVENT_ISR_TASK_EXIT_REQ);
-    osEventFlagsWait(w5500_events, W5500_EVENT_ISR_TASK_EXIT_REQ, osFlagsWaitAny, osWaitForever);
+    osEventFlagsWait(w5500_events, W5500_EVENT_ISR_TASK_EXIT_ACK, osFlagsWaitAny, 3000);
     osThreadTerminate(w5500_isr_thread_ID);
     w5500_isr_thread_ID = NULL;
 
     osEventFlagsSet(w5500_events, W5500_EVENT_COMM_TASK_EXIT_REQ);
-    osEventFlagsWait(w5500_events, W5500_EVENT_COMM_TASK_EXIT_ACK, osFlagsWaitAny, osWaitForever);
+    osEventFlagsWait(w5500_events, W5500_EVENT_COMM_TASK_EXIT_ACK, osFlagsWaitAny, 3000);
     osThreadTerminate(w5500_comm_thread_ID);
     w5500_comm_thread_ID = NULL;
     

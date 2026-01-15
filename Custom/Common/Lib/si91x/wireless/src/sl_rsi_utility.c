@@ -1104,7 +1104,7 @@ sl_status_t sl_si91x_platform_init(void)
 
 sl_status_t sli_si91x_platform_deinit(void)
 {
-
+  osThreadState_t state = osThreadInactive;
   // Deallocate all threads, mutexes and event handlers
 
   // Terminate Command Engine thread
@@ -1112,6 +1112,10 @@ sl_status_t sli_si91x_platform_deinit(void)
 
   // Terminate SI91X event handler thread
   if (NULL != si91x_event_thread) {
+    do {
+      if (state != osThreadInactive) osDelay(10);
+      state = osThreadGetState(si91x_event_thread);
+    } while (state == osThreadReady || state == osThreadRunning);
     osThreadTerminate(si91x_event_thread);
     si91x_event_thread = NULL;
   }
@@ -1192,6 +1196,9 @@ sl_status_t sli_si91x_flush_all_tx_wifi_queues(uint16_t frame_status)
   return SL_STATUS_OK;
 }
 
+extern void sl_si91x_buffer_type_deallocation(sl_wifi_buffer_type_t type);
+extern uint8_t sl_si91x_get_buffer_allocation(sl_wifi_buffer_type_t type);
+extern int sli_si91x_host_check_buffer(sl_wifi_buffer_t *buffer);
 sl_status_t sli_si91x_flush_generic_data_queues(sli_si91x_buffer_queue_t *tx_data_queue)
 {
   sl_wifi_buffer_t *current_packet = NULL;
@@ -1208,9 +1215,18 @@ sl_status_t sli_si91x_flush_generic_data_queues(sli_si91x_buffer_queue_t *tx_dat
   // Free all packets in the queue
   current_packet = tx_data_queue->head;
   while (current_packet != NULL) {
-    next_packet = (sl_wifi_buffer_t *)current_packet->node.node;
+    if (sl_si91x_host_get_buffer_data(current_packet, 0, NULL) == NULL) break;
+    if (current_packet == tx_data_queue->tail) next_packet = NULL;
+    else next_packet = (sl_wifi_buffer_t *)current_packet->node.node;
+    if (sli_si91x_host_check_buffer(current_packet) == 0) break;
     sli_si91x_host_free_buffer(current_packet);
     current_packet = next_packet;
+  }
+
+  while (sl_si91x_get_buffer_allocation(SL_WIFI_TX_FRAME_BUFFER))
+  {
+    printf("buffer_allocation = %d\n", sl_si91x_get_buffer_allocation(SL_WIFI_TX_FRAME_BUFFER));
+    sl_si91x_buffer_type_deallocation(SL_WIFI_TX_FRAME_BUFFER);
   }
 
   // Reset the queue

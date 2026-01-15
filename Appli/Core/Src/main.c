@@ -44,12 +44,14 @@
 #include "debug.h"
 #include "framework.h"
 #include "driver_core.h"
+#include "driver_test.h"
 #include "xspim.h"
 #include "rng.h"
 #include "core_init.h"
 #include "service_init.h"
 #include "drtc.h"
 #include "wdg.h"
+#include "wifi.h" 
 #define IS_IRQ_MODE()     (__get_IPSR() != 0U)
 
 extern int __uncached_bss_start__;
@@ -78,14 +80,7 @@ extern int __uncached_bss_end__;
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-extern DMA_HandleTypeDef handle_GPDMA1_Channel6;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel5;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel11;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel10;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel1;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel0;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel4;
-extern DMA_HandleTypeDef handle_GPDMA1_Channel3;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -107,7 +102,7 @@ const osThreadAttr_t mainTask_attributes = {
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static void NPURam_enable()
+void NPURam_enable()
 {
     __HAL_RCC_NPU_CLK_ENABLE();
     __HAL_RCC_NPU_FORCE_RESET();
@@ -129,6 +124,29 @@ static void NPURam_enable()
     hramcfg.Instance =  RAMCFG_SRAM6_AXI;
     HAL_RAMCFG_EnableAXISRAM(&hramcfg);
 }
+
+#if POWER_MODULE_TEST
+void NPURam_disable()
+{
+    RAMCFG_HandleTypeDef hramcfg = {0};
+    hramcfg.Instance =  RAMCFG_SRAM3_AXI;
+    HAL_RAMCFG_DisableAXISRAM(&hramcfg);
+    hramcfg.Instance =  RAMCFG_SRAM4_AXI;
+    HAL_RAMCFG_DisableAXISRAM(&hramcfg);
+    hramcfg.Instance =  RAMCFG_SRAM5_AXI;
+    HAL_RAMCFG_DisableAXISRAM(&hramcfg);
+    hramcfg.Instance =  RAMCFG_SRAM6_AXI;
+    HAL_RAMCFG_DisableAXISRAM(&hramcfg);
+
+    __HAL_RCC_AXISRAM3_MEM_CLK_DISABLE();
+    __HAL_RCC_AXISRAM4_MEM_CLK_DISABLE();
+    __HAL_RCC_AXISRAM5_MEM_CLK_DISABLE();
+    __HAL_RCC_AXISRAM6_MEM_CLK_DISABLE();
+    __HAL_RCC_RAMCFG_CLK_DISABLE();
+
+    __HAL_RCC_NPU_CLK_DISABLE();
+}
+#endif
 
 static void Setup_Mpu()
 {
@@ -152,7 +170,7 @@ static void Setup_Mpu()
     HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 }
 
-static void NPUCache_config()
+void NPUCache_config()
 {
     npu_cache_init();
     npu_cache_enable();
@@ -193,8 +211,10 @@ static void PLATFORM_Config(void)
     MX_RNG_Init();
 #endif
 
+#if !defined(POWER_MODULE_TEST) || !POWER_MODULE_TEST
     NPURam_enable();
     NPUCache_config();
+#endif
     /*** External RAM and NOR Flash *********************************************/
 #ifdef BOOT_IN_PSRAM
     // BSP_XSPI_RAM_Init(0);
@@ -284,6 +304,18 @@ void StartMainTask(void *argument)
     step_duration_ms = step_end_time_ms - step_start_time_ms;
     printf("[BOOT] Step 4 - core_system_init: %lu ms\r\n", (unsigned long)step_duration_ms);
 
+#if POWER_MODULE_TEST
+    for (;;) {
+        osDelay(1000);
+    }
+#endif
+
+    if (is_wifi_ant()) {
+      for (;;) {
+          osDelay(1000);
+      }
+    }
+
     // Step 5: Service initialization
     step_start_time_ms = rtc_get_uptime_ms();
     service_init();
@@ -314,7 +346,7 @@ void StartMainTask(void *argument)
            (unsigned long)total_duration_ms, total_duration_ms / 1000.0f);
     printf("[BOOT] ============================================\r\n\r\n");
     
-    wdg_task_change_priority(osPriorityNormal);
+    // wdg_task_change_priority(osPriorityNormal);
     printf("[MAIN] Entering main loop\r\n");
 
     /* Infinite loop */
@@ -426,7 +458,7 @@ void SystemClock_Config(void)
   }
 
   /* Wait HSE stabilization time before its selection as PLL source. */
-  HAL_Delay(HSE_STARTUP_TIMEOUT);
+  // HAL_Delay(HSE_STARTUP_TIMEOUT);
 
   /** Get current CPU/System buses clocks configuration and if necessary switch
  to intermediate HSI clock to ensure target clock can be set
@@ -551,7 +583,7 @@ void SystemClock_Config(void)
   }
 
   /* Wait HSE stabilization time before its selection as PLL source. */
-  HAL_Delay(HSE_STARTUP_TIMEOUT);
+  // HAL_Delay(HSE_STARTUP_TIMEOUT);
 
   /** Get current CPU/System buses clocks configuration and if necessary switch
  to intermediate HSI clock to ensure target clock can be set
@@ -797,7 +829,7 @@ void SystemClock_Config(void)
   }
 
   /* Wait HSE stabilization time before its selection as PLL source. */
-  HAL_Delay(HSE_STARTUP_TIMEOUT);
+  // HAL_Delay(HSE_STARTUP_TIMEOUT);
 
   /** Get current CPU/System buses clocks configuration and if necessary switch
  to intermediate HSI clock to ensure target clock can be set

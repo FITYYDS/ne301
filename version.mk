@@ -23,11 +23,11 @@
 # Main version number definition (manually update for releases)
 VERSION_MAJOR  := 1
 VERSION_MINOR  := 0
-VERSION_PATCH  := 0
+VERSION_PATCH  := 1
 # Version suffix (optional, for alpha/beta/rc releases)
 # Examples: alpha, beta, rc1, dev
 # Leave empty for production releases
-VERSION_SUFFIX := beta
+VERSION_SUFFIX := 
 
 # =============================================================================
 # Build number auto-generation
@@ -71,18 +71,18 @@ endif
 # =============================================================================
 # Set component-specific versions (leave empty to use main version)
 # Format: MAJOR.MINOR.PATCH.BUILD or empty
-FSBL_VERSION_OVERRIDE    := 1.0.0.0
+FSBL_VERSION_OVERRIDE    := 1.0.0.2
 APP_VERSION_OVERRIDE     := $(VERSION)
-WEB_VERSION_OVERRIDE     := 0.2.22.0
+WEB_VERSION_OVERRIDE     := 1.2.0.0
 MODEL_VERSION_OVERRIDE   := 1.0.0.0
-WAKECORE_VERSION_OVERRIDE := 0.2.7.0
+WAKECORE_VERSION_OVERRIDE := 0.2.7.1
 
 # Set component-specific version suffixes
 # - Leave undefined (commented or not set) to inherit main suffix
 # - Set to empty string (NONE) to explicitly disable suffix for this component
 # - Set to any value to use that suffix
 FSBL_SUFFIX    := NONE
-APP_SUFFIX     := 
+APP_SUFFIX     := NONE
 WEB_SUFFIX     := NONE
 MODEL_SUFFIX   := NONE
 WAKECORE_SUFFIX := NONE

@@ -144,7 +144,7 @@ int modem_at_cmd_exec_with_opt(modem_at_handle_t *handle, const at_cmd_item_t *c
     char *or_flag_ptr = NULL, *r_ptr = NULL;
     size_t exp_rsp_len = 0;
     uint16_t send_len = 0, rsp_num = 0, retry_times = 0;
-    if (cmd_item == NULL || cmd_item->cmd == NULL) return MODEM_ERR_INVALID_ARG;
+    if (handle == NULL || cmd_item == NULL || cmd_item->cmd == NULL) return MODEM_ERR_INVALID_ARG;
     if (handle->state < MODEM_AT_STATE_INIT) return MODEM_ERR_INVALID_STATE;
     
     if (is_lock == 0 || xSemaphoreTake(handle->uart_tx_mutex, pdMS_TO_TICKS(MODEM_AT_TX_MUTEX_TAKE_TIMEOUT)) == pdPASS) {
@@ -166,6 +166,12 @@ int modem_at_cmd_exec_with_opt(modem_at_handle_t *handle, const at_cmd_item_t *c
             // Check if need to wait for response
             if (recode == MODEM_OK && cmd_item->expect_rsp_line > 0) {
                 while (rsp_num < cmd_item->expect_rsp_line && (xQueueReceive(handle->rsp_queue, &rsp_list[rsp_num], pdMS_TO_TICKS(cmd_item->timeout_ms)) == pdPASS)) {
+                    if (handle->is_filter_echo) {
+                        if (strstr(cmd_item->cmd, "\r\n") != NULL && send_len > 2 && strncmp(rsp_list[rsp_num], cmd_item->cmd, send_len - 2) == 0) {
+                            MODEM_LOGD("ECHO SKIP: %s", rsp_list[rsp_num]);
+                            continue; // Skip echo command
+                        }
+                    }
                     MODEM_LOGD("RX <= (%d): %s", strlen(rsp_list[rsp_num]), rsp_list[rsp_num]);
                     rsp_num++;
                     if (rsp_num == 1 && cmd_item->expect_rsp_line > 1 && strstr(rsp_list[0], "+CME ERROR:")) {
@@ -344,9 +350,15 @@ int modem_at_test(modem_at_handle_t *handle, uint8_t *is_ate1, uint32_t timeout_
 		.handler = paser_at_test_rsp_handler,
         .user_data = (void *)is_ate1
     };
-    if (handle->state < MODEM_AT_STATE_INIT) return MODEM_ERR_INVALID_STATE;
 
     return modem_at_cmd_exec(handle, &cmd_item);
+}
+
+int modem_at_set_echo_filter(modem_at_handle_t *handle, uint8_t is_filter)
+{
+    handle->is_filter_echo = is_filter ? 1 : 0;
+    MODEM_LOGD("Echo filter: %d.", handle->is_filter_echo);
+    return MODEM_OK;
 }
 
 int modem_at_cmd_wait_ok(modem_at_handle_t *handle, const char *cmd, uint32_t timeout_ms)

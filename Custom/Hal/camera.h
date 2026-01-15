@@ -52,11 +52,11 @@
 #define PIPE2_MAX_HEIGHT    480
 
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
-#define CAPTURE_BUFFER_NB (CAPTURE_DELAY + 1)
+#define CAPTURE_BUFFER_NB (CAPTURE_DELAY + 2)
 #else
-#define CAPTURE_BUFFER_NB (CAPTURE_DELAY + 1)
+#define CAPTURE_BUFFER_NB (CAPTURE_DELAY + 2)
 #endif
-#define NN_BUFFER_NB 2
+#define NN_BUFFER_NB 3
 
 #define CAMERA_CTRL_PIPE1_BIT (1<<1)
 #define CAMERA_CTRL_PIPE2_BIT (1<<2)
@@ -77,12 +77,18 @@ typedef enum {
     CAM_CMD_SET_PIPE2_START,
     CAM_CMD_SET_PIPE2_STOP,
     CAM_CMD_GET_PIPE1_BUFFER,
+    CAM_CMD_LOCK_PIPE1_BUFFER,
+    CAM_CMD_UNLOCK_PIPE1_BUFFER,
     CAM_CMD_GET_PIPE2_BUFFER,
+    CAM_CMD_LOCK_PIPE2_BUFFER,
+    CAM_CMD_UNLOCK_PIPE2_BUFFER,
     CAM_CMD_GET_PIPE1_BUFFER_WITH_FRAME_ID,
     CAM_CMD_GET_PIPE2_BUFFER_WITH_FRAME_ID,
     CAM_CMD_SET_PIPE2_BUFFER_ADDR,
     CAM_CMD_RETURN_PIPE1_BUFFER,
     CAM_CMD_RETURN_PIPE2_BUFFER,
+    CAM_CMD_SET_STARTUP_SKIP_FRAMES,    // Set frames to skip on startup for stabilization
+    CAM_CMD_GET_STARTUP_SKIP_FRAMES,    // Get current startup skip frames setting
 } CAM_CMD_E;
 
 typedef enum {
@@ -104,10 +110,15 @@ typedef enum {
     BUFFER_IN_USE         // In use
 } BUFFER_STATE_E;
 
+#define CAMERA_BUF_MAX_OWNERS 3
 typedef struct {
     uint8_t* data;
     BUFFER_STATE_E state;
     uint32_t frame_id;
+    osThreadId_t owner_list[CAMERA_BUF_MAX_OWNERS];
+    uint8_t is_locked;
+    uint8_t owner_count;
+    uint8_t return_count;
 } pipe_buffer_t;
 
 typedef struct {
@@ -153,6 +164,7 @@ typedef struct {
     bool is_init;
     device_t *dev;
     osMutexId_t mtx_id;
+    uint8_t mtx_isr;
     osSemaphoreId_t sem_init;
     osSemaphoreId_t sem_isp;
     osSemaphoreId_t sem_pipe1;
@@ -166,6 +178,8 @@ typedef struct {
     camera_dq_t pipe2_dq;
     uint8_t device_ctrl_pipe;
     int current_frame_id;
+    int skip_frame_counter;
+    int startup_skip_frames;        // Configurable frames to skip on startup
     osThreadId_t camera_processId;
     camera_state_t state;
     PowerHandle pwr_handle;

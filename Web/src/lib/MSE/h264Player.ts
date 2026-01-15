@@ -192,7 +192,9 @@ export default class H264Player {
                     window.dispatchEvent(new CustomEvent('wv_open'));
                     break;
                 case 'close':
-                    window.dispatchEvent(new CustomEvent('wv_close'));
+                    window.dispatchEvent(new CustomEvent('wv_close', { 
+                        detail: { code: msg.code, reason: msg.reason } 
+                    }));
                     break;
                 case 'error':
                     window.dispatchEvent(new CustomEvent('wv_error', { detail: msg.error }));
@@ -516,8 +518,8 @@ export default class H264Player {
         // console.log('hexData', hexData);
         // Construct data format expected by Worker
         // JMuxer requires H.264 NAL unit data with start code
-
-        const h264Data = new Uint8Array(frameData);
+        const headSize = 64
+        const h264Data = new Uint8Array(frameData, headSize);
 
         if (!H264Player.checkFrameData(frameData)) {
             return false;

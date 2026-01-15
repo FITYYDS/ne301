@@ -10,8 +10,8 @@
 
 #define FLASH_DUTY 50
 
-#define BATTERY_MIN_VOLTAGE (1800)  /* Minimum battery voltage in mV */
-#define BATTERY_MAX_VOLTAGE (3000)  /* Maximum battery voltage in mV */
+#define BATTERY_MIN_VOLTAGE (3600)  /* Minimum battery voltage in mV */
+#define BATTERY_MAX_VOLTAGE (6000)  /* Maximum battery voltage in mV */
 
 #define LIGHT_MIN_SENS      (0)    /* Minimum light sensor value */
 #define LIGHT_MAX_SENS      (2500) /* Maximum light sensor value */

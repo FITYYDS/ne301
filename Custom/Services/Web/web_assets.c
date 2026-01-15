@@ -133,6 +133,9 @@ static const char *get_mime_type(const char *filename) {
             web_assets[i].is_compressed = AICAM_FALSE;
         }
 
+        //print the path and size
+        LOG_SVC_INFO("[ASSETS] Path: %s, Size: %u bytes\n", web_assets[i].path, web_assets[i].size);
+
         web_assets[i].mime_type = get_mime_type(web_assets[i].path);
         web_assets[i].compression_ratio = 1.0f;
         web_assets[i].hash = 0; 

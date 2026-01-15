@@ -92,6 +92,7 @@ void clean_system_state(void)
     flash_write(OTA_BASE - FLASH_BASE, &g_sys_state, sizeof(SystemState));
 }
 
+
 void init_system_state(upgrade_flash_read read, upgrade_flash_write write, upgrade_flash_erase erase) 
 {
     flash_read = read;
@@ -121,6 +122,47 @@ void init_system_state(upgrade_flash_read read, upgrade_flash_write write, upgra
         save_system_state();
     }
 }
+
+void verify_fsbl_version(const char *version)
+{
+    if (version == NULL) {
+        return;
+    }
+
+    unsigned int parsed_ver[4] = {0};
+    char fsbl_version[16] = {0};
+
+    ota_version_to_string(
+        g_sys_state.slot[FIRMWARE_FSBL][SLOT_A].version,
+        fsbl_version, sizeof(fsbl_version)
+    );
+
+    if (strcmp(version, fsbl_version) == 0) {
+        return;
+    }
+
+    int cnt = sscanf(
+        version,
+        "%u.%u.%u.%u%*s",
+        &parsed_ver[0], &parsed_ver[1],
+        &parsed_ver[2], &parsed_ver[3]
+    );
+
+    if (cnt != 4) {
+        printf("verify_fsbl_version: invalid version format: %s\r\n", version);
+        return;
+    }
+
+    memset(g_sys_state.slot[FIRMWARE_FSBL][SLOT_A].version, 0, sizeof(g_sys_state.slot[FIRMWARE_FSBL][SLOT_A].version));
+    g_sys_state.slot[FIRMWARE_FSBL][SLOT_A].version[0] = parsed_ver[0] & 0xFF;
+    g_sys_state.slot[FIRMWARE_FSBL][SLOT_A].version[1] = parsed_ver[1] & 0xFF;
+    g_sys_state.slot[FIRMWARE_FSBL][SLOT_A].version[2] = parsed_ver[2] & 0xFF;
+    g_sys_state.slot[FIRMWARE_FSBL][SLOT_A].version[3] = parsed_ver[3] & 0xFF;
+
+    save_system_state();
+}
+
+
 
 SystemState *get_system_state(void) 
 {

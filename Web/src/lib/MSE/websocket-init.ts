@@ -10,7 +10,7 @@ const retryWindowMs = 60 * 1000;
 let firstRetryTime: number | null = null;
 const baseDelay = 1000; // ms
 let retryTimer: number | null = null;
-
+ 
 function clearRetryTimer(): void {
     if (retryTimer !== null) {
         clearTimeout(retryTimer);

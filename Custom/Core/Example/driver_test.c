@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include "driver_test.h"
 #include "debug.h"
+#include "storage.h"
 #include "generic_file.h"
 #include "lfs.h"
 #include "camera.h"
@@ -19,6 +20,7 @@
 #include "nn.h"
 #include "ai_draw.h"
 #include "mem_map.h"
+#include "rs485_driver.h"
 
 static int create_file(const char* filename, const void* data, size_t data_size);
 
@@ -1036,8 +1038,658 @@ __attribute__((unused)) static void video_cmd_register(void)
     debug_cmdline_register(video_cmd_table, sizeof(video_cmd_table) / sizeof(video_cmd_table[0]));
 }
 
+// static int usb2_phy_reg_cmd(int argc, char* argv[]) 
+// {
+//     int ret = 0;
+//     char *endptr = NULL;
+//     uint32_t reg_value = 0;
+    
+//     if (argc < 2) {
+//         LOG_SIMPLE("Usage: usb2phy <cr1/cr2> [value | \"reset\"]\r\n");
+//         return -1;
+//     }
+    
+//     if (strcmp(argv[1], "cr1") == 0) {
+//         if (argc >= 3) {
+//             if (strcmp(argv[2], "reset") == 0) {
+//                 ret = storage_nvs_delete(NVS_FACTORY, "usb2phy_cr1");
+//                 if (ret != 0) {
+//                     LOG_SIMPLE("Failed to reset USB2 PHY TRIM1CR: %d\r\n", ret);
+//                     return -1;
+//                 }
+//                 LOG_SIMPLE("USB2 PHY TRIM1CR reset.\r\n");
+//                 return 0;
+//             } else {
+//                 reg_value = strtoul(argv[2], &endptr, 0);
+//                 if (endptr == argv[2]) {
+//                     LOG_SIMPLE("Invalid value: %s\r\n", argv[2]);
+//                     return -1;
+//                 }
+//                 ret = storage_nvs_write(NVS_FACTORY, "usb2phy_cr1", &reg_value, sizeof(reg_value));
+//                 if (ret != sizeof(reg_value)) {
+//                     LOG_SIMPLE("Failed to set USB2 PHY TRIM1CR: %d\r\n", ret);
+//                     return -1;
+//                 }
+//                 LOG_SIMPLE("USB2 PHY TRIM1CR set to 0x%08X\r\n", reg_value);
+//                 return 0;
+//             }
+//         } else {
+//             ret = storage_nvs_read(NVS_FACTORY, "usb2phy_cr1", &reg_value, sizeof(reg_value));
+//             if (ret == sizeof(reg_value)) {
+//                 LOG_SIMPLE("Stored USB2 PHY TRIM1CR: 0x%08X\r\n", reg_value);
+//             } else {
+//                 LOG_SIMPLE("No stored USB2 PHY TRIM1CR found.\r\n");
+//             }
+//             return 0;
+//         }
+//     } else if (strcmp(argv[1], "cr2") == 0) {
+//         if (argc >= 3) {
+//             if (strcmp(argv[2], "reset") == 0) {
+//                 ret = storage_nvs_delete(NVS_FACTORY, "usb2phy_cr2");
+//                 if (ret != 0) {
+//                     LOG_SIMPLE("Failed to reset USB2 PHY TRIM2CR: %d\r\n", ret);
+//                     return -1;
+//                 }
+//                 LOG_SIMPLE("USB2 PHY TRIM2CR reset.\r\n");
+//                 return 0;
+//             } else {
+//                 reg_value = strtoul(argv[2], &endptr, 0);
+//                 if (endptr == argv[2]) {
+//                     LOG_SIMPLE("Invalid value: %s\r\n", argv[2]);
+//                     return -1;
+//                 }
+//                 ret = storage_nvs_write(NVS_FACTORY, "usb2phy_cr2", &reg_value, sizeof(reg_value));
+//                 if (ret != sizeof(reg_value)) {
+//                     LOG_SIMPLE("Failed to set USB2 PHY TRIM2CR: %d\r\n", ret);
+//                     return -1;
+//                 }
+//                 LOG_SIMPLE("USB2 PHY TRIM2CR set to 0x%08X\r\n", reg_value);
+//                 return 0;
+//             }
+//         } else {
+//             ret = storage_nvs_read(NVS_FACTORY, "usb2phy_cr2", &reg_value, sizeof(reg_value));
+//             if (ret == sizeof(reg_value)) {
+//                 LOG_SIMPLE("Stored USB2 PHY TRIM2CR: 0x%08X\r\n", reg_value);
+//             } else {
+//                 LOG_SIMPLE("No stored USB2 PHY TRIM2CR found.\r\n");
+//             }
+//             return 0;
+//         }
+//     } else {
+//         LOG_SIMPLE("Usage: usb2phy <cr1/cr2> [value]\r\n");
+//         return -1;
+//     }
+
+//     return 0;
+// }
+
+// int usb2_speed_cmd(int argc, char* argv[]) 
+// {
+//     int ret = 0;
+
+//     if (argc < 2) {
+//         LOG_SIMPLE("Usage: usb2speed <high|full|low>\r\n");
+//         return -1;
+//     }
+    
+//     if (strcmp(argv[1], "full") == 0) {
+//         ret = storage_nvs_write(NVS_FACTORY, "usb2_speed", "full", sizeof("full"));
+//         if (ret != sizeof("full")) {
+//             LOG_SIMPLE("Failed to set USB2 speed to full: %d\r\n", ret);
+//             return -1;
+//         }
+//         LOG_SIMPLE("USB2 speed set to full speed.\r\n");
+//     } else if (strcmp(argv[1], "low") == 0) {
+//         ret = storage_nvs_write(NVS_FACTORY, "usb2_speed", "low", sizeof("low"));
+//         if (ret != sizeof("low")) {
+//             LOG_SIMPLE("Failed to set USB2 speed to low: %d\r\n", ret);
+//             return -1;
+//         }
+//         LOG_SIMPLE("USB2 speed set to low speed.\r\n");
+//     } else if (strcmp(argv[1], "high") == 0) {
+//         ret = storage_nvs_write(NVS_FACTORY, "usb2_speed", "high", sizeof("high"));
+//         if (ret != sizeof("high")) {
+//             LOG_SIMPLE("Failed to set USB2 speed to high: %d\r\n", ret);
+//             return -1;
+//         }
+//         LOG_SIMPLE("USB2 speed set to high speed.\r\n");
+//     } else {
+//         LOG_SIMPLE("Usage: usb2speed <high|full|low>\r\n");
+//         return -1;
+//     }
+//     return 0;
+// }
+
+// debug_cmd_reg_t usb_cmd_table[] = {
+//     {"usb2phy",   "USB2 PHY register read/write.", usb2_phy_reg_cmd},
+//     {"usb2speed",   "Set USB2 speed mode.", usb2_speed_cmd},
+// };
+
+// static void usb_cmd_register(void)
+// {
+//     debug_cmdline_register(usb_cmd_table, sizeof(usb_cmd_table) / sizeof(usb_cmd_table[0]));
+// }
+
+#if POWER_MODULE_TEST
+
+extern void NPURam_enable();
+extern void NPURam_disable();
+extern void NPUCache_config();
+extern void npu_cache_disable(void);
+static int module_test_cmd(int argc, char* argv[]) 
+{
+    device_t *dev = NULL;
+    char filename[MAX_FILENAME_LEN] = {0};
+    uint8_t *fb = NULL;
+    int fb_len = 0;
+    if (argc < 3) {
+        LOG_SIMPLE("Usage: module <camera/enc/ai> <on/off>\r\n");
+        return -1;
+    }
+
+    if (strcmp(argv[1], "camera") == 0) {
+        dev = device_find_pattern(CAMERA_DEVICE_NAME, DEV_TYPE_VIDEO);
+        if (strcmp(argv[2], "on") == 0) {
+            if (dev != NULL) {
+                LOG_SIMPLE("Camera module is already powered on.\r\n");
+                return -1;
+            }
+            camera_register();
+            dev = device_find_pattern(CAMERA_DEVICE_NAME, DEV_TYPE_VIDEO);
+            if (dev == NULL) {
+                LOG_SIMPLE("Failed to register camera module.\r\n");
+                return -1;
+            }
+            device_start(dev);
+            LOG_SIMPLE("Camera module powered on.\r\n");
+        } else if (strcmp(argv[2], "off") == 0) {
+            if (dev == NULL) {
+                LOG_SIMPLE("Camera module is already powered off.\r\n");
+                return -1;
+            }
+            device_stop(dev);
+            camera_unregister();
+            LOG_SIMPLE("Camera module powered off.\r\n");
+        } else if (strcmp(argv[2], "capture") == 0) {
+            dev = device_find_pattern(CAMERA_DEVICE_NAME, DEV_TYPE_VIDEO);
+            if (dev == NULL) {
+                LOG_SIMPLE("Camera module is not powered on.\r\n");
+                return -1;
+            }
+            fb_len = device_ioctl(dev, CAM_CMD_GET_PIPE1_BUFFER, (uint8_t *)&fb, 0);
+            if (fb_len <= 0) {
+                LOG_SIMPLE("Failed to get capture buffer, length: %d.\r\n", fb_len);
+                return -1;
+            }
+            snprintf(filename, MAX_FILENAME_LEN, "capture%lu.rgb", osKernelGetTickCount());
+            create_file(filename, fb, fb_len);
+            device_ioctl(dev, CAM_CMD_RETURN_PIPE1_BUFFER, fb, 0);
+            LOG_SIMPLE("Capture saved to %s.\r\n", filename);
+        } else {
+            LOG_SIMPLE("Usage: module <camera/enc/ai> <on/off>\r\n");
+            return -1;
+        }
+    } else if (strcmp(argv[1], "enc") == 0) {
+        dev = device_find_pattern(ENC_DEVICE_NAME, DEV_TYPE_VIDEO);
+        if (strcmp(argv[2], "on") == 0) {
+            if (dev != NULL) {
+                LOG_SIMPLE("Encoder module is already powered on.\r\n");
+                return -1;
+            }
+            enc_register();
+            dev = device_find_pattern(ENC_DEVICE_NAME, DEV_TYPE_VIDEO);
+            if (dev == NULL) {
+                LOG_SIMPLE("Failed to register encoder module.\r\n");
+                return -1;
+            }
+            device_start(dev);
+            LOG_SIMPLE("Encoder module powered on.\r\n");
+        } else if (strcmp(argv[2], "off") == 0) {
+            if (dev == NULL) {
+                LOG_SIMPLE("Encoder module is already powered off.\r\n");
+                return -1;
+            }
+            device_stop(dev);
+            enc_unregister();
+            LOG_SIMPLE("Encoder module powered off.\r\n");
+        } else {
+            LOG_SIMPLE("Usage: module <camera/enc/ai> <on/off>\r\n");
+            return -1;
+        }
+    } else if (strcmp(argv[1], "ai") == 0) {
+        dev = device_find_pattern("nn", DEV_TYPE_AI);
+        if (strcmp(argv[2], "on") == 0) {
+            if (dev != NULL) {
+                LOG_SIMPLE("AI module is already powered on.\r\n");
+                return -1;
+            }
+            NPURam_enable();
+            NPUCache_config();
+            nn_register();
+            LOG_SIMPLE("AI module powered on.\r\n");
+        } else if (strcmp(argv[2], "off") == 0) {
+            if (dev == NULL) {
+                LOG_SIMPLE("AI module is already powered off.\r\n");
+                return -1;
+            }
+            nn_unregister();
+            npu_cache_disable();
+            NPURam_disable();
+            LOG_SIMPLE("AI module powered off.\r\n");
+        } else {
+            LOG_SIMPLE("Usage: module <camera/enc/ai> <on/off>\r\n");
+            return -1;
+        }
+    } else {
+        LOG_SIMPLE("Usage: module <camera/enc/ai> <on/off>\r\n");
+        return -1;
+    }
+    return 0;
+}
+
+debug_cmd_reg_t module_cmd_table[] = {
+    {"module",   "Module power on/off control.", module_test_cmd},
+};
+
+static void module_cmd_register(void)
+{
+    debug_cmdline_register(module_cmd_table, sizeof(module_cmd_table) / sizeof(module_cmd_table[0]));
+}
+
+#endif
+
+/* ==================== GPIO/IO TEST TOOL ==================== */
+
+typedef struct {
+    GPIO_TypeDef *port;
+    uint16_t      pin;
+    uint8_t       is_output;
+} io_test_pin_t;
+
+#define IO_TEST_MAX_PINS   16
+static io_test_pin_t g_io_test_pins[IO_TEST_MAX_PINS] = {0};
+
+static GPIO_TypeDef *io_test_get_port(char port_char)
+{
+    switch (port_char) {
+        case 'A': return GPIOA;
+        case 'B': return GPIOB;
+        case 'C': return GPIOC;
+        case 'D': return GPIOD;
+        case 'E': return GPIOE;
+        case 'F': return GPIOF;
+        case 'G': return GPIOG;
+        case 'H': return GPIOH;
+        default:  return NULL;
+    }
+}
+
+static void io_test_enable_port_clock(GPIO_TypeDef *port)
+{
+    if (port == GPIOA)      __HAL_RCC_GPIOA_CLK_ENABLE();
+    else if (port == GPIOB) __HAL_RCC_GPIOB_CLK_ENABLE();
+    else if (port == GPIOC) __HAL_RCC_GPIOC_CLK_ENABLE();
+    else if (port == GPIOD) __HAL_RCC_GPIOD_CLK_ENABLE();
+    else if (port == GPIOE) __HAL_RCC_GPIOE_CLK_ENABLE();
+    else if (port == GPIOF) __HAL_RCC_GPIOF_CLK_ENABLE();
+    else if (port == GPIOG) __HAL_RCC_GPIOG_CLK_ENABLE();
+    else if (port == GPIOH) __HAL_RCC_GPIOH_CLK_ENABLE();
+}
+
+static int io_test_parse_pin(const char *str, GPIO_TypeDef **port, uint16_t *pin)
+{
+    if (!str || strlen(str) < 3 || (str[0] != 'P' && str[0] != 'p')) {
+        return -1;
+    }
+    char port_char = (char)toupper((int)str[1]);
+    int pin_num = atoi(&str[2]);
+    if (pin_num < 0 || pin_num > 15) {
+        return -1;
+    }
+    *port = io_test_get_port(port_char);
+    if (*port == NULL) {
+        return -1;
+    }
+    *pin = (uint16_t)(1U << pin_num);
+    return 0;
+}
+
+static io_test_pin_t *io_test_get_pin(GPIO_TypeDef *port, uint16_t pin, int create_if_not_exist)
+{
+    int free_index = -1;
+    for (int i = 0; i < IO_TEST_MAX_PINS; i++) {
+        if (g_io_test_pins[i].port == port && g_io_test_pins[i].pin == pin) {
+            return &g_io_test_pins[i];
+        }
+        if (!g_io_test_pins[i].port && free_index < 0) {
+            free_index = i;
+        }
+    }
+    if (!create_if_not_exist || free_index < 0) {
+        return NULL;
+    }
+    g_io_test_pins[free_index].port = port;
+    g_io_test_pins[free_index].pin = pin;
+    g_io_test_pins[free_index].is_output = 0;
+    return &g_io_test_pins[free_index];
+}
+
+static int io_test_cmd(int argc, char *argv[])
+{
+    if (argc < 3) {
+        LOG_SIMPLE("Usage:\r\n");
+        LOG_SIMPLE("  io config <PA1> <in|out>\r\n");
+        LOG_SIMPLE("  io read   <PA1>\r\n");
+        LOG_SIMPLE("  io write  <PA1> <0|1>\r\n");
+        return -1;
+    }
+
+    const char *sub = argv[1];
+    GPIO_TypeDef *port = NULL;
+    uint16_t pin = 0;
+
+    if (io_test_parse_pin(argv[2], &port, &pin) != 0) {
+        LOG_SIMPLE("io: invalid pin '%s', use like PA1/PE12\r\n", argv[2]);
+        return -1;
+    }
+
+    if (strcmp(sub, "config") == 0) {
+        if (argc < 4) {
+            LOG_SIMPLE("io config: missing mode, use in/out\r\n");
+            return -1;
+        }
+        GPIO_InitTypeDef GPIO_InitStruct = {0};
+        io_test_enable_port_clock(port);
+        GPIO_InitStruct.Pin = pin;
+        GPIO_InitStruct.Pull = GPIO_NOPULL;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+        io_test_pin_t *info = io_test_get_pin(port, pin, 1);
+        if (!info) {
+            LOG_SIMPLE("io config: no free slot\r\n");
+            return -1;
+        }
+
+        if (strcmp(argv[3], "out") == 0) {
+            GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+            info->is_output = 1;
+        } else if (strcmp(argv[3], "in") == 0) {
+            GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+            info->is_output = 0;
+        } else {
+            LOG_SIMPLE("io config: invalid mode '%s', use in/out\r\n", argv[3]);
+            return -1;
+        }
+
+        HAL_GPIO_Init(port, &GPIO_InitStruct);
+        LOG_SIMPLE("io config: %s as %s\r\n", argv[2], info->is_output ? "output" : "input");
+        return 0;
+    } else if (strcmp(sub, "read") == 0) {
+        GPIO_PinState state = HAL_GPIO_ReadPin(port, pin);
+        LOG_SIMPLE("io read %s = %d\r\n", argv[2], (state == GPIO_PIN_SET) ? 1 : 0);
+        return 0;
+    } else if (strcmp(sub, "write") == 0) {
+        if (argc < 4) {
+            LOG_SIMPLE("io write: missing value 0/1\r\n");
+            return -1;
+        }
+        io_test_pin_t *info = io_test_get_pin(port, pin, 0);
+        if (!info || !info->is_output) {
+            LOG_SIMPLE("io write: %s is not configured as output\r\n", argv[2]);
+            return -1;
+        }
+        int val = atoi(argv[3]);
+        HAL_GPIO_WritePin(port, pin, (val ? GPIO_PIN_SET : GPIO_PIN_RESET));
+        LOG_SIMPLE("io write %s = %d\r\n", argv[2], val ? 1 : 0);
+        return 0;
+    }
+
+    LOG_SIMPLE("io: unknown subcmd '%s'\r\n", sub);
+    return -1;
+}
+
+debug_cmd_reg_t io_cmd_table[] = {
+    {"io", "GPIO test tool", io_test_cmd},
+};
+
+static void io_cmd_register(void)
+{
+    debug_cmdline_register(io_cmd_table, sizeof(io_cmd_table) / sizeof(io_cmd_table[0]));
+}
+
+/* ==================== RS485 TEST TOOL ==================== */
+
+typedef enum {
+    RS485_TEST_MODE_STRING = 0,
+    RS485_TEST_MODE_HEX    = 1,
+} rs485_test_mode_t;
+
+static rs485_test_mode_t g_rs485_mode = RS485_TEST_MODE_STRING;
+static int g_rs485_listen_enabled = 0;
+
+static void rs485_test_rx_callback(uint8_t *data, uint16_t length)
+{
+    if (!g_rs485_listen_enabled || !data || length == 0) {
+        return;
+    }
+
+    if (g_rs485_mode == RS485_TEST_MODE_STRING) {
+        /* Ensure printable and zero-terminated copy */
+        uint16_t len = (length < 256) ? length : 255;
+        char buf[256] = {0};
+        memcpy(buf, data, len);
+        LOG_SIMPLE("[RS485][RX][STR] len=%d data=\"%s\"\r\n", length, buf);
+    } else {
+        LOG_SIMPLE("[RS485][RX][HEX] len=%d data=", length);
+        for (uint16_t i = 0; i < length; i++) {
+            LOG_SIMPLE("%02X ", data[i]);
+        }
+        LOG_SIMPLE("\r\n");
+    }
+}
+
+static int rs485_test_cmd(int argc, char *argv[])
+{
+    if (argc < 2) {
+        LOG_SIMPLE("Usage:\r\n");
+        LOG_SIMPLE("  rs485 init <baud> [cfg] [str|hex]\r\n");
+        LOG_SIMPLE("  rs485 write <data...>\r\n");
+        LOG_SIMPLE("  rs485 read <len> [timeout_ms]\r\n");
+        LOG_SIMPLE("  rs485 listen <on|off>\r\n");
+        LOG_SIMPLE("  rs485 mode <str|hex>\r\n");
+        LOG_SIMPLE("  rs485 destroy\r\n");
+        return -1;
+    }
+
+    const char *sub = argv[1];
+
+    if (strcmp(sub, "init") == 0) {
+        if (argc < 3) {
+            LOG_SIMPLE("rs485 init: missing baudrate\r\n");
+            return -1;
+        }
+        uint32_t baud = (uint32_t)atoi(argv[2]);
+        const char *cfg = (argc >= 4) ? argv[3] : "8N1";
+        if (argc >= 5) {
+            if (strcmp(argv[4], "hex") == 0) g_rs485_mode = RS485_TEST_MODE_HEX;
+            else g_rs485_mode = RS485_TEST_MODE_STRING;
+        }
+        int ret = rs485_driver_init(baud, cfg);
+        if (ret != 0) {
+            LOG_SIMPLE("rs485 init failed: %d\r\n", ret);
+            return ret;
+        }
+        /* default: not listening until user enables */
+        g_rs485_listen_enabled = 0;
+        rs485_driver_set_rx_callback(rs485_test_rx_callback);
+        LOG_SIMPLE("rs485 init ok, baud=%lu cfg=%s mode=%s\r\n",
+                   (unsigned long)baud, cfg,
+                   (g_rs485_mode == RS485_TEST_MODE_HEX) ? "hex" : "str");
+        return 0;
+    } else if (strcmp(sub, "write") == 0) {
+        if (argc < 3) {
+            LOG_SIMPLE("rs485 write: missing data\r\n");
+            return -1;
+        }
+        uint8_t buf[RS485_TX_BUFFER_SIZE] = {0};
+        int len = 0;
+
+        if (g_rs485_mode == RS485_TEST_MODE_STRING) {
+            /* concatenate arguments with space for readability */
+            for (int i = 2; i < argc && len < (int)sizeof(buf) - 1; i++) {
+                int l = (int)strlen(argv[i]);
+                if (len + l + 1 >= (int)sizeof(buf)) break;
+                memcpy(&buf[len], argv[i], l);
+                len += l;
+                if (i != argc - 1) buf[len++] = ' ';
+            }
+        } else {
+            /* hex mode:
+             *  - 支持按字节:  01 0x02 FF
+             *  - 也支持连续串: 0102ff 或 0x0102ff（会按每两位拆成字节）
+             */
+            for (int i = 2; i < argc && len < (int)sizeof(buf); i++) {
+                const char *p = argv[i];
+                int plen = (int)strlen(p);
+
+                /* 去掉可选 0x/0X 前缀 */
+                if (plen >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+                    p += 2;
+                    plen -= 2;
+                }
+
+                if (plen == 0) {
+                    LOG_SIMPLE("rs485 write: invalid hex '%s'\r\n", argv[i]);
+                    return -1;
+                }
+
+                if (plen <= 2) {
+                    /* 单字节写法，如 '0F' 或 'F' */
+                    char *endp = NULL;
+                    long v = strtol(p, &endp, 16);
+                    if (endp == p || v < 0 || v > 0xFF) {
+                        LOG_SIMPLE("rs485 write: invalid hex byte '%s'\r\n", argv[i]);
+                        return -1;
+                    }
+                    buf[len++] = (uint8_t)v;
+                } else {
+                    /* 连续 hex 串，长度必须为偶数，每两位一个字节 */
+                    if (plen % 2 != 0) {
+                        LOG_SIMPLE("rs485 write: hex string length must be even '%s'\r\n", argv[i]);
+                        return -1;
+                    }
+                    for (int pos = 0; pos < plen && len < (int)sizeof(buf); pos += 2) {
+                        char tmp[3] = { p[pos], p[pos + 1], 0 };
+                        char *endp = NULL;
+                        long v = strtol(tmp, &endp, 16);
+                        if (endp == tmp || v < 0 || v > 0xFF) {
+                            LOG_SIMPLE("rs485 write: invalid hex byte in '%s'\r\n", argv[i]);
+                            return -1;
+                        }
+                        buf[len++] = (uint8_t)v;
+                    }
+                }
+            }
+        }
+
+        if (len <= 0) {
+            LOG_SIMPLE("rs485 write: no data\r\n");
+            return -1;
+        }
+        int ret = rs485_driver_send_data(buf, (uint16_t)len, 3000);
+        if (ret != 0) {
+            LOG_SIMPLE("rs485 write failed: %d\r\n", ret);
+            return ret;
+        }
+        LOG_SIMPLE("rs485 write ok, len=%d\r\n", len);
+        return 0;
+    } else if (strcmp(sub, "read") == 0) {
+        if (argc < 3) {
+            LOG_SIMPLE("rs485 read: missing len\r\n");
+            return -1;
+        }
+        int want_len = atoi(argv[2]);
+        if (want_len <= 0 || want_len > RS485_RX_BUFFER_SIZE) {
+            LOG_SIMPLE("rs485 read: invalid len %d\r\n", want_len);
+            return -1;
+        }
+        uint32_t timeout = (argc >= 4) ? (uint32_t)atoi(argv[3]) : 3000;
+        uint8_t buf[RS485_RX_BUFFER_SIZE] = {0};
+        int ret = rs485_driver_receive_data(buf, (uint16_t)want_len, timeout);
+        if (ret < 0) {
+            LOG_SIMPLE("rs485 read failed: %d\r\n", ret);
+            return ret;
+        }
+        int rlen = ret;
+        if (g_rs485_mode == RS485_TEST_MODE_STRING) {
+            int copy_len = (rlen < RS485_RX_BUFFER_SIZE - 1) ? rlen : (RS485_RX_BUFFER_SIZE - 1);
+            buf[copy_len] = 0;
+            LOG_SIMPLE("[RS485][READ][STR] len=%d data=\"%s\"\r\n", rlen, buf);
+        } else {
+            LOG_SIMPLE("[RS485][READ][HEX] len=%d data=", rlen);
+            for (int i = 0; i < rlen; i++) {
+                LOG_SIMPLE("%02X ", buf[i]);
+            }
+            LOG_SIMPLE("\r\n");
+        }
+        return 0;
+    } else if (strcmp(sub, "listen") == 0) {
+        if (argc < 3) {
+            LOG_SIMPLE("rs485 listen: use on/off\r\n");
+            return -1;
+        }
+        if (strcmp(argv[2], "on") == 0) {
+            g_rs485_listen_enabled = 1;
+        } else if (strcmp(argv[2], "off") == 0) {
+            g_rs485_listen_enabled = 0;
+        } else {
+            LOG_SIMPLE("rs485 listen: invalid arg '%s', use on/off\r\n", argv[2]);
+            return -1;
+        }
+        LOG_SIMPLE("rs485 listen %s\r\n", g_rs485_listen_enabled ? "on" : "off");
+        return 0;
+    } else if (strcmp(sub, "mode") == 0) {
+        if (argc < 3) {
+            LOG_SIMPLE("rs485 mode: use str/hex\r\n");
+            return -1;
+        }
+        if (strcmp(argv[2], "hex") == 0) g_rs485_mode = RS485_TEST_MODE_HEX;
+        else g_rs485_mode = RS485_TEST_MODE_STRING;
+        LOG_SIMPLE("rs485 mode set to %s\r\n",
+                   (g_rs485_mode == RS485_TEST_MODE_HEX) ? "hex" : "str");
+        return 0;
+    } else if (strcmp(sub, "destroy") == 0 || strcmp(sub, "deinit") == 0) {
+        int ret = rs485_driver_deinit();
+        if (ret != 0) {
+            LOG_SIMPLE("rs485 destroy failed: %d\r\n", ret);
+            return ret;
+        }
+        g_rs485_listen_enabled = 0;
+        LOG_SIMPLE("rs485 destroy ok\r\n");
+        return 0;
+    }
+
+    LOG_SIMPLE("rs485: unknown subcmd '%s'\r\n", sub);
+    return -1;
+}
+
+debug_cmd_reg_t rs485_cmd_table[] = {
+    {"rs485", "RS485 test tool", rs485_test_cmd},
+};
+
+static void rs485_cmd_register(void)
+{
+    debug_cmdline_register(rs485_cmd_table, sizeof(rs485_cmd_table) / sizeof(rs485_cmd_table[0]));
+}
+
 void driver_test_main(void)
 {
+#if POWER_MODULE_TEST
+    driver_cmd_register_callback("module", module_cmd_register);
+#endif
+    driver_cmd_register_callback("io", io_cmd_register);
+    driver_cmd_register_callback("rs485", rs485_cmd_register);
+    // driver_cmd_register_callback("usb", usb_cmd_register);
     // driver_cmd_register_callback("driver_core", video_cmd_register);
     // rtc_test();
     // VideoTest_processId = osThreadNew(VideoTestProcess, NULL, &VideoTestTask_attributes);

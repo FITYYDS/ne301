@@ -303,7 +303,7 @@ static const ISP_IQParamTypeDef ISP_IQParamCacheInit_OS04C10 = {
     },
 };
 
-static const ISP_IQParamTypeDef* ISP_IQParamCacheInit[] = {
+__attribute__((unused)) static const ISP_IQParamTypeDef* ISP_IQParamCacheInit[] = {
     &ISP_IQParamCacheInit_IMX335,
     &ISP_IQParamCacheInit_VD66GY,
     &ISP_IQParamCacheInit_OS04C10

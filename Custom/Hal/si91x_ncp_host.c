@@ -31,6 +31,7 @@
 #include "pwr.h"
 #include "spi.h"
 #include "exti.h"
+// #include "tx_port.h"
 #include "common_utils.h"
 
 #ifdef SPI_EXTENDED_TX_LEN_2K
@@ -46,12 +47,14 @@ void gpio_interrupt(void);
 extern SPI_HandleTypeDef hspi4;
 osMutexId_t mtx_id = NULL;
 osSemaphoreId_t sem_spi4 = NULL;
+osSemaphoreId_t sem_sta = NULL;
 int is_high_spi = 0;
 
 uint8_t spi_tx_buffer[SPI_BUFFER_LENGTH] ALIGN_32 UNCACHED;
 uint8_t spi_rx_buffer[SPI_BUFFER_LENGTH] ALIGN_32 UNCACHED;
 
 static void si91x_gpio_interrupt(void);
+static void si91x_sta_interrupt(void);
 
 /**
   * @brief GPIO Initialization Function
@@ -110,11 +113,14 @@ static void si91x_GPIO_Init(void)
 
 void sl_si91x_host_hold_in_reset(void)
 {
+    HAL_GPIO_WritePin(WIFI_POC_IN_GPIO_Port, WIFI_POC_IN_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(WIFI_RESET_N_GPIO_Port, WIFI_RESET_N_Pin, GPIO_PIN_RESET);
 }
 
 void sl_si91x_host_release_from_reset(void)
 {
+    HAL_GPIO_WritePin(WIFI_POC_IN_GPIO_Port, WIFI_POC_IN_Pin, GPIO_PIN_SET);
+    osDelay(5);
     HAL_GPIO_WritePin(WIFI_RESET_N_GPIO_Port, WIFI_RESET_N_Pin, GPIO_PIN_SET);
 }
 
@@ -130,6 +136,10 @@ sl_status_t sl_si91x_host_init(const sl_si91x_host_init_configuration_t *config)
     if (mtx_id == NULL) {
         mtx_id = osMutexNew(NULL);
     }
+
+    if (sem_sta == NULL) {
+        sem_sta = osSemaphoreNew(1, 0, NULL);
+    }
     //! Initialize the host platform GPIOs
     si91x_GPIO_Init();
     
@@ -137,15 +147,22 @@ sl_status_t sl_si91x_host_init(const sl_si91x_host_init_configuration_t *config)
     MX_SPI4_Init();
     
     exti8_irq_register(si91x_gpio_interrupt);
+    exti5_irq_register(si91x_sta_interrupt);
+
+    HAL_NVIC_EnableIRQ(EXTI5_IRQn);
     return SL_STATUS_OK;
 }
 
 sl_status_t sl_si91x_host_deinit(void)
 {
     // printf("sl_si91x_host_deinit\r\n");
+    if (mtx_id != NULL) osMutexAcquire(mtx_id, osWaitForever);
+    HAL_NVIC_DisableIRQ(EXTI5_IRQn);
+    HAL_SPI_Abort(&hspi4);
     HAL_SPI_DeInit(&hspi4);
     pwr_manager_release(pwr_manager_get_handle(PWR_WIFI));
     is_high_spi = 0;
+    if (mtx_id != NULL) osMutexRelease(mtx_id);
     return SL_STATUS_OK;
 }
 
@@ -164,6 +181,8 @@ sl_status_t sl_si91x_host_deinit(void)
 sl_status_t sl_si91x_host_spi_transfer(const void *tx_buffer, void *rx_buffer, uint16_t buffer_length)
 {
     HAL_StatusTypeDef ret = HAL_OK;
+    osStatus_t sem_status = osOK;
+    // TX_INTERRUPT_SAVE_AREA
 
     if (buffer_length < 1 || buffer_length > SPI_BUFFER_LENGTH) {
         printf("Invalid buffer length: %d\r\n", buffer_length);
@@ -187,12 +206,23 @@ sl_status_t sl_si91x_host_spi_transfer(const void *tx_buffer, void *rx_buffer, u
     if (buffer_length < 8) {
         memcpy(spi_tx_buffer, tx_buffer, buffer_length);
         memset(spi_rx_buffer, 0x00, buffer_length);
+        // TX_DISABLE
+        // ret = HAL_SPI_TransmitReceive_IT(&hspi4, (uint8_t *)spi_tx_buffer, (uint8_t *)spi_rx_buffer, buffer_length);
         ret = HAL_SPI_TransmitReceive(&hspi4, (uint8_t *)spi_tx_buffer, (uint8_t *)spi_rx_buffer, buffer_length, 100);
+        // TX_RESTORE
         if (ret == HAL_OK) {
+            // sem_status = osSemaphoreAcquire(sem_spi4, 100);
+            // if (sem_status != osOK) {
+            //     printf("sem_spi4 it failed(ret = %d)!\r\n", (int)sem_status);
+            //     HAL_SPI_Abort_IT(&hspi4);
+            //     osMutexRelease(mtx_id);
+            //     return SL_STATUS_TIMEOUT;
+            // }
             memcpy(rx_buffer, spi_rx_buffer, buffer_length);
             // printf("$\r\n");
         } else {
             printf("HAL_SPI_TransmitReceive failed(ret = %d)!\r\n", ret);
+            HAL_SPI_Abort(&hspi4);
             osMutexRelease(mtx_id);
             return SL_STATUS_ABORT;
         }
@@ -203,16 +233,17 @@ sl_status_t sl_si91x_host_spi_transfer(const void *tx_buffer, void *rx_buffer, u
         // printf("Transmit\r\n");
         ret = HAL_SPI_TransmitReceive_DMA(&hspi4, (uint8_t *)spi_tx_buffer, (uint8_t *)spi_rx_buffer, buffer_length);
         if (ret == HAL_OK) {
-            osStatus_t sem_status = osSemaphoreAcquire(sem_spi4, 3000);
+            sem_status = osSemaphoreAcquire(sem_spi4, 1000);
             if (sem_status != osOK) {
-                printf("sem_spi4 failed(ret = %d)!\r\n", (int)sem_status);
-                HAL_SPI_Abort_IT(&hspi4);
+                printf("sem_spi4 dma failed(ret = %d)!\r\n", (int)sem_status);
+                HAL_SPI_Abort(&hspi4);
                 osMutexRelease(mtx_id);
                 return SL_STATUS_TIMEOUT;
             }
             memcpy(rx_buffer, spi_rx_buffer, buffer_length);
         } else {
             printf("HAL_SPI_TransmitReceive_DMA failed(ret = %d)!\r\n", ret);
+            HAL_SPI_Abort(&hspi4);
             osMutexRelease(mtx_id);
             return SL_STATUS_ABORT;
         }
@@ -243,7 +274,7 @@ void sl_si91x_host_enable_high_speed_bus()
 #else
     hspi4.Init.NSS = SPI_NSS_HARD_OUTPUT;
 #endif
-    hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+    hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_BYPASS;
     hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
     hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
     hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -259,6 +290,7 @@ void sl_si91x_host_enable_high_speed_bus()
     hspi4.Init.ReadyMasterManagement = SPI_RDY_MASTER_MANAGEMENT_INTERNALLY;
     hspi4.Init.ReadyPolarity = SPI_RDY_POLARITY_HIGH;
 
+    HAL_SPI_DeInit(&hspi4);
     if (HAL_SPI_Init(&hspi4) != HAL_OK) {
         Error_Handler();
     }
@@ -307,6 +339,7 @@ void sl_si91x_host_clear_sleep_indicator(void)
 uint32_t sl_si91x_host_get_wake_indicator(void)
 {
     static uint32_t wake_up_state = GPIO_PIN_SET;
+    osSemaphoreAcquire(sem_sta, 10);
     if (wake_up_state != HAL_GPIO_ReadPin(WIFI_STA_GPIO_Port, WIFI_STA_Pin)) {
         wake_up_state = HAL_GPIO_ReadPin(WIFI_STA_GPIO_Port, WIFI_STA_Pin);
         printf("sta %lu\n", (unsigned long)wake_up_state);
@@ -320,6 +353,11 @@ static void si91x_gpio_interrupt(void)
     // Trigger SiWx91x BUS Event
     if (current_performance_profile != HIGH_PERFORMANCE) printf("#\r\n");
     sli_si91x_set_event(SL_SI91X_NCP_HOST_BUS_RX_EVENT);
+}
+
+static void si91x_sta_interrupt(void)
+{
+    osSemaphoreRelease(sem_sta);
 }
 
 bool sl_si91x_host_is_in_irq_context(void)

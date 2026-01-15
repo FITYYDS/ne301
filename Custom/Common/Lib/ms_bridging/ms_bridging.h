@@ -324,6 +324,12 @@ int ms_bridging_request_pir_cfg(ms_bridging_handler_t *handler, ms_bridging_pir_
 /// @return Bridging error code
 int ms_bridging_request_version(ms_bridging_handler_t *handler, ms_bridging_version_t *version);
 
+/// @brief Send a usbin value request to the other party
+/// @param handler bridging handler
+/// @param usbin_value usbin value
+/// @return Bridging error code
+int ms_bridging_request_usbin_value(ms_bridging_handler_t *handler, uint32_t *usbin_value);
+
 /// @brief Get version from string
 /// @param version_str version string
 /// @param version version info

@@ -16,37 +16,23 @@ export default function DeviceInfo() {
     const { i18n } = useLingui()
     const isMobile = useIsMobile()
     const { deviceInfo, getDeviceInfo } = useSystemInfo()
-    const { communicationData, setCommunicationData } = useCommunicationData()
     const { setDeviceNameReq } = systemApis
+    const { getCommunicationData, communicationData } = useCommunicationData()
     const deviceImage = new URL('@/assets/images/camthink_Vision_AI_camera.webp', import.meta.url).href;
     const [isEdit, setIsEdit] = useState(false)
     const [deviceName, setDeviceName] = useState(deviceInfo?.device_name ?? '')
-    const [communicationType, setCommunicationType] = useState(deviceInfo?.communication_type ?? '')
-    const [communicationName, setCommunicationName] = useState('wifi2')
     const [powerStatus, setPowerStatus] = useState('power')
     const [showPopover, setShowPopover] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
     const errorsRef = useRef<{ isValidate: boolean, message: string }>({ isValidate: true, message: '' })
-    const getCommunicationType = async () => {
-        const communicationItem = communicationData.interfaces.find((item: any) => item.connected &&  item.name !== 'ap')
-        setCommunicationType(communicationItem?.type)
-        setCommunicationName(communicationItem?.ssid)
-    }
     useEffect(() => {
-        setPowerStatus(deviceInfo?.battery_percent === 0 ? 'power' : (deviceInfo?.battery_percent ?? 0) >= 80
+        setPowerStatus(deviceInfo?.battery_percent === 0 ? 'power' : (deviceInfo?.battery_percent ?? 0) >= 70
             ? 'high'
-            : (deviceInfo?.battery_percent ?? 0) >= 50
+            : (deviceInfo?.battery_percent ?? 0) >= 30
                 ? 'middle'
                 : 'low')
+        setDeviceName(deviceInfo?.device_name ?? '')
     }, [deviceInfo])
-    useEffect(() => {
-        setCommunicationData()
-    }, [])
-    useEffect(() => {
-        if (communicationData) {
-            getCommunicationType()
-        }
-    }, [communicationData])
     const validateDeviceName = () => {
         if (deviceName.length <= 0 || deviceName.length > 32) {
             errorsRef.current = {
@@ -66,25 +52,52 @@ export default function DeviceInfo() {
         return true
     }
     useEffect(() => {
-        setDeviceName(deviceInfo?.device_name ?? '')
-    }, [deviceInfo])
+        getCommunicationData()
+    }, [])
 
-    const communicationTypeSlot = () => deviceInfo?.communication_type === 'WiFi' && (
+    const communicationTypeSlot = () => (
         <div className="flex items-center space-x-1">
-            {communicationType === 'wireless' && (
+            {communicationData?.active_type === 'cellular' && (
                 <Tooltip>
                     <TooltipTrigger>
-                        <div className="w-5 h-5 flex">
+                        <div className="w-5 h-5">
                             <Link to="/system-settings">
-                                <SvgIcon icon="wifi2" />
+                                <SvgIcon icon="cellular" />
                             </Link>
                         </div>
                     </TooltipTrigger>
                     <TooltipContent className="absolute">
-                        <p>{i18n._('common.connected')}: {communicationName}</p>
+                        <p>{i18n._('sys.system_management.cellular_network')}</p>
                     </TooltipContent>
                 </Tooltip>
-
+            )}
+            {communicationData?.active_type === 'wifi' && (
+                <Tooltip>
+                    <TooltipTrigger>
+                        <div className="w-5 h-5">
+                            <Link to="/system-settings">
+                                <SvgIcon icon="wifi" />
+                            </Link>
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent className="absolute">
+                        <p>{i18n._('sys.system_management.wifi')}</p>
+                    </TooltipContent>
+                </Tooltip>
+            )}
+            {communicationData?.active_type === 'poe' && (
+                <Tooltip>
+                    <TooltipTrigger>
+                        <div className="w-4 h-4">
+                            <Link to="/system-settings">
+                                <SvgIcon icon="ethernet_port" />
+                            </Link>
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent className="absolute">
+                        <p>{i18n._('sys.system_management.poe')}</p>
+                    </TooltipContent>
+                </Tooltip>
             )}
             {powerStatus === 'high' && (
                 <Tooltip>
@@ -133,7 +146,7 @@ export default function DeviceInfo() {
                     <TooltipTrigger>
                         <div className="w-5 h-5">
                             <Link to="/device-information">
-                                <SvgIcon icon="power" />
+                                <SvgIcon icon="power" className="w-5 h-5" />
                             </Link>
                         </div>
                     </TooltipTrigger>
@@ -190,14 +203,6 @@ export default function DeviceInfo() {
     }
     return (
         <div className="items-center space-x-3 md:flex">
-            {/* Device icon */}
-            {/* {isMobile
-                && (
-                    <div className="w-8 h-6">
-                        <img src={deviceImage} alt="camthink_Vision_AI_camera" />
-                    </div>
-                )} */}
-            {/* Device model and WiFi information */}
             <div className="flex">
                 {!isMobile && (
                     <>

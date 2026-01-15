@@ -7,6 +7,7 @@
         "save": "save",
         "cancel": "cancel",
         "confirm": "confirm",
+        "details": "details",
         "export": "export",
         "delete": "delete",
         "deleteAll": "delete all",
@@ -59,7 +60,14 @@
         "saturday": "Saturday",
         "sunday": "Sunday",
         "everyday": "Everyday",
-        "clear": "Clear"
+        "clear": "Clear",
+        "tip": "Tip",
+        "send": "Send",
+        "auto": "Auto",
+        "manual": "Manual",
+        "status": "Status",
+        "start": "Start",
+        "secret_key": "Secret Key"
     }
     
 }   

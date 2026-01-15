@@ -12,6 +12,29 @@ static const char* level_strings[] = {
     "DEBUG", "INFO", "WARNING", "ERROR", "FATAL"
 };
 
+// Strip ANSI escape sequences (e.g., color codes) from src into dst
+static int strip_ansi_sequences(const char *src, char *dst, size_t dst_size)
+{
+    if (!src || !dst || dst_size == 0) return 0;
+    size_t si = 0, di = 0;
+    while (src[si] != '\0' && di + 1 < dst_size) {
+        if (src[si] == '\x1b' && src[si + 1] == '[') {
+            // Skip until 'm' or string end
+            si += 2;
+            while (src[si] != '\0' && src[si] != 'm') {
+                si++;
+            }
+            if (src[si] == 'm') {
+                si++; // skip 'm'
+            }
+        } else {
+            dst[di++] = src[si++];
+        }
+    }
+    dst[di] = '\0';
+    return (int)di;
+}
+
 static void rotate_file(const char *filename, int max_files)
 {
     if (!log_manager || !log_manager->file_ops) return;
@@ -250,12 +273,16 @@ void log_message(LogLevel level, const char *module_name, const char *format, ..
                 log_file_ops_t *ops = log_manager->file_ops;
                 const char *filename = output->config.file.filename;
 
+                char clean_buffer[LOG_MAX_LINE];
+                int clean_len = strip_ansi_sequences(log_buffer, clean_buffer, sizeof(clean_buffer));
+                if (clean_len < 0) clean_len = 0;
+
                 size_t current_size = 0;
                 struct stat st;
                 if (ops->fstat && ops->fstat(filename, &st) == 0) {
                     current_size = st.st_size;
                 }
-                size_t new_size = current_size + log_line_len;
+                size_t new_size = current_size + (size_t)clean_len;
                 if (output->config.file.max_size > 0 && new_size > output->config.file.max_size) {
                     rotate_file(filename, output->config.file.max_files);
                 }
@@ -264,8 +291,8 @@ void log_message(LogLevel level, const char *module_name, const char *format, ..
                     fprintf(stderr, "Failed to open log file: %s\r\n", filename);
                     break;
                 }
-                size_t written = ops->fwrite(file, log_buffer, log_line_len);
-                if (written != (size_t)log_line_len) {
+                size_t written = ops->fwrite(file, clean_buffer, (size_t)clean_len);
+                if (written != (size_t)clean_len) {
                     fprintf(stderr, "Failed to write log file: %s\r\n", filename);
                 }
                 ops->fflush(file);

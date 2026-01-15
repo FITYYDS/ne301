@@ -22,6 +22,7 @@
 #include "stm32n6xx_hal.h"
 #include "upgrade_manager.h"
 #include "xspim.h"
+#include "fsbl_version.h"
 
 /* Private typedefs ----------------------------------------------------------*/
 /* Private defines -----------------------------------------------------------*/
@@ -99,6 +100,7 @@ BOOTStatus_TypeDef BOOT_Application(void)
   BOOTStatus_TypeDef retr;
   printf("BOOT_Application\r\n");
   init_system_state(boot_flash_read, boot_flash_write, boot_flash_erase);
+  verify_fsbl_version(FSBL_VERSION_STRING);
 
   retr = CopyApplication();
   printf("CopyApplication end\r\n");
@@ -120,6 +122,7 @@ BOOTStatus_TypeDef CopyApplication(void)
   uint8_t *source;
   uint8_t *destination;
   uint32_t img_size;
+  uint32_t start_tick, end_tick;
 
   /* this case correspond to copy the SW from external memory into internal memory */
   destination = (uint8_t *)SRAM_APP_BASE;
@@ -130,10 +133,10 @@ BOOTStatus_TypeDef CopyApplication(void)
   img_size = BOOT_GetApplicationSize((uint32_t) source);
   printf("Application size: %ld flash address: %p sram address: %p\r\n", img_size, source, destination);
   /* copy form source to destination in mapped mode */
-  for (uint32_t index=0; index < img_size; index++)
-  {
-    destination[index] = source[index];
-  }
+  start_tick = HAL_GetTick();
+  memcpy(destination, source, img_size);
+  end_tick = HAL_GetTick();
+  printf("Copy time: %ld ms\r\n", end_tick - start_tick);
 
   return retr;
 }

@@ -22,6 +22,7 @@
 #include "cmsis_os2.h"
 #include "service_init.h"
 #include "common_utils.h"
+#include "device_service.h"
 /* ==================== MQTT Service Context ==================== */
 
 #define MQTT_SERVICE_VERSION "1.0.0"
@@ -553,7 +554,8 @@ static void mqtt_client_event_handler(ms_mqtt_event_data_t *event_data, void *us
             aicam_bool_t is_rtc_wakeup = (wakeup_flag & (PWR_WAKEUP_FLAG_RTC_TIMING | 
                                                         PWR_WAKEUP_FLAG_RTC_ALARM_A | 
                                                         PWR_WAKEUP_FLAG_RTC_ALARM_B)) != 0;
-            if(!is_rtc_wakeup) {
+            aicam_bool_t is_button_wakeup = (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) != 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_LONG_PRESS) == 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_MAX_PRESS) == 0;
+            if(!is_rtc_wakeup && !is_button_wakeup) {
                 auto_subscribe_topics();
             }
             
@@ -1191,6 +1193,20 @@ aicam_result_t mqtt_service_start(void)
     g_mqtt_service.running = AICAM_TRUE;
 
     // Create MQTT connection task to monitor STA connection and auto-connect
+    if(g_mqtt_service.api_type == MQTT_API_TYPE_SI91X) {
+        aicam_result_t result = service_wait_for_ready(SERVICE_READY_STA, AICAM_TRUE, osWaitForever);
+        if (result != AICAM_OK) {
+            LOG_SVC_ERROR("Failed to wait for STA service to be ready: %d", result);
+            return result;
+        }
+        result = mqtt_service_connect();
+        if (result != AICAM_OK) {
+            LOG_SVC_ERROR("Failed to connect to MQTT broker: %d", result);
+            return result;
+        }
+        return AICAM_OK;
+    }
+
     if (g_mqtt_service.connect_task_handle == NULL) {
         const osThreadAttr_t mqtt_connect_task_attributes = {
             .name = "MQTTConnect",
@@ -2340,6 +2356,11 @@ aicam_bool_t mqtt_service_is_running(void)
     return g_mqtt_service.running;
 }
 
+aicam_bool_t mqtt_service_is_initialized(void)
+{
+    return g_mqtt_service.initialized;
+}
+
 /* ==================== CLI Commands ==================== */
 
 /**
@@ -3106,6 +3127,24 @@ static cJSON *create_ai_result_json(const mqtt_ai_result_t *ai_result)
     return ai;
 }
 
+
+static cJSON *create_device_info_json(const device_info_config_t *device_info)
+{
+    if (!device_info) return NULL;
+    
+    cJSON *device = cJSON_CreateObject();
+    if (!device) return NULL;
+    
+    cJSON_AddStringToObject(device, "device_name", device_info->device_name);
+    cJSON_AddStringToObject(device, "mac_address", device_info->mac_address);
+    cJSON_AddStringToObject(device, "serial_number", device_info->serial_number);
+    cJSON_AddStringToObject(device, "hardware_version", device_info->hardware_version);
+    cJSON_AddStringToObject(device, "software_version", device_info->software_version);
+    cJSON_AddStringToObject(device, "power_supply_type", device_info->power_supply_type);
+    cJSON_AddNumberToObject(device, "battery_percent", device_info->battery_percent);
+    cJSON_AddStringToObject(device, "communication_type", device_info->communication_type);
+    return device;
+}
 /**
  * @brief Upload image with AI results (JSON + Base64 format)
  */
@@ -3159,6 +3198,20 @@ int mqtt_service_publish_image_with_ai(const char *topic,
     if (meta_json) {
         cJSON_AddItemToObject(root, "metadata", meta_json);
     }
+
+    //Add device info
+    device_info_config_t* device_info = (device_info_config_t*)buffer_calloc(1, sizeof(device_info_config_t));
+    aicam_result_t ret = device_service_get_info(device_info);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get device information: %d", ret);
+        buffer_free(device_info);
+        return MQTT_ERR_INVALID_ARG;
+    }
+    cJSON *device_json = create_device_info_json(device_info);
+    if (device_json) {
+        cJSON_AddItemToObject(root, "device_info", device_json);
+    }
+    buffer_free(device_info);
     
     // Add AI result if provided
     if (ai_result && ai_result->ai_result.is_valid) {
@@ -3424,11 +3477,12 @@ int mqtt_service_publish_image_chunked(const char *topic,
     return sent_chunks;
 }
 
-static void mqtt_build_topics(const char *mac_str, mqtt_service_config_t *cfg)
+static aicam_bool_t mqtt_build_topics(const char *mac_str, mqtt_service_config_t *cfg)
 {
     unsigned int m[6];
+    aicam_bool_t changed = AICAM_FALSE;
     if (sscanf(mac_str, NETIF_MAC_STR_FMT, &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6)
-        return; // MAC format error return
+        return AICAM_FALSE; // MAC format error return
 
     // generate unified MAC string (no separator)
     char mac_hex[7];
@@ -3440,6 +3494,7 @@ static void mqtt_build_topics(const char *mac_str, mqtt_service_config_t *cfg)
     {
         snprintf(cfg->data_receive_topic, sizeof(cfg->data_receive_topic),
                 "ne301/%s/down/control", mac_hex);
+        changed = AICAM_TRUE;
     }
 
     if (cfg->data_report_topic[0] == '\0' ||
@@ -3447,7 +3502,10 @@ static void mqtt_build_topics(const char *mac_str, mqtt_service_config_t *cfg)
     {
         snprintf(cfg->data_report_topic, sizeof(cfg->data_report_topic),
                 "ne301/%s/upload/report", mac_hex);
+        changed = AICAM_TRUE;
     }
+
+    return changed;
 }
 
 /**
@@ -3457,6 +3515,7 @@ void mqtt_service_update_client_id_and_topic(void)
 {
     // Update MQTT client ID
     LOG_SVC_INFO("Updating MQTT client ID and topic");
+    aicam_bool_t changed = AICAM_FALSE;
     mqtt_service_config_t* mqtt_config = (mqtt_service_config_t*)buffer_calloc(1, sizeof(mqtt_service_config_t));
     if (!mqtt_config) {
         LOG_SVC_ERROR("Failed to allocate memory for MQTT service configuration");
@@ -3470,6 +3529,7 @@ void mqtt_service_update_client_id_and_topic(void)
     }
     if (strcmp(mqtt_config->base_config.client_id, "AICAM-000000") == 0) {
         snprintf(mqtt_config->base_config.client_id, sizeof(mqtt_config->base_config.client_id), "NE301-%06X", (unsigned int)rtc_get_timeStamp());
+        changed = AICAM_TRUE;
     }
 
     //get device mac address
@@ -3488,11 +3548,32 @@ void mqtt_service_update_client_id_and_topic(void)
     }
     LOG_SVC_INFO("Device MAC address: %s", device_info->mac_address);
 
-    mqtt_build_topics(device_info->mac_address, mqtt_config);
-    result = json_config_set_mqtt_service_config(mqtt_config);
-    if (result != AICAM_OK) {
-        LOG_SVC_ERROR("Failed to set MQTT config: %d", result);
+    changed = changed | mqtt_build_topics(device_info->mac_address, mqtt_config);
+    if (changed) {
+        result = json_config_set_mqtt_service_config(mqtt_config);
+        if (result != AICAM_OK) {
+            LOG_SVC_ERROR("Failed to set MQTT config: %d", result);
+        }
     }
+
+    if (g_mqtt_service.initialized && changed) {
+        aicam_bool_t need_reconnect = g_mqtt_service.running;
+        
+        free_mqtt_config_strings(&g_mqtt_service.config.base_config);
+        
+        result = mqtt_config_persistent_to_runtime(mqtt_config, &g_mqtt_service.config);
+        if (result != AICAM_OK) {
+            LOG_SVC_ERROR("Failed to sync runtime config: %d", result);
+        } else {
+            LOG_SVC_INFO("Runtime config synced successfully");
+            
+            if (need_reconnect) {
+                LOG_SVC_INFO("Triggering MQTT service restart for new config");
+                mqtt_service_restart();
+            }
+        }
+    }
+
     buffer_free(mqtt_config);
     buffer_free(device_info);
 }

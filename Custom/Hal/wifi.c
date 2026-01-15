@@ -103,19 +103,16 @@ static const sl_wifi_device_configuration_t transmit_test_configuration = {
                    .config_feature_bit_map     = SL_SI91X_FEAT_SLEEP_GPIO_SEL_BITMAP }
 };
 
-const sl_wifi_data_rate_t rate    = SL_WIFI_DATA_RATE_6;
-const sl_wifi_tx_test_mode_t mode = SL_WIFI_TEST_CONTINOUS_WAVE_MODE_OFF_CENTER_HIGH;
 int wifi_ant_flag = 0;
-
-sl_si91x_request_tx_test_info_t tx_test_info = {
+const sl_wifi_data_rate_t rate               = SL_WIFI_DATA_RATE_6;
+const sl_si91x_request_tx_test_info_t default_tx_test_info = {
   .enable      = 1,
   .power       = 127,
   .rate        = rate,
   .length      = 100,
-  .mode        = mode,
+  .mode        = 0,
   .channel     = 1,
   .aggr_enable = 0,
-  .no_of_pkts  = 0,
 #if defined(SLI_SI917) || defined(SLI_SI915)
   .enable_11ax            = 0,
   .coding_type            = 0,
@@ -532,12 +529,6 @@ static void wifi_ant_process(void)
         return;
     }
     printf("\r\nWi-Fi Init Done \r\n");
-
-    status = sl_wifi_set_antenna(SL_WIFI_CLIENT_2_4GHZ_INTERFACE, SL_WIFI_ANTENNA_INTERNAL);
-    if (status != SL_STATUS_OK) {
-        printf("Failed to start set Antenna: 0x%lx\r\n", status);
-        return;
-    }
 }
 static int wifi_update_cmd(int argc, char* argv[]) 
 {
@@ -567,39 +558,189 @@ static int wifi_test_cmd(int argc, char* argv[])
     return 0;
 }
 
-static int wifi_ant_cmd(int argc, char* argv[]) 
+static int wifi_set_antenna_cmd(int argc, char* argv[])
 {
-    if (argc < 2) {
-        LOG_SIMPLE("Usage: wifi_ant <start|stop>\r\n");
-        return -1;
-    }
-    sl_status_t status;
-    if(wifi_ant_flag == 0) {
-        LOG_SIMPLE("WiFi antenna test not started.\r\n");
-        return 0;
-    }
-    if (strcmp(argv[1], "start") == 0) {
+    sl_wifi_interface_t interface = SL_WIFI_CLIENT_2_4GHZ_INTERFACE;
+    sl_wifi_antenna_t antenna = SL_WIFI_ANTENNA_INTERNAL;
+    sl_status_t status = SL_STATUS_OK;
 
-        tx_test_info.mode = SL_WIFI_TEST_CONTINOUS_MODE;
-        status            = sl_si91x_transmit_test_start(&tx_test_info);
-        if (status != SL_STATUS_OK) {
-            LOG_SIMPLE("\r\nantenna test start Failed, Error Code : 0x%lX", status);
-            return 0 ;
-        }
-        LOG_SIMPLE("WiFi antenna test started.\r\n");
-        return 0;
-    } else if (strcmp(argv[1], "stop") == 0) {
-        status = sl_si91x_transmit_test_stop();
-        if (status != SL_STATUS_OK) {
-            LOG_SIMPLE("antenna test stop Failed, Error Code : 0x%lX", status);
-            return 0;
-        }
-        LOG_SIMPLE("WiFi antenna test stopped.\r\n");
-        return 0;
-    } else {
-        LOG_SIMPLE("Unknown command. Usage: wifi_ant <start|stop>\r\n");
+    if (!is_wifi_ant()) {
+        LOG_SIMPLE("Please use [wifitest] cmd to enter wifi test mode first!\r\n");
         return -1;
     }
+    // wifi_set_antenna -i client -a antenna
+    for (int i = 1; i < (argc - 1); i++) {
+        if (strcmp(argv[i], "-i") == 0) {
+            if (strcmp(argv[i + 1], "client") == 0) {
+                interface = SL_WIFI_CLIENT_2_4GHZ_INTERFACE;
+            } else if (strcmp(argv[i + 1], "ap") == 0) {
+                interface = SL_WIFI_AP_2_4GHZ_INTERFACE;
+            }
+        } else if (strcmp(argv[i], "-a") == 0) {
+            antenna = (sl_wifi_antenna_t)atoi(argv[i + 1]);
+        }
+    }
+
+    LOG_SIMPLE("wifi_set_antenna: %d, %d\r\n", interface, antenna);
+    status = sl_wifi_set_antenna(interface, antenna);
+    if (status != SL_STATUS_OK) {
+        LOG_SIMPLE("Failed to start set Antenna: 0x%lx\r\n", status);
+        return -1;
+    }
+
+    LOG_SIMPLE("Set Antenna Done\r\n");
+    return 0;
+}
+
+static int wifi_transmit_test_start_cmd(int argc, char* argv[]) 
+{
+    sl_status_t status = SL_STATUS_OK;
+    sl_si91x_request_tx_test_info_t tx_test_info = { 0 };
+
+    if (!is_wifi_ant()) {
+        LOG_SIMPLE("Please use [wifitest] cmd to enter wifi test mode first!\r\n");
+        return -1;
+    }
+    memcpy(&tx_test_info, &default_tx_test_info, sizeof(sl_si91x_request_tx_test_info_t));
+    // wifi_ax_transmit_test_start power data rate length mode channel aggr.enable enable_11ax coding_type nominal_pe ul_dl he_ppdu_type beam_change bw stbc tx_bf gi_ltf dcm nsts_midamble spatial_reuse bss_color he_siga2_reserved ru_allocation n_heltf_tot sigb_dcm sigb_mcs user_sta_id user_idx sigb_compression_field
+    if (argc > 1) {
+        tx_test_info.power = atoi(argv[1]);
+    }
+    if (argc > 2) {
+        tx_test_info.rate = atoi(argv[2]);
+    }
+    if (argc > 3) {
+        tx_test_info.length = atoi(argv[3]);
+    }
+    if (argc > 4) {
+        tx_test_info.mode = atoi(argv[4]);
+    }
+    if (argc > 5) {
+        tx_test_info.channel = atoi(argv[5]);
+    }
+    if (argc > 6) {
+        tx_test_info.aggr_enable = atoi(argv[6]);
+    }
+    if (argc > 7) {
+        tx_test_info.enable_11ax = atoi(argv[7]);
+    }
+    if (argc > 8) {
+        tx_test_info.coding_type = atoi(argv[8]);
+    }
+    if (argc > 9) {
+        tx_test_info.nominal_pe = atoi(argv[9]);
+    }
+    if (argc > 10) {
+        tx_test_info.ul_dl = atoi(argv[10]);
+    }
+    if (argc > 11) {
+        tx_test_info.he_ppdu_type = atoi(argv[11]);
+    }
+    if (argc > 12) {
+        tx_test_info.beam_change = atoi(argv[12]);
+    }
+    if (argc > 13) {
+        tx_test_info.bw = atoi(argv[13]);
+    }
+    if (argc > 14) {
+        tx_test_info.stbc = atoi(argv[14]);
+    }
+    if (argc > 15) {
+        tx_test_info.tx_bf = atoi(argv[15]);
+    }
+    if (argc > 16) {
+        tx_test_info.gi_ltf = atoi(argv[16]);
+    }
+    if (argc > 17) {
+        tx_test_info.dcm = atoi(argv[17]);
+    }
+    if (argc > 18) {
+        tx_test_info.nsts_midamble = atoi(argv[18]);
+    }
+    if (argc > 19) {
+        tx_test_info.spatial_reuse = atoi(argv[19]);
+    }
+    if (argc > 20) {
+        tx_test_info.bss_color = atoi(argv[20]);
+    }
+    if (argc > 21) {
+        tx_test_info.he_siga2_reserved = atoi(argv[21]);
+    }
+    if (argc > 22) {
+        tx_test_info.ru_allocation = atoi(argv[22]);
+    }
+    if (argc > 23) {
+        tx_test_info.n_heltf_tot = atoi(argv[23]);
+    }
+    if (argc > 24) {
+        tx_test_info.sigb_dcm = atoi(argv[24]);
+    }
+    if (argc > 25) {
+        tx_test_info.sigb_mcs = atoi(argv[25]);
+    }
+    if (argc > 26) {
+        tx_test_info.user_sta_id = atoi(argv[26]);
+    }
+    if (argc > 27) {
+        tx_test_info.user_idx = atoi(argv[27]);
+    }
+    if (argc > 28) {
+        tx_test_info.sigb_compression_field = atoi(argv[28]);
+    }
+
+    LOG_SIMPLE("WiFi transmit test arguments:");
+    LOG_SIMPLE("power: %d", tx_test_info.power);
+    LOG_SIMPLE("rate: %d", tx_test_info.rate);
+    LOG_SIMPLE("length: %d", tx_test_info.length);
+    LOG_SIMPLE("mode: %d", tx_test_info.mode);
+    LOG_SIMPLE("channel: %d", tx_test_info.channel);
+    LOG_SIMPLE("aggr_enable: %d", tx_test_info.aggr_enable);
+    LOG_SIMPLE("enable_11ax: %d", tx_test_info.enable_11ax);
+    LOG_SIMPLE("coding_type: %d", tx_test_info.coding_type);
+    LOG_SIMPLE("nominal_pe: %d", tx_test_info.nominal_pe);
+    LOG_SIMPLE("ul_dl: %d", tx_test_info.ul_dl);
+    LOG_SIMPLE("he_ppdu_type: %d", tx_test_info.he_ppdu_type);
+    LOG_SIMPLE("beam_change: %d", tx_test_info.beam_change);
+    LOG_SIMPLE("bw: %d", tx_test_info.bw);
+    LOG_SIMPLE("stbc: %d", tx_test_info.stbc);
+    LOG_SIMPLE("tx_bf: %d", tx_test_info.tx_bf);
+    LOG_SIMPLE("gi_ltf: %d", tx_test_info.gi_ltf);
+    LOG_SIMPLE("dcm: %d", tx_test_info.dcm);
+    LOG_SIMPLE("nsts_midamble: %d", tx_test_info.nsts_midamble);
+    LOG_SIMPLE("spatial_reuse: %d", tx_test_info.spatial_reuse);
+    LOG_SIMPLE("bss_color: %d", tx_test_info.bss_color);
+    LOG_SIMPLE("he_siga2_reserved: %d", tx_test_info.he_siga2_reserved);
+    LOG_SIMPLE("ru_allocation: %d", tx_test_info.ru_allocation);
+    LOG_SIMPLE("n_heltf_tot: %d", tx_test_info.n_heltf_tot);
+    LOG_SIMPLE("sigb_dcm: %d", tx_test_info.sigb_dcm);
+    LOG_SIMPLE("sigb_mcs: %d", tx_test_info.sigb_mcs);
+    LOG_SIMPLE("user_sta_id: %d", tx_test_info.user_sta_id);
+    LOG_SIMPLE("user_idx: %d", tx_test_info.user_idx);
+    LOG_SIMPLE("sigb_compression_field: %d", tx_test_info.sigb_compression_field);
+    status = sl_si91x_transmit_test_start(&tx_test_info);
+    if (status != SL_STATUS_OK) {
+        LOG_SIMPLE("\r\ntransmit test start Failed, Error Code : 0x%lX\r\n", status);
+        return -1;
+    }
+    LOG_SIMPLE("WiFi transmit test started.\r\n");
+    return 0;
+}
+
+static int wifi_transmit_test_stop_cmd(int argc, char* argv[]) 
+{
+    sl_status_t status;
+
+    if (!is_wifi_ant()) {
+        LOG_SIMPLE("Please use [wifitest] cmd to enter wifi test mode first!\r\n");
+        return -1;
+    }
+    status = sl_si91x_transmit_test_stop();
+    if (status != SL_STATUS_OK) {
+        LOG_SIMPLE("\r\ntransmit test stop Failed, Error Code : 0x%lX\r\n", status);
+        return -1;
+    }
+    LOG_SIMPLE("WiFi transmit test stopped.\r\n");
+    return 0;
 }
 
 static int wifi_cmd_spi(int argc, char *argv[])
@@ -659,7 +800,10 @@ static int wifi_cmd_spi(int argc, char *argv[])
 debug_cmd_reg_t wifi_cmd_table[] = {
     {"wifiup",     "WiFi update.",      wifi_update_cmd},
     {"wifitest",   "WiFi test.",        wifi_test_cmd},
-    {"wifi_ant",  "WiFi antenna test <start|stop>",      wifi_ant_cmd},
+    {"wifi_set_antenna",  "WiFi set antenna.",       wifi_set_antenna_cmd},
+    {"wifi_transmit_test_start",  "WiFi transmit test start.",       wifi_transmit_test_start_cmd},
+    {"wifi_transmit_test_stop",  "WiFi transmit test stop.",       wifi_transmit_test_stop_cmd},
+    // {"wifi_ant",  "WiFi antenna test <start|stop>",      wifi_ant_cmd},
     {"wifispi", "wifi spi <hexdata> [count]", wifi_cmd_spi},
 };
 

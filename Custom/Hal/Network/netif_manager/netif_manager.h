@@ -43,6 +43,7 @@
 #define NETIF_4G_CAT1_INIT_TIMEOUT_MS       (10000)
 #define NETIF_4G_CAT1_CNT_TIMEOUT_MS        (30000)
 #define NETIF_4G_CAT1_EXIT_TIMEOUT_MS       (10000)
+#define NETIF_4G_CAT1_EXIT_DELAY_MS         (500)
 #define NETIF_4G_CAT1_PPP_INTERVAL_MS       (1000)
 #define NETIF_4G_CAT1_PPP_SEND_TIMEOUT      (50)
 #define NETIF_4G_CAT1_TRY_CNT               (3)
@@ -67,7 +68,7 @@
 #define NETIF_NAME_ETH_WAN                  "wn"
 #define NETIF_NAME_4G_CAT1                  "4g"
 #define NETIF_NAME_USB_ECM                  "ue"
-#define NETIF_DEFAULT_NETIF_NAME            NETIF_NAME_WIFI_STA
+#define NETIF_DEFAULT_NETIF_NAME            NETIF_NAME_ETH_WAN
 
 #define NETIF_MAC_STR_FMT                   "%02x:%02x:%02x:%02x:%02x:%02x"
 #define NETIF_MAC_SCAN_STR_FMT              "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx"
@@ -193,6 +194,11 @@ typedef struct {
     char sim_status[32];                 // SIM card status
     char operator[32];                   // Current network operator name
     char version[32];                    // Firmware version
+    char plmn_id[8];                     // Current network PLMN ID
+    char cell_id[32];                    // Current cell ID
+    char lac[32];                        // Location area code
+    char network_type[16];               // Network type
+    char registration_status[64];        // Network registration status
 } cellular_info_t;
 
 /// @brief Wireless scan information

@@ -169,6 +169,12 @@ aicam_result_t mqtt_service_reconnect(void);
  */
 aicam_bool_t mqtt_service_is_connected(void);
 
+/**
+ * @brief Check if MQTT service is initialized
+ * @return aicam_bool_t Service initialized status
+ */
+aicam_bool_t mqtt_service_is_initialized(void);
+
 /* ==================== Message Publishing ==================== */
 
 /**

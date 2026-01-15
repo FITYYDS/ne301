@@ -88,10 +88,15 @@ typedef struct {
     remote_trigger_config_t remote_trigger;
  } trigger_config_t;
  
- typedef struct {
-     aicam_bool_t enable;
-     char rtsp_server_url[256];
- } video_stream_mode_config_t;
+typedef struct {
+    aicam_bool_t enable;                    // Video stream mode enable
+    char rtsp_server_url[256];              // RTSP URL (reserved)
+    
+    // RTMP configuration
+    aicam_bool_t rtmp_enable;               // RTMP streaming enable
+    char rtmp_url[256];                     // RTMP server URL
+    char rtmp_stream_key[128];              // Stream key
+} video_stream_mode_config_t;
  
 // Work mode configuration structure
 typedef struct {
@@ -120,14 +125,98 @@ typedef struct {
 } network_scan_result_t;
 
 
- //network service configuration structure
- typedef struct {
-    uint32_t ap_sleep_time; // AP sleep time in seconds
-    char ssid[32];          // AP SSID
-    char password[64];      // AP password
+/**
+ * @brief Cellular connection settings for persistent storage
+ */
+typedef struct {
+    char apn[32];                           // APN (Access Point Name)
+    char username[64];                      // APN username
+    char password[64];                      // APN password
+    char pin_code[16];                      // SIM PIN code
+    uint8_t authentication;                 // Authentication type (0=None, 1=PAP, 2=CHAP, 3=Auto)
+    aicam_bool_t enable_roaming;            // Enable roaming
+} cellular_config_persist_t;
+
+/**
+ * @brief PoE/Ethernet IP mode
+ */
+typedef enum {
+    POE_IP_MODE_DHCP = 0,                   // DHCP mode (default)
+    POE_IP_MODE_STATIC,                     // Static IP mode
+} poe_ip_mode_t;
+
+/**
+ * @brief PoE/Ethernet connection status codes
+ */
+typedef enum {
+    POE_STATUS_OFFLINE = 0,                 // PoE offline / not powered
+    POE_STATUS_LINK_DOWN,                   // Cable not connected
+    POE_STATUS_CONNECTING,                  // Connecting (DHCP in progress)
+    POE_STATUS_CONNECTED,                   // Connected with valid IP
+    POE_STATUS_DHCP_FAILED,                 // DHCP failed
+    POE_STATUS_STATIC_CONFIG_ERROR,         // Static IP config error
+    POE_STATUS_IP_CONFLICT,                 // IP address conflict detected
+    POE_STATUS_GATEWAY_UNREACHABLE,         // Gateway unreachable
+    POE_STATUS_DNS_ERROR,                   // DNS resolution error
+    POE_STATUS_ERROR,                       // General error
+} poe_status_code_t;
+
+/**
+ * @brief PoE/Ethernet configuration for persistent storage
+ */
+typedef struct {
+    // IP Mode
+    poe_ip_mode_t ip_mode;                  // IP mode (DHCP or Static)
+    
+    // Static IP configuration
+    uint8_t ip_addr[4];                     // IPv4 address
+    uint8_t netmask[4];                     // Subnet mask
+    uint8_t gateway[4];                     // Default gateway
+    uint8_t dns_primary[4];                 // Primary DNS server
+    uint8_t dns_secondary[4];               // Secondary DNS server
+    char hostname[32];                      // Hostname
+    
+    // DHCP settings
+    uint32_t dhcp_timeout_ms;               // DHCP timeout in milliseconds
+    uint32_t dhcp_retry_count;              // DHCP retry count (0 = infinite)
+    uint32_t dhcp_retry_interval_ms;        // DHCP retry interval in milliseconds
+    
+    // Recovery settings
+    uint32_t power_recovery_delay_ms;       // Delay after PoE power recovery (default: 5000)
+    aicam_bool_t auto_reconnect;            // Auto reconnect on link up
+    aicam_bool_t persist_last_ip;           // Persist last DHCP IP for quick recovery
+    uint8_t last_dhcp_ip[4];                // Last DHCP assigned IP (for quick recovery)
+    
+    // Validation settings
+    aicam_bool_t validate_gateway;          // Validate gateway reachability
+    aicam_bool_t detect_ip_conflict;        // Detect IP address conflicts
+    
+    // Status (runtime, not persisted)
+    poe_status_code_t last_status;          // Last status code
+    uint32_t last_error_time;               // Last error timestamp
+    char last_error_msg[64];                // Last error message
+} poe_config_persist_t;
+
+/**
+ * @brief Network service configuration structure
+ */
+typedef struct {
+    uint32_t ap_sleep_time;                 // AP sleep time in seconds
+    char ssid[32];                          // AP SSID
+    char password[64];                      // AP password
     network_scan_result_t known_networks[16]; // Known network configuration
-    uint32_t known_network_count; // Known network count
- } network_service_config_t;
+    uint32_t known_network_count;           // Known network count
+    
+    // Communication type settings
+    uint32_t preferred_comm_type;           // Preferred communication type (0=None, 1=WiFi, 2=Cellular, 3=PoE)
+    aicam_bool_t enable_auto_priority;      // Enable automatic priority-based switching
+    
+    // Cellular/4G settings
+    cellular_config_persist_t cellular;     // Cellular configuration
+    
+    // PoE/Ethernet settings
+    poe_config_persist_t poe;               // PoE configuration
+} network_service_config_t;
  
  // Power mode configuration structure
  typedef struct {
@@ -242,6 +331,7 @@ typedef struct {
     aicam_bool_t horizontal_flip;            // image horizontal flip
     aicam_bool_t vertical_flip;              // image vertical flip
     uint32_t aec;                            // image auto exposure control (0=manual, 1=auto)
+    uint32_t startup_skip_frames;            // frames to skip on camera startup for stabilization (1-300)
 } image_config_t;
 
 /**
@@ -279,6 +369,11 @@ typedef struct {
     aicam_bool_t enable_session_timeout;               // Enable session timeout
     char admin_password[64];                           // Admin password (default: "hicamthink")
 } auth_mgr_config_t;
+
+// RTMP config is now part of video_stream_mode_config_t
+// These macros are kept for compatibility
+#define RTMP_CONFIG_MAX_URL_LENGTH         256
+#define RTMP_CONFIG_MAX_STREAM_KEY_LENGTH  128
  
  // Global configuration structure 
  typedef struct {
@@ -287,16 +382,16 @@ typedef struct {
      uint32_t checksum;                     // Configuration checksum
      uint64_t timestamp;                    // Configuration timestamp
      
-     log_config_t log_config;
-     ai_debug_config_t ai_debug;
-     work_mode_config_t work_mode_config;
-     power_mode_config_t power_mode_config; // Power mode configuration
-     device_info_config_t device_info;
-     device_service_config_t device_service;
-     network_service_config_t network_service;
-     mqtt_service_config_t mqtt_service;
-     auth_mgr_config_t auth_mgr;
-     // Other module configurations can be extended...
+    log_config_t log_config;
+    ai_debug_config_t ai_debug;
+    work_mode_config_t work_mode_config;
+    power_mode_config_t power_mode_config; // Power mode configuration
+    device_info_config_t device_info;
+    device_service_config_t device_service;
+    network_service_config_t network_service;
+    mqtt_service_config_t mqtt_service;
+    auth_mgr_config_t auth_mgr;
+    // RTMP config is now in work_mode_config.video_stream_mode
  } aicam_global_config_t;
  
  /* ==================== JSON Configuration Manager Parameter Definitions ==================== */
@@ -615,6 +710,65 @@ aicam_result_t json_config_get_device_service_light_config(light_config_t *light
  * @return aicam_result_t Operation result
  */
 aicam_result_t json_config_set_device_service_light_config(const light_config_t *light_config);
+
+/* ==================== PoE Configuration API ==================== */
+
+/**
+ * @brief Get PoE configuration
+ * @param poe_config PoE configuration structure pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_get_poe_config(poe_config_persist_t *poe_config);
+
+/**
+ * @brief Set PoE configuration
+ * @param poe_config PoE configuration structure pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_set_poe_config(const poe_config_persist_t *poe_config);
+
+/**
+ * @brief Get PoE IP mode
+ * @return poe_ip_mode_t IP mode
+ */
+poe_ip_mode_t json_config_get_poe_ip_mode(void);
+
+/**
+ * @brief Set PoE IP mode
+ * @param mode IP mode
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_set_poe_ip_mode(poe_ip_mode_t mode);
+
+/**
+ * @brief Save PoE last DHCP IP for quick recovery
+ * @param ip_addr IP address (4 bytes)
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_save_poe_last_dhcp_ip(const uint8_t *ip_addr);
+
+/**
+ * @brief Get PoE status code string
+ * @param status Status code
+ * @return const char* Status string
+ */
+const char* poe_status_code_to_string(poe_status_code_t status);
+
+/* ==================== Video Stream Mode Configuration API ==================== */
+
+/**
+ * @brief Get video stream mode configuration (includes RTMP)
+ * @param config Video stream mode configuration pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_get_video_stream_mode(video_stream_mode_config_t *config);
+
+/**
+ * @brief Set video stream mode configuration (includes RTMP)
+ * @param config Video stream mode configuration pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_set_video_stream_mode(const video_stream_mode_config_t *config);
  
  /* ==================== Convenient Access Macro Definitions ==================== */
  

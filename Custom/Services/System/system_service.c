@@ -21,6 +21,8 @@
  #include "device_service.h"
  #include "service_init.h"
  #include "sl_net_netif.h"
+ #include "communication_service.h"
+ #include "web_server.h"
  
  
  /* ==================== System Controller Implementation ==================== */
@@ -75,6 +77,14 @@
 
 
  static struct system_service_context_s g_system_service_ctx = {0};
+static volatile aicam_bool_t g_capture_in_progress = AICAM_FALSE;
+static volatile aicam_bool_t g_fast_fail_mqtt_policy = AICAM_FALSE;
+static const system_capture_request_t g_capture_defaults = {
+    .enable_ai = AICAM_TRUE,
+    .chunk_size = 0,        // auto chunk
+    .store_to_sd = AICAM_TRUE,
+    .fast_fail_mqtt = AICAM_FALSE
+};
  
  static uint64_t get_timestamp_ms(void)
  {
@@ -499,7 +509,7 @@
      
      // Check if 1 minute timeout with no activity
      if (elapsed_time >= controller->power_config.low_power_timeout_ms) {
-         LOG_SVC_INFO("Power mode timeout reached (%llu ms), switching to low power mode", elapsed_time);
+         LOG_SVC_INFO("Power mode timeout reached (%lu ms), switching to low power mode", (unsigned long)elapsed_time);
          return system_controller_set_power_mode(controller, POWER_MODE_LOW_POWER, POWER_TRIGGER_TIMEOUT);
      }
      return AICAM_OK;
@@ -546,43 +556,83 @@
      controller->activity_counter++;
  }
  
- /**
-  * @brief Handle wakeup event
-  */
- static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeup_source_type_t source)
- {
-     if (!controller) {
-         return AICAM_ERROR_INVALID_PARAM;
-     }
-     
-     LOG_SVC_INFO("Wakeup event from source: %d", source);
-     
-     // Update activity
-     update_activity(controller);
-     
-     // Switch to full speed mode if in low power mode
-    //  if (controller->power_config.current_mode == POWER_MODE_LOW_POWER) {
-    //      aicam_result_t result = system_controller_set_power_mode(controller, POWER_MODE_FULL_SPEED, POWER_TRIGGER_AUTO_WAKEUP);
-    //      if (result != AICAM_OK) {
-    //          LOG_SVC_ERROR("Failed to switch to full speed mode: %d", result);
-    //          return result;
-    //      }
-    //  }
-     
-     // Set system state to active
-     aicam_result_t result = system_controller_set_state(controller, SYSTEM_STATE_ACTIVE);
-     if (result != AICAM_OK) {
-         return result;
-     }
-     
-     // Execute work mode specific logic
-     if (controller->capture_callback) {
-         capture_trigger_type_t trigger_type = (capture_trigger_type_t)source;
-         controller->capture_callback(trigger_type, controller->capture_callback_user_data);
-     }
-     
-     return AICAM_OK;
- }
+/**
+ * @brief Handle wakeup event
+ * @details Handles different wakeup sources with specific behaviors:
+ *          - Short press: LED slow blink, take photo
+ *          - Long press (2s): LED solid on, enable AP
+ *          - Super long press (10s): Factory reset
+ *          - Other sources: Default behavior
+ */
+static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeup_source_type_t source)
+{
+    if (!controller) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    
+    LOG_SVC_INFO("Wakeup event from source: %d", source);
+    
+    // Update activity
+    update_activity(controller);
+    
+    // Set system state to active
+    aicam_result_t result = system_controller_set_state(controller, SYSTEM_STATE_ACTIVE);
+    if (result != AICAM_OK) {
+        return result;
+    }
+    
+    // Handle different button press types with specific behaviors
+    switch (source) {
+        case WAKEUP_SOURCE_BUTTON_SUPER_LONG:
+            // Super long press (10s) - Factory reset (highest priority)
+            LOG_SVC_INFO("Button super long press (10s) - triggering factory reset");
+            // Factory reset function will set fast blink LED internally
+            device_service_reset_to_factory_defaults();
+            // Note: device_service_reset_to_factory_defaults() will restart the system
+            break;
+            
+        case WAKEUP_SOURCE_BUTTON_LONG:
+            // Long press (2s) - Enable AP, LED solid on
+            LOG_SVC_INFO("Button long press (2s) - enabling AP");
+            device_service_set_indicator_state(SYSTEM_INDICATOR_RUNNING_AP_ON);
+            // // Reset AP sleep timer and start AP if not running
+            // web_server_ap_sleep_timer_reset();
+            // if (communication_is_interface_connected(NETIF_NAME_WIFI_AP) == AICAM_FALSE) {
+            //     communication_start_interface(NETIF_NAME_WIFI_AP);
+            // }
+            break;
+            
+        case WAKEUP_SOURCE_BUTTON:
+            // Short press - Take photo, LED slow blink (AP off state)
+            LOG_SVC_INFO("Button short press - taking photo");
+            // Set LED to slow blink (system running, AP may be off)
+        
+            device_service_set_indicator_state(SYSTEM_INDICATOR_RUNNING_AP_OFF);
+            
+            // Execute capture callback
+            if (controller->capture_callback) {
+                controller->capture_callback(CAPTURE_TRIGGER_BUTTON, controller->capture_callback_user_data);
+            }
+            break;
+            
+        default:
+            // Other wakeup sources - default behavior
+            // Set LED based on current AP state
+            if (communication_is_interface_connected(NETIF_NAME_WIFI_AP)) {
+                device_service_set_indicator_state(SYSTEM_INDICATOR_RUNNING_AP_ON);
+            } else {
+                device_service_set_indicator_state(SYSTEM_INDICATOR_RUNNING_AP_OFF);
+            }
+            // Execute capture callback if registered
+            if (controller->capture_callback) {
+                capture_trigger_type_t trigger_type = (capture_trigger_type_t)source;
+                controller->capture_callback(trigger_type, controller->capture_callback_user_data);
+            }
+            break;
+    }
+    
+    return AICAM_OK;
+}
  
  /* ==================== Work Mode Management Helper Functions ==================== */
  
@@ -882,11 +932,12 @@
         LOG_SVC_INFO("Image mode detected - starting capture and upload to MQTT");
         
         //Use the new unified interface for capture and upload
-        aicam_result_t ret = system_service_capture_and_upload_mqtt(
-            AICAM_TRUE,  // Enable AI inference
-            0,           // Auto chunk size (10KB)
-            AICAM_TRUE
-        );
+        system_capture_request_t req = {
+            .enable_ai = AICAM_TRUE,
+            .chunk_size = 0,
+            .store_to_sd = AICAM_TRUE
+        };
+        aicam_result_t ret = system_service_capture_request(&req, NULL);
         
         if (ret == AICAM_OK) {
             LOG_SVC_INFO("Image capture and upload completed successfully");
@@ -976,6 +1027,8 @@ static void default_capture_callback(capture_trigger_type_t trigger_type, void *
             
         case CAPTURE_TRIGGER_BUTTON:
             LOG_SVC_INFO("Button pressed - manual capture");
+            wakeup_task_async(controller);
+            system_service_task_completed();
             // TODO: Implement button trigger capture logic
             // Example: trigger_manual_capture();
             break;
@@ -1195,23 +1248,34 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
          
          handle_wakeup_event(controller, WAKEUP_SOURCE_RTC);
      }
-     else if (wakeup_flag & PWR_WAKEUP_FLAG_WUFI) {
-         LOG_SVC_INFO("Woken by WUFI");
-         handle_wakeup_event(controller, WAKEUP_SOURCE_WUFI);
-     }
-     else if (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) {
-         LOG_SVC_INFO("Woken by config key");
-         handle_wakeup_event(controller, WAKEUP_SOURCE_BUTTON);
-     }
-     else if (wakeup_flag & (PWR_WAKEUP_FLAG_PIR_HIGH | PWR_WAKEUP_FLAG_PIR_LOW | 
-                        PWR_WAKEUP_FLAG_PIR_RISING | PWR_WAKEUP_FLAG_PIR_FALLING)) {
-         LOG_SVC_INFO("Woken by PIR sensor");
-         handle_wakeup_event(controller, WAKEUP_SOURCE_PIR);
-     }
-     else if (wakeup_flag & (PWR_WAKEUP_FLAG_SI91X | PWR_WAKEUP_FLAG_NET)) {
-         LOG_SVC_INFO("Woken by network");
-         handle_wakeup_event(controller, WAKEUP_SOURCE_REMOTE);
-     }
+    else if (wakeup_flag & PWR_WAKEUP_FLAG_WUFI) {
+        LOG_SVC_INFO("Woken by WUFI");
+        handle_wakeup_event(controller, WAKEUP_SOURCE_WUFI);
+    }
+    else if (wakeup_flag & PWR_WAKEUP_FLAG_KEY_MAX_PRESS) {
+        // Super long press (10s) - Factory reset (highest priority)
+        LOG_SVC_INFO("Woken by super long press (10s) - triggering factory reset");
+        handle_wakeup_event(controller, WAKEUP_SOURCE_BUTTON_SUPER_LONG);
+    }
+    else if (wakeup_flag & PWR_WAKEUP_FLAG_KEY_LONG_PRESS) {
+        // Long press (2s) - Enable AP
+        LOG_SVC_INFO("Woken by long press (2s) - enabling AP");
+        handle_wakeup_event(controller, WAKEUP_SOURCE_BUTTON_LONG);
+    }
+    else if (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) {
+        // Short press - Take photo
+        LOG_SVC_INFO("Woken by short press - taking photo");
+        handle_wakeup_event(controller, WAKEUP_SOURCE_BUTTON);
+    }
+    else if (wakeup_flag & (PWR_WAKEUP_FLAG_PIR_HIGH | PWR_WAKEUP_FLAG_PIR_LOW | 
+                       PWR_WAKEUP_FLAG_PIR_RISING | PWR_WAKEUP_FLAG_PIR_FALLING)) {
+        LOG_SVC_INFO("Woken by PIR sensor");
+        handle_wakeup_event(controller, WAKEUP_SOURCE_PIR);
+    }
+    else if (wakeup_flag & (PWR_WAKEUP_FLAG_SI91X | PWR_WAKEUP_FLAG_NET)) {
+        LOG_SVC_INFO("Woken by network");
+        handle_wakeup_event(controller, WAKEUP_SOURCE_REMOTE);
+    }
      
      return AICAM_OK;
  }
@@ -1429,7 +1493,7 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
          struct tm *tm_info = localtime(&wake_time);
          if (tm_info) {
              alarm_a.is_valid = 1;
-             alarm_a.week_day = tm_info->tm_wday;
+             alarm_a.week_day = tm_info->tm_wday == 0 ? 7 : tm_info->tm_wday;
              alarm_a.date = 0;       // Not restricted by date
              alarm_a.hour = tm_info->tm_hour;
              alarm_a.minute = tm_info->tm_min;
@@ -1447,7 +1511,7 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
          struct tm *tm_info = localtime(&wake_time);
          if (tm_info) {
              alarm_b.is_valid = 1;
-             alarm_b.week_day = tm_info->tm_wday;
+             alarm_b.week_day = tm_info->tm_wday == 0 ? 7 : tm_info->tm_wday;
              alarm_b.date = 0;       // Not restricted by date
              alarm_b.hour = tm_info->tm_hour;
              alarm_b.minute = tm_info->tm_min;
@@ -1895,25 +1959,33 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
  
 
 
- /**
-  * @brief Get wakeup source type
-  * @return Wakeup source type
-  */
- wakeup_source_type_t system_service_get_wakeup_source_type(void)
- {
-    uint32_t wakeup_flag = u0_module_get_wakeup_flag_ex();
-    if (wakeup_flag & PWR_WAKEUP_FLAG_RTC_TIMING || wakeup_flag & PWR_WAKEUP_FLAG_RTC_ALARM_A || wakeup_flag & PWR_WAKEUP_FLAG_RTC_ALARM_B) {
-        return WAKEUP_SOURCE_RTC;
-    } else if (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) {
-        return WAKEUP_SOURCE_BUTTON;
-    } else if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_HIGH || wakeup_flag & PWR_WAKEUP_FLAG_PIR_LOW || wakeup_flag & PWR_WAKEUP_FLAG_PIR_RISING || wakeup_flag & PWR_WAKEUP_FLAG_PIR_FALLING) {
-        return WAKEUP_SOURCE_PIR;
-    } else if( wakeup_flag & PWR_WAKEUP_FLAG_VALID) {
-        return WAKEUP_SOURCE_OTHER;
-    }
+/**
+ * @brief Get wakeup source type
+ * @return Wakeup source type
+ */
+wakeup_source_type_t system_service_get_wakeup_source_type(void)
+{
+   uint32_t wakeup_flag = u0_module_get_wakeup_flag_ex();
+   
+   if (wakeup_flag & PWR_WAKEUP_FLAG_RTC_TIMING || wakeup_flag & PWR_WAKEUP_FLAG_RTC_ALARM_A || wakeup_flag & PWR_WAKEUP_FLAG_RTC_ALARM_B) {
+       return WAKEUP_SOURCE_RTC;
+   } else if (wakeup_flag & PWR_WAKEUP_FLAG_KEY_MAX_PRESS) {
+       // Super long press (10s) - highest priority
+       return WAKEUP_SOURCE_BUTTON_SUPER_LONG;
+   } else if (wakeup_flag & PWR_WAKEUP_FLAG_KEY_LONG_PRESS) {
+       // Long press (2s)
+       return WAKEUP_SOURCE_BUTTON_LONG;
+   } else if (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) {
+       // Short press
+       return WAKEUP_SOURCE_BUTTON;
+   } else if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_HIGH || wakeup_flag & PWR_WAKEUP_FLAG_PIR_LOW || wakeup_flag & PWR_WAKEUP_FLAG_PIR_RISING || wakeup_flag & PWR_WAKEUP_FLAG_PIR_FALLING) {
+       return WAKEUP_SOURCE_PIR;
+   } else if( wakeup_flag & PWR_WAKEUP_FLAG_VALID) {
+       return WAKEUP_SOURCE_OTHER;
+   }
 
-    return WAKEUP_SOURCE_OTHER;
- }
+   return WAKEUP_SOURCE_OTHER;
+}
  
  /**
   * @brief Configure wakeup source
@@ -2321,6 +2393,46 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
     return AICAM_OK;
 }
 
+/* ==================== Unified Capture Entry ==================== */
+
+aicam_result_t system_service_capture_request(const system_capture_request_t *request,
+                                              system_capture_response_t *response)
+{
+    system_capture_request_t resolved = g_capture_defaults;
+    if (request) {
+        resolved.enable_ai = request->enable_ai;
+        resolved.store_to_sd = request->store_to_sd;
+        resolved.fast_fail_mqtt = request->fast_fail_mqtt;
+        if (request->chunk_size > 0) {
+            resolved.chunk_size = request->chunk_size;
+        }
+    }
+
+    if (g_capture_in_progress) {
+        return AICAM_ERROR_BUSY;
+    }
+
+    g_capture_in_progress = AICAM_TRUE;
+    g_fast_fail_mqtt_policy = resolved.fast_fail_mqtt;
+
+    uint64_t start_ms = rtc_get_uptime_ms();
+    aicam_result_t ret = system_service_capture_and_upload_mqtt(
+        resolved.enable_ai,
+        resolved.chunk_size,
+        resolved.store_to_sd);
+    uint64_t duration_ms = rtc_get_uptime_ms() - start_ms;
+
+    g_capture_in_progress = AICAM_FALSE;
+    g_fast_fail_mqtt_policy = AICAM_FALSE;
+
+    if (response) {
+        response->result = ret;
+        response->duration_ms = duration_ms;
+    }
+
+    return ret;
+}
+
 /* ==================== Image Capture and Upload API Implementation ==================== */
 
 /**
@@ -2349,6 +2461,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     // Check if this is an RTC wakeup (for fast capture)
     wakeup_source_type_t wakeup_source = system_service_get_wakeup_source_type();
     aicam_bool_t is_rtc_wakeup = (wakeup_source == WAKEUP_SOURCE_RTC);
+    aicam_bool_t is_button_wakeup = (wakeup_source == WAKEUP_SOURCE_BUTTON);
 
     // Step 1: Capture image with optional AI inference
     uint8_t *jpeg_buffer = NULL;
@@ -2357,7 +2470,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     aicam_result_t ret = AICAM_OK;
 
     step_start_time = rtc_get_uptime_ms();
-    if (is_rtc_wakeup) {
+    if (is_rtc_wakeup || is_button_wakeup) {
         LOG_SVC_INFO("[TIMING] Step 1: Capturing image using fast capture API (RTC wakeup)...");
         ret = device_service_camera_capture_fast(&jpeg_buffer, &jpeg_size, enable_ai, &nn_result);
         step_end_time = rtc_get_uptime_ms();
@@ -2476,20 +2589,30 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     }
 
     step_start_time = rtc_get_uptime_ms();
-    LOG_SVC_INFO("[TIMING] Step 3.1: Waiting for MQTT network connection...");
+    LOG_SVC_INFO("[TIMING] Step 3.1: Checking MQTT network connection...");
     uint32_t current_flags = service_get_ready_flags();
-    LOG_SVC_INFO("[TIMING] Step 3.1: Current service flags: 0x%08X, MQTT_NET_CONNECTED: %s", 
-                 current_flags, (current_flags & MQTT_NET_CONNECTED) ? "YES" : "NO");
-    aicam_result_t result = service_wait_for_ready(MQTT_NET_CONNECTED, AICAM_TRUE, 10000);
-    if (result != AICAM_OK) {
-        LOG_SVC_ERROR("[TIMING] Step 3.1 FAILED: Failed to wait for MQTT network connected: %d (timeout: 10s)", result);
-        LOG_SVC_ERROR("[TIMING] Step 3.1: Final service flags: 0x%08X", service_get_ready_flags());
-        device_service_camera_free_jpeg_buffer(jpeg_buffer);
-        return AICAM_ERROR;
+
+    if (g_fast_fail_mqtt_policy) {
+        if (!mqtt_service_is_connected()) {
+            LOG_SVC_ERROR("[TIMING] Step 3.1 FAST-FAIL: MQTT not connected (flags=0x%08X)", current_flags);
+            device_service_camera_free_jpeg_buffer(jpeg_buffer);
+            return AICAM_ERROR_UNAVAILABLE;
+        }
+    } else {
+        LOG_SVC_INFO("[TIMING] Step 3.1: Current service flags: 0x%08X, MQTT_NET_CONNECTED: %s", 
+                     current_flags, (current_flags & MQTT_NET_CONNECTED) ? "YES" : "NO");
+        aicam_result_t result = service_wait_for_ready(MQTT_NET_CONNECTED, AICAM_TRUE, 15000);
+        if (result != AICAM_OK) {
+            LOG_SVC_ERROR("[TIMING] Step 3.1 FAILED: Failed to wait for MQTT network connected: %d (timeout: 15s)", result);
+            LOG_SVC_ERROR("[TIMING] Step 3.1: Final service flags: 0x%08X", service_get_ready_flags());
+            device_service_camera_free_jpeg_buffer(jpeg_buffer);
+            return AICAM_ERROR_TIMEOUT;
+        }
     }
+
     step_end_time = rtc_get_uptime_ms();
     step_duration = step_end_time - step_start_time;
-    LOG_SVC_INFO("[TIMING] Step 3.1 COMPLETED: MQTT network connected (duration: %lu ms)", 
+    LOG_SVC_INFO("[TIMING] Step 3.1 COMPLETED: MQTT network ready (duration: %lu ms)", 
                  (unsigned long)step_duration);
 
     // Step 4: Check MQTT connection and upload

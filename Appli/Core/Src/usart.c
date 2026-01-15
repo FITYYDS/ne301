@@ -28,16 +28,13 @@ UART_HandleTypeDef huart7;
 UART_HandleTypeDef huart9;
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
 DMA_HandleTypeDef handle_HPDMA1_Channel7;
-DMA_NodeTypeDef Node_HPDMA1_Channel6;
-DMA_QListTypeDef List_HPDMA1_Channel6;
 DMA_HandleTypeDef handle_HPDMA1_Channel6;
-// DMA_HandleTypeDef handle_GPDMA1_Channel1;
-// DMA_NodeTypeDef Node_GPDMA1_Channel0;
-// DMA_QListTypeDef List_GPDMA1_Channel0;
-// DMA_HandleTypeDef handle_GPDMA1_Channel0;
 DMA_HandleTypeDef handle_GPDMA1_Channel4;
 DMA_HandleTypeDef handle_GPDMA1_Channel3;
+DMA_HandleTypeDef handle_GPDMA1_Channel2;
+DMA_HandleTypeDef handle_GPDMA1_Channel1;
 
 /* UART7 init function */
 void MX_UART7_Init(uint32_t baudrate)
@@ -213,6 +210,51 @@ void MX_USART2_UART_Init(void)
 
 }
 
+void MX_USART3_UART_Init(Uart_Config_t *config)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+  if (config == NULL) {
+    Error_Handler();
+  }
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = config->baudrate;
+  huart3.Init.WordLength = config->wordlength;
+  huart3.Init.StopBits = config->stopbits;
+  huart3.Init.Parity = config->parity;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart3.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart3, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart3, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
 void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 {
 
@@ -260,32 +302,6 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
     /* UART7 DMA Init */
     /* GPDMA1_REQUEST_UART7_TX Init */
-    // handle_GPDMA1_Channel1.Instance = GPDMA1_Channel1;
-    // handle_GPDMA1_Channel1.Init.Request = GPDMA1_REQUEST_UART7_TX;
-    // handle_GPDMA1_Channel1.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
-    // handle_GPDMA1_Channel1.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    // handle_GPDMA1_Channel1.Init.SrcInc = DMA_SINC_INCREMENTED;
-    // handle_GPDMA1_Channel1.Init.DestInc = DMA_DINC_FIXED;
-    // handle_GPDMA1_Channel1.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
-    // handle_GPDMA1_Channel1.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    // handle_GPDMA1_Channel1.Init.Priority = DMA_LOW_PRIORITY_HIGH_WEIGHT;
-    // handle_GPDMA1_Channel1.Init.SrcBurstLength = 1;
-    // handle_GPDMA1_Channel1.Init.DestBurstLength = 1;
-    // handle_GPDMA1_Channel1.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;
-    // handle_GPDMA1_Channel1.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    // handle_GPDMA1_Channel1.Init.Mode = DMA_NORMAL;
-    // if (HAL_DMA_Init(&handle_GPDMA1_Channel1) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // __HAL_LINKDMA(uartHandle, hdmatx, handle_GPDMA1_Channel1);
-  
-    // if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel1, DMA_CHANNEL_PRIV|DMA_CHANNEL_SEC
-    //                           |DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
     handle_HPDMA1_Channel7.Instance = HPDMA1_Channel7;
     handle_HPDMA1_Channel7.Init.Request = HPDMA1_REQUEST_UART7_TX;
     handle_HPDMA1_Channel7.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
@@ -321,126 +337,6 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
   
     /* GPDMA1_REQUEST_UART7_RX Init */
-    // NodeConfig.NodeType = DMA_GPDMA_LINEAR_NODE;
-    // NodeConfig.Init.Request = GPDMA1_REQUEST_UART7_RX;
-    // NodeConfig.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
-    // NodeConfig.Init.Direction = DMA_PERIPH_TO_MEMORY;
-    // NodeConfig.Init.SrcInc = DMA_SINC_FIXED;
-    // NodeConfig.Init.DestInc = DMA_DINC_INCREMENTED;
-    // NodeConfig.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
-    // NodeConfig.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    // NodeConfig.Init.SrcBurstLength = 1;
-    // NodeConfig.Init.DestBurstLength = 1;
-    // NodeConfig.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;
-    // NodeConfig.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    // NodeConfig.Init.Mode = DMA_NORMAL;
-    // NodeConfig.TriggerConfig.TriggerPolarity = DMA_TRIG_POLARITY_MASKED;
-    // NodeConfig.TriggerConfig.TriggerSelection = GPDMA1_TRIGGER_GPDMA1_CH0_TCF;
-    // NodeConfig.DataHandlingConfig.DataExchange = DMA_EXCHANGE_NONE;
-    // NodeConfig.DataHandlingConfig.DataAlignment = DMA_DATA_RIGHTALIGN_ZEROPADDED;
-    // NodeConfig.SrcSecure = DMA_CHANNEL_SRC_SEC;
-    // NodeConfig.DestSecure = DMA_CHANNEL_DEST_SEC;
-    // if (HAL_DMAEx_List_BuildNode(&NodeConfig, &Node_GPDMA1_Channel0) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // if (HAL_DMAEx_List_InsertNode(&List_GPDMA1_Channel0, NULL, &Node_GPDMA1_Channel0) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // if (HAL_DMAEx_List_SetCircularMode(&List_GPDMA1_Channel0) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // handle_GPDMA1_Channel0.Instance = GPDMA1_Channel0;
-    // handle_GPDMA1_Channel0.InitLinkedList.Priority = DMA_LOW_PRIORITY_HIGH_WEIGHT;
-    // handle_GPDMA1_Channel0.InitLinkedList.LinkStepMode = DMA_LSM_FULL_EXECUTION;
-    // handle_GPDMA1_Channel0.InitLinkedList.LinkAllocatedPort = DMA_LINK_ALLOCATED_PORT0;
-    // handle_GPDMA1_Channel0.InitLinkedList.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    // handle_GPDMA1_Channel0.InitLinkedList.LinkedListMode = DMA_LINKEDLIST_CIRCULAR;
-    // if (HAL_DMAEx_List_Init(&handle_GPDMA1_Channel0) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel0, &List_GPDMA1_Channel0) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // __HAL_LINKDMA(uartHandle, hdmarx, handle_GPDMA1_Channel0);
-  
-    // if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel0, DMA_CHANNEL_PRIV|DMA_CHANNEL_SEC
-    //                           |DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-    // NodeConfig.NodeType = DMA_HPDMA_LINEAR_NODE;
-    // NodeConfig.Init.Request = HPDMA1_REQUEST_UART7_RX;
-    // NodeConfig.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
-    // NodeConfig.Init.Direction = DMA_PERIPH_TO_MEMORY;
-    // NodeConfig.Init.SrcInc = DMA_SINC_FIXED;
-    // NodeConfig.Init.DestInc = DMA_DINC_INCREMENTED;
-    // NodeConfig.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
-    // NodeConfig.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    // NodeConfig.Init.SrcBurstLength = 1;
-    // NodeConfig.Init.DestBurstLength = 1;
-    // NodeConfig.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;
-    // NodeConfig.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    // NodeConfig.Init.Mode = DMA_NORMAL;
-    // NodeConfig.TriggerConfig.TriggerPolarity = DMA_TRIG_POLARITY_MASKED;
-    // NodeConfig.DataHandlingConfig.DataExchange = DMA_EXCHANGE_NONE;
-    // NodeConfig.DataHandlingConfig.DataAlignment = DMA_DATA_RIGHTALIGN_ZEROPADDED;
-    // NodeConfig.SrcSecure = DMA_CHANNEL_SRC_SEC;
-    // NodeConfig.DestSecure = DMA_CHANNEL_DEST_SEC;
-    // if (HAL_DMAEx_List_BuildNode(&NodeConfig, &Node_HPDMA1_Channel6) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // if (HAL_DMAEx_List_InsertNode(&List_HPDMA1_Channel6, NULL, &Node_HPDMA1_Channel6) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // if (HAL_DMAEx_List_SetCircularMode(&List_HPDMA1_Channel6) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // handle_HPDMA1_Channel6.Instance = HPDMA1_Channel6;
-    // handle_HPDMA1_Channel6.InitLinkedList.Priority = DMA_LOW_PRIORITY_HIGH_WEIGHT;
-    // handle_HPDMA1_Channel6.InitLinkedList.LinkStepMode = DMA_LSM_FULL_EXECUTION;
-    // handle_HPDMA1_Channel6.InitLinkedList.LinkAllocatedPort = DMA_LINK_ALLOCATED_PORT0;
-    // handle_HPDMA1_Channel6.InitLinkedList.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
-    // handle_HPDMA1_Channel6.InitLinkedList.LinkedListMode = DMA_LINKEDLIST_CIRCULAR;
-    // if (HAL_DMAEx_List_Init(&handle_HPDMA1_Channel6) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // if (HAL_DMAEx_List_LinkQ(&handle_HPDMA1_Channel6, &List_HPDMA1_Channel6) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
-    // __HAL_LINKDMA(uartHandle, hdmarx, handle_HPDMA1_Channel6);
-
-    // if (HAL_DMA_ConfigChannelAttributes(&handle_HPDMA1_Channel6,DMA_CHANNEL_SEC|DMA_CHANNEL_PRIV|DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC)!= HAL_OK )
-    // {
-    //   Error_Handler();
-    // }
-
-    // IsolationConfiginput.CidFiltering = DMA_ISOLATION_ON;
-    // IsolationConfiginput.StaticCid = DMA_CHANNEL_STATIC_CID_1;
-    // if (HAL_DMA_SetIsolationAttributes(&handle_HPDMA1_Channel6, &IsolationConfiginput) != HAL_OK)
-    // {
-    //   Error_Handler();
-    // }
-
     handle_HPDMA1_Channel6.Instance = HPDMA1_Channel6;
     handle_HPDMA1_Channel6.Init.Request = HPDMA1_REQUEST_UART7_RX;
     handle_HPDMA1_Channel6.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
@@ -652,6 +548,114 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     HAL_NVIC_EnableIRQ(USART1_IRQn);
   /* USER CODE END USART1_MspInit 1 */
   }
+  else if(uartHandle->Instance==USART3)
+  {
+    /* USER CODE BEGIN USART3_MspInit 0 */
+
+    /* USER CODE END USART3_MspInit 0 */
+
+    /** Initializes the peripherals clock
+    */
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART3;
+    PeriphClkInitStruct.Usart3ClockSelection = RCC_USART3CLKSOURCE_CLKP;
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* USART3 clock enable */
+    __HAL_RCC_USART3_CLK_ENABLE();
+
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+    /**USART3 GPIO Configuration
+    PE0     ------> USART3_RX
+    PE1     ------> USART3_TX
+    */
+    GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF7_USART3;
+    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+    /* USART3 DMA Init */
+    /* GPDMA1_REQUEST_USART3_TX Init */
+    handle_GPDMA1_Channel2.Instance = GPDMA1_Channel2;
+    handle_GPDMA1_Channel2.Init.Request = GPDMA1_REQUEST_USART3_TX;
+    handle_GPDMA1_Channel2.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+    handle_GPDMA1_Channel2.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    handle_GPDMA1_Channel2.Init.SrcInc = DMA_SINC_INCREMENTED;
+    handle_GPDMA1_Channel2.Init.DestInc = DMA_DINC_FIXED;
+    handle_GPDMA1_Channel2.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
+    handle_GPDMA1_Channel2.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
+    handle_GPDMA1_Channel2.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_GPDMA1_Channel2.Init.SrcBurstLength = 1;
+    handle_GPDMA1_Channel2.Init.DestBurstLength = 1;
+    handle_GPDMA1_Channel2.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;
+    handle_GPDMA1_Channel2.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+    handle_GPDMA1_Channel2.Init.Mode = DMA_NORMAL;
+    if (HAL_DMA_Init(&handle_GPDMA1_Channel2) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(uartHandle, hdmatx, handle_GPDMA1_Channel2);
+
+    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel2, DMA_CHANNEL_PRIV|DMA_CHANNEL_SEC
+                              |DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    IsolationConfiginput.CidFiltering = DMA_ISOLATION_ON;
+    IsolationConfiginput.StaticCid = DMA_CHANNEL_STATIC_CID_1;
+    if (HAL_DMA_SetIsolationAttributes(&handle_GPDMA1_Channel2, &IsolationConfiginput) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* GPDMA1_REQUEST_USART3_RX Init */
+    handle_GPDMA1_Channel1.Instance = GPDMA1_Channel1;
+    handle_GPDMA1_Channel1.Init.Request = GPDMA1_REQUEST_USART3_RX;
+    handle_GPDMA1_Channel1.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+    handle_GPDMA1_Channel1.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    handle_GPDMA1_Channel1.Init.SrcInc = DMA_SINC_FIXED;
+    handle_GPDMA1_Channel1.Init.DestInc = DMA_DINC_INCREMENTED;
+    handle_GPDMA1_Channel1.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
+    handle_GPDMA1_Channel1.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
+    handle_GPDMA1_Channel1.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_GPDMA1_Channel1.Init.SrcBurstLength = 1;
+    handle_GPDMA1_Channel1.Init.DestBurstLength = 1;
+    handle_GPDMA1_Channel1.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;
+    handle_GPDMA1_Channel1.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+    handle_GPDMA1_Channel1.Init.Mode = DMA_NORMAL;
+    if (HAL_DMA_Init(&handle_GPDMA1_Channel1) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(uartHandle, hdmarx, handle_GPDMA1_Channel1);
+
+    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel1, DMA_CHANNEL_PRIV|DMA_CHANNEL_SEC
+                              |DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    IsolationConfiginput.CidFiltering = DMA_ISOLATION_ON;
+    IsolationConfiginput.StaticCid = DMA_CHANNEL_STATIC_CID_1;
+    if (HAL_DMA_SetIsolationAttributes(&handle_GPDMA1_Channel1, &IsolationConfiginput) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* USART3 interrupt Init */
+    HAL_NVIC_SetPriority(USART3_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(USART3_IRQn);
+    /* USER CODE BEGIN USART3_MspInit 1 */
+
+    /* USER CODE END USART3_MspInit 1 */
+  }
 }
 
 void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
@@ -730,10 +734,14 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 
 /* USER CODE BEGIN 1 */
 extern void HAL_UART7_TxCpltCallback(UART_HandleTypeDef *huart);
+extern void HAL_UART3_TxCpltCallback(UART_HandleTypeDef *huart);
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == UART7) {
     HAL_UART7_TxCpltCallback(huart);
+  }
+  else if (huart->Instance == USART3) {
+    HAL_UART3_TxCpltCallback(huart);
   }
 }
 
@@ -753,6 +761,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 //   }
 // }
 
+extern void HAL_UART3_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
 extern void HAL_UART7_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
 extern void HAL_UART9_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
@@ -764,9 +773,13 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
     {
       HAL_UART9_RxEventCallback(huart, Size);
     }
+    else if (huart->Instance == USART3) {
+      HAL_UART3_RxEventCallback(huart, Size);
+    }
 }
 extern void HAL_UART9_ErrorCallback(UART_HandleTypeDef *huart);
 extern void HAL_UART7_ErrorCallback(UART_HandleTypeDef *huart);
+extern void HAL_UART3_ErrorCallback(UART_HandleTypeDef *huart);
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
   if (__HAL_UART_GET_FLAG(huart, UART_FLAG_ORE) != RESET) __HAL_UART_CLEAR_OREFLAG(huart);
   if (__HAL_UART_GET_FLAG(huart, UART_FLAG_FE) != RESET) __HAL_UART_CLEAR_FEFLAG(huart);
@@ -777,6 +790,10 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
   } else if (huart->Instance == UART7) {
     // printf("UART7 Error = %lx\r\n", huart->ErrorCode);
     HAL_UART7_ErrorCallback(huart);
+  }
+  else if (huart->Instance == USART3) {
+    // printf("USART3 Error = %lx\r\n", huart->ErrorCode);
+    HAL_UART3_ErrorCallback(huart);
   }
 }
 /* USER CODE END 1 */

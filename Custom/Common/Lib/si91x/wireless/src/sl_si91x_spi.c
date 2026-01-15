@@ -78,6 +78,20 @@ __attribute__((weak)) void sli_firmware_error_callback(int error_code)
   (void)error_code;
 }
 
+#ifdef SLI_SI91X_SIMULATION_C1C2_ERROR
+int c1c2_error = 0;
+
+void sli_generate_c1c2_error(void) 
+{
+  c1c2_error = 1;
+}
+
+void sli_reset_c1c2_error(void) 
+{
+  c1c2_error = 0;
+}
+#endif
+
 /************************************************************************************
  ******************************** Static Functions *********************************
 ************************************************************************************/
@@ -87,10 +101,19 @@ static sl_status_t sli_send_c1c2(uint16_t data)
   uint8_t rx_buffer[2] = { 0, 0 };
 
   const uint32_t timestamp = sl_si91x_host_get_timestamp();
+  uint32_t elapsed_time = 0;
 
   do {
     // Send C1/C2 and receive the response in rx_buffer
     status = sl_si91x_host_spi_transfer(&data, rx_buffer, 2);
+    
+  #ifdef SLI_SI91X_SIMULATION_C1C2_ERROR
+    if (c1c2_error == 1) {
+      printf("Error in C1C2\r\n");
+      osDelay(1000);
+      break;
+    }
+  #endif
 
     // Check if there was an error or if the response indicates success or idle state
     if (status != SL_STATUS_OK || rx_buffer[1] == SLI_SPI_FAIL) {
@@ -99,8 +122,14 @@ static sl_status_t sli_send_c1c2(uint16_t data)
     if ((rx_buffer[1] == SLI_SPI_SUCCESS) || (rx_buffer[1] == 0x00)) {
       return SL_STATUS_OK;
     }
+
+    if (elapsed_time > 500) {
+      // printf("Waiting for C1C2 response\r\n");
+      osDelay(10);
+    }
+    elapsed_time = sl_si91x_host_elapsed_time(timestamp);
     // If a timeout occurs while waiting for a response, return a timeout status
-  } while (sl_si91x_host_elapsed_time(timestamp) < 1000);
+  } while (elapsed_time < 1000);
   
   sli_firmware_error_callback(rx_buffer[1]);
   return SL_STATUS_TIMEOUT;
@@ -120,10 +149,15 @@ static sl_status_t sli_wait_start_token(uint32_t timeout)
   // If not found within the timeout time, error out
   // Timeout value needs to be passed since context is important
   const uint32_t timestamp = sl_si91x_host_get_timestamp();
+  uint32_t elapsed_time = 0;
 
   while (temp != SLI_SPI_START_TOKEN) {
-    if (sl_si91x_host_elapsed_time(timestamp) > timeout) {
+    elapsed_time = sl_si91x_host_elapsed_time(timestamp);
+    if (elapsed_time > timeout) {
       return SL_STATUS_BUSY;
+    } else if (elapsed_time > 1000) {
+      // printf("Waiting for start token\r\n");
+      osDelay(10);
     }
 
     // Continuously send/receive data until the start token is found

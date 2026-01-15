@@ -21,6 +21,9 @@
 #include "websocket_stream_server.h"
 #include "mongoose.h"
 #include "version.h"
+#include "factory_test.h"
+#include "rtmp_service.h"
+
 
 static int cat_cmd(int argc, char* argv[]) 
 {
@@ -436,38 +439,6 @@ static int config_set_cmd(int argc, char* argv[])
     return 0;
 }
 
-/**
- * @brief Reset configuration to defaults
- */
-static int config_reset_cmd(int argc, char* argv[])
-{
-    LOG_SIMPLE("Resetting configuration to defaults...\r\n");
-    
-    aicam_global_config_t *config = NULL;
-    aicam_result_t result;
-    
-    // Dynamically allocate configuration structure
-    config = (aicam_global_config_t*)buffer_calloc(1, sizeof(aicam_global_config_t));
-    if (!config) {
-        LOG_SIMPLE("Failed to allocate memory for config\r\n");
-        return -1;
-    }
-    
-    json_config_load_default(config);
-    
-    result = json_config_set_config(config);
-    if (result == AICAM_OK) {
-        LOG_SIMPLE("Configuration reset to defaults successfully\r\n");
-    } else {
-        LOG_SIMPLE("Failed to save default configuration: %d\r\n", result);
-    }
-    
-    // Free memory
-    buffer_free(config);
-    
-    return 0;
-}
-
 /* ==================== Utility Commands ==================== */
 
 /**
@@ -662,6 +633,7 @@ static int camera_cmd(int argc, char *argv[])
         LOG_SIMPLE(" camera con <val> | camera con");
         LOG_SIMPLE(" camera mir <val> | camera mir");
         LOG_SIMPLE(" camera aec <val> | camera aec");
+        LOG_SIMPLE(" camera skip <val> | camera skip");
         return -1;
     }
     int val = 0, ret = 0, set_flag = 0;
@@ -710,6 +682,35 @@ static int camera_cmd(int argc, char *argv[])
         } else {
             LOG_SIMPLE("aec: %d\r\n", sensor_param.aec);
         }
+    } else if (strcmp(argv[1], "skip") == 0) {
+        // Handle startup skip frames - use ioctl directly, persist via image_config
+        int skip_frames = 0;
+        if (argc >= 3) {
+            val = atoi(argv[2]);
+            if (val < 1) val = 1;
+            if (val > 300) val = 300;
+            ret = device_ioctl(camera_dev, CAM_CMD_SET_STARTUP_SKIP_FRAMES, NULL, val);
+            if (ret == AICAM_OK) {
+                // Also save to config for persistence
+                image_config_t image_config;
+                if (json_config_get_device_service_image_config(&image_config) == AICAM_OK) {
+                    image_config.startup_skip_frames = val;
+                    json_config_set_device_service_image_config(&image_config);
+                }
+                LOG_SIMPLE("startup_skip_frames set to: %d\r\n", val);
+            } else {
+                LOG_SIMPLE("set startup_skip_frames failed: %d\r\n", ret);
+                return -1;
+            }
+        } else {
+            ret = device_ioctl(camera_dev, CAM_CMD_GET_STARTUP_SKIP_FRAMES, (uint8_t *)&skip_frames, 0);
+            if (ret == AICAM_OK) {
+                LOG_SIMPLE("startup_skip_frames: %d\r\n", skip_frames);
+            } else {
+                LOG_SIMPLE("get startup_skip_frames failed\r\n");
+            }
+        }
+        return ret;
     } else {
         LOG_SIMPLE("Unknown camera command\r\n");
         return -1;
@@ -1017,7 +1018,8 @@ static int fw_version_cmd(int argc, char* argv[])
     LOG_SIMPLE("=== Firmware Version Information ===\r\n\r\n");
     
     // FSBL
-    LOG_SIMPLE("FSBL:     %s\r\n", FSBL_VERSION_STRING);
+    get_fw_version_str(FIRMWARE_FSBL, version_str, sizeof(version_str));
+    LOG_SIMPLE("FSBL:     %s\r\n", version_str);
     
     // APP
     get_fw_version_str(FIRMWARE_APP, version_str, sizeof(version_str));
@@ -1028,7 +1030,18 @@ static int fw_version_cmd(int argc, char* argv[])
     LOG_SIMPLE("WEB:      %s\r\n", version_str);
     
     // WAKECORE
-    LOG_SIMPLE("WAKECORE: %s\r\n", WAKECORE_VERSION_STRING);
+#if ENABLE_U0_MODULE
+    {
+        ms_bridging_version_t wakecore_version = {0};
+        if (u0_module_get_version(&wakecore_version) == 0) {
+            LOG_SIMPLE("WAKECORE: %d.%d.%d.%d\r\n", wakecore_version.major, wakecore_version.minor, wakecore_version.patch, wakecore_version.build);
+        } else {
+            LOG_SIMPLE("WAKECORE: unknown\r\n");
+        }
+    }
+#else
+    LOG_SIMPLE("WAKECORE: N/A\r\n");
+#endif
     
     // MODEL (check if AI_1 is active)
     FirmwareType model_type = json_config_get_ai_1_active() ? FIRMWARE_AI_1 : FIRMWARE_DEFAULT_AI;
@@ -1122,7 +1135,6 @@ debug_cmd_reg_t file_cmd_table[] = {
     {"standby", "standby mode", standby_cmd},
     {"config_show", "Show current configuration", config_show_cmd},
     {"config_set", "Set configuration value. config_set <key> <value>", config_set_cmd},
-    {"config_reset", "Reset configuration to defaults", config_reset_cmd},
     {"version", "Show system version", version_cmd},
     {"echo", "Echo command for testing", echo_cmd},
     // {"mkdir", "Create directory",         mkdir_cmd},
@@ -1158,6 +1170,9 @@ void register_cmds(void)
     service_debug_register_commands();
     video_pipeline_register_commands();
     websocket_stream_server_register_commands();
+    factory_test_register_commands();
+    rtmp_cmd_register();
+
     
     LOG_SIMPLE("[CLI] All commands registered (%d util commands + driver commands)\r\n", 
                (int)(sizeof(file_cmd_table) / sizeof(file_cmd_table[0])));

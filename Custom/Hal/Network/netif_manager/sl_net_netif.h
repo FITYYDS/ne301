@@ -42,6 +42,8 @@ int sl_net_netif_ctrl(const char *if_name, netif_cmd_t cmd, void *param);
 int sl_net_start_scan(wireless_scan_callback_t callback);
 wireless_scan_result_t *sl_net_get_strorage_scan_result(void);
 int sl_net_update_strorage_scan_result(uint32_t timeout_ms);
+
+void sli_firmware_error_callback(int error_code);
 /***************************************************************************************************/
 
 #ifdef __cplusplus

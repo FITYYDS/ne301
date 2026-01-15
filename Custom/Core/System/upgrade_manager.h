@@ -102,4 +102,5 @@ void set_slot_boot_success(FirmwareType type, bool success);
 int switch_active_slot(FirmwareType type);
 int check_and_select_boot_slot(FirmwareType type);
 void clean_system_state(void);
+void verify_fsbl_version(const char* version);
 #endif

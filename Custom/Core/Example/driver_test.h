@@ -9,5 +9,7 @@
 #define VIDEO_DRAW_TEST 0
 #define JPEG_DECODE 0
 
+#define POWER_MODULE_TEST 0
+
 void driver_test_main(void);
 #endif

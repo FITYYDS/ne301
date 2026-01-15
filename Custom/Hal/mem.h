@@ -97,6 +97,15 @@ void *hal_mem_realloc(void *ptr, size_t size, mem_type_t type);
 /* Statistics and Information */
 
 /**
+ * @brief Get memory information
+ * @param total_size Total size of the memory pool
+ * @param used_size Used size of the memory pool
+ * @param type Memory type preference
+ * @return MEM_OK on success, error code otherwise
+ */
+int32_t hal_mem_get_info(uint32_t *total_size, uint32_t *used_size, mem_type_t type);
+
+/**
  * @brief Get memory usage statistics
  * @return MEM_OK on success, error code otherwise
  */

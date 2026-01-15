@@ -163,7 +163,7 @@ void SystemClock_Config(void)
   }
 
   /* Wait HSE stabilization time before its selection as PLL source. */
-  HAL_Delay(HSE_STARTUP_TIMEOUT);
+  // HAL_Delay(HSE_STARTUP_TIMEOUT);
 
   /** Get current CPU/System buses clocks configuration and if necessary switch
  to intermediate HSI clock to ensure target clock can be set
@@ -288,7 +288,7 @@ void SystemClock_Config(void)
   }
 
   /* Wait HSE stabilization time before its selection as PLL source. */
-  HAL_Delay(HSE_STARTUP_TIMEOUT);
+  // HAL_Delay(HSE_STARTUP_TIMEOUT);
 
   /** Get current CPU/System buses clocks configuration and if necessary switch
  to intermediate HSI clock to ensure target clock can be set
@@ -534,7 +534,7 @@ void SystemClock_Config(void)
   }
 
   /* Wait HSE stabilization time before its selection as PLL source. */
-  HAL_Delay(HSE_STARTUP_TIMEOUT);
+  // HAL_Delay(HSE_STARTUP_TIMEOUT);
 
   /** Get current CPU/System buses clocks configuration and if necessary switch
  to intermediate HSI clock to ensure target clock can be set

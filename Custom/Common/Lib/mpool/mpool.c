@@ -1109,7 +1109,7 @@ static void ngx_slab_free_pages(ngx_slab_pool_t *pool, ngx_slab_page_t *page,
     pool->free.next = page;
 }
 
-void ngx_slab_stat(ngx_slab_pool_t *pool)
+void ngx_slab_stat(ngx_slab_pool_t *pool, ngx_slab_info_t *stat_info)
 {
     uintptr_t          m, n, mask, slab;
     uintptr_t          *bitmap;
@@ -1220,6 +1220,10 @@ void ngx_slab_stat(ngx_slab_pool_t *pool)
     stat.pool_size = pool->end - pool->start;
     stat.used_pct = stat.used_size / (stat.pool_size / 100);
 
+    if (stat_info != NULL) {
+        memcpy(stat_info, &stat, sizeof(ngx_slab_info_t));
+        return;
+    }
     info("pool[%p](%p - %p)", pool, pool->start, pool->end);
     info("pool_size : %u bytes",   stat.pool_size);
     info("used_size : %u bytes",   stat.used_size);

@@ -125,9 +125,9 @@ int usb_host_ecm_send_raw_data(NX_PACKET *packet)
 
 void usb_host_ecm_deinit(void)
 {
-    if (ux_host_cdc_ecm == NULL) return;
     g_usb_host_ecm_event_callback = NULL;
-    USBX_Host_Deinit(&g_ux_host_config);
     pwr_manager_release(pwr_manager_get_handle(PWR_USB_NAME));
+    osDelay(100);
+    USBX_Host_Deinit(&g_ux_host_config);
     ux_host_cdc_ecm = NULL;
 }

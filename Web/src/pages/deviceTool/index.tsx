@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label';
 import { getWebSocketUrl, sliceFile } from '@/utils';
 import WifiReloadMask from '@/components/wifi-reload-mask';
 import H264Player from '@/lib/MSE/h264Player';
+import RtmpConfig from './rtmp-config';
 
 export interface ToolGuideContent {
   title: string;
@@ -228,16 +229,10 @@ export default function DeviceTool() {
   }, []);
 
   const handleAiParamsChange = async (key: string, value: number) => {
-    // const newAiParams = { ...aiParams, [key]: value };
-    // try {
-    //   await setAiParamsReq(newAiParams);
-    //   setAiParams(newAiParams);
-    // } catch (error) {
-    //   console.error('handleAiParamsChange', error);
-    //   throw error;
-    // }
-    if (value < 0 || value > 100) {
-      value = 50
+    if (value < 1) {
+      value = 1;
+    } else if (value > 100) {
+      value = 100;
     }
     if (Number.isNaN(value)) {
       value = 50;
@@ -372,14 +367,14 @@ export default function DeviceTool() {
                                   value={aiParams.nms_threshold}
                                   max={100}
                                   step={1}
-                                  min={0}
+                                  min={1}
                                   onChange={value => setAiParams(p => ({ ...p, nms_threshold: value }))}
                                   onChangeEnd={(value) => postAiParams('nms_threshold', value)}
                                 />
                                 <Input
                                   className="w-16"
                                   type="number"
-                                  min={0}
+                                  min={1}
                                   max={100}
                                   step={1}
                                   value={aiParams.nms_threshold}
@@ -396,19 +391,19 @@ export default function DeviceTool() {
                                   value={aiParams.confidence_threshold}
                                   max={100}
                                   step={1}
-                                  min={0}
+                                  min={1}
                                   onChange={value => setAiParams(p => ({ ...p, confidence_threshold: value }))}
                                   onChangeEnd={value => postAiParams('confidence_threshold', value)}
                                 />
                                 <Input
                                   className="w-16"
                                   type="number"
-                                  min={0}
+                                  min={1}
                                   max={100}
                                   step={1}
                                   value={aiParams.confidence_threshold}
-                                  onChange={(e) => handleAiParamsChange('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '0', 10))}
-                                  onBlur={(e) => postAiParams('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '0', 10))}
+                                  onChange={(e) => handleAiParamsChange('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '1', 10))}
+                                  onBlur={(e) => postAiParams('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '1', 10))}
                                 />
                               </div>
                             </div>
@@ -513,6 +508,8 @@ export default function DeviceTool() {
                                 </div>
                               )}
                             </div>
+                            <Separator className="my-2" />
+                            <RtmpConfig />
                           </div>
                         </div>
                       </CardContent>

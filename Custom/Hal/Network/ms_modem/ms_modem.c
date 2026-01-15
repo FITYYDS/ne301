@@ -120,6 +120,38 @@ void HAL_UART7_ReInit(uint32_t baudrate)
     xSemaphoreGive(recv_mutex);
 }
 
+int HAL_UART7_GPIO_IsReady(void)
+{
+    int ret = 0;
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOG_CLK_ENABLE();
+    /**UART7 GPIO Configuration
+    PA15(JTDI)     ------> UART7_TX
+    PG11     ------> UART7_RX
+    */
+    GPIO_InitStruct.Pin = GPIO_PIN_15;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_11;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_SET || HAL_GPIO_ReadPin(GPIOG, GPIO_PIN_11) == GPIO_PIN_SET) {
+        osDelay(10);
+        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_SET || HAL_GPIO_ReadPin(GPIOG, GPIO_PIN_11) == GPIO_PIN_SET) {
+            ret = 1;
+        }
+    }
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_15);
+    HAL_GPIO_DeInit(GPIOG, GPIO_PIN_11);
+    return ret;
+}
+
 /// @brief Send data to MODEM
 /// @param p_data Data
 /// @param len Length
@@ -182,6 +214,7 @@ static int modem_check_baud_rate(uint32_t baudrate, uint8_t is_need_ate0, uint32
         if (is_ate1 || is_need_ate0) {
             ret = modem_at_cmd_exec(&modem_at_handle, &at_cmd_ate0);
             if (ret != MODEM_OK) ret = modem_at_test(&modem_at_handle, NULL, timeout_ms);
+            if (ret == MODEM_OK) modem_at_set_echo_filter(&modem_at_handle, 1);
         }
     }
     return ret;
@@ -192,7 +225,7 @@ static int modem_get_baud_rate(void)
     int ret = MODEM_OK;
 
     for (int i = 0; i < sizeof(modem_baud_rate_list) / sizeof(modem_baud_rate_list[0]); i++) {
-        ret = modem_check_baud_rate(modem_baud_rate_list[i], 1, 1000);
+        ret = modem_check_baud_rate(modem_baud_rate_list[i], 1, 500);
         if (ret == MODEM_OK) return (int)modem_baud_rate_list[i];
     }
     
@@ -290,11 +323,24 @@ void modem_rx_task(void *argument)
 int modem_device_init(void)
 {
     int ret = MODEM_OK;
+    uint32_t timeout_ms = 0;
     if (modem_state >= MODEM_STATE_INIT) return MODEM_ERR_INVALID_STATE;
     
     SCB_InvalidateDCache_by_Addr(MODEM_NET_RECV_BUF_START_PTR, MODEM_NET_RECV_BUF_SIZE * MODEM_NET_RECV_BUF_NUM);
     pwr_manager_acquire(pwr_manager_get_handle(PWR_CAT1_NAME));
     osDelay(MODEM_POWER_ON_DELAY_MS);
+
+    do {
+        osDelay(100);
+        timeout_ms += 100;
+        if (HAL_UART7_GPIO_IsReady() == 1) break;
+    } while (timeout_ms < MODEM_GPIO_READY_TIMEOUT_MS);
+
+    if (HAL_UART7_GPIO_IsReady() == 0) {
+        MODEM_LOGE("UART7 GPIO not ready!");
+        pwr_manager_release(pwr_manager_get_handle(PWR_CAT1_NAME));
+        return MODEM_ERR_HW_NOT_CNT;
+    }
 
     ret = modem_at_init(&modem_at_handle, modem_net_uart_send);
     if (ret != MODEM_OK) goto modem_device_init_failed;
@@ -336,7 +382,7 @@ int modem_device_init(void)
     modem_state = MODEM_STATE_INIT;
 modem_device_init_failed:
     if (ret != MODEM_OK) {
-        MODEM_LOGE("modem_device_init ret = %d.\r\n", ret);
+        MODEM_LOGE("modem init failed(ret = %d)!", ret);
         modem_device_deinit();
     }
     return ret;
@@ -388,7 +434,7 @@ int modem_device_wait_sim_ready(uint32_t timeout_ms)
     char cmd_buf[MODEM_AT_CMD_LEN_MAXIMUM] = {0};
     char *rsp_bufs[2] = {rsp_buf1, rsp_buf2};
     int ret = MODEM_OK;
-    uint32_t start_time = 0, end_time = 0, diff_time = 0;
+    uint32_t start_time = 0, end_time = 0, diff_time = 0, no_sim_times = 0;
 
     start_time = osKernelGetTickCount();
     do {
@@ -407,10 +453,9 @@ int modem_device_wait_sim_ready(uint32_t timeout_ms)
                 ret = modem_at_cmd_wait_ok(&modem_at_handle, cmd_buf, 500);
                 if (ret != MODEM_OK) return ret;
             }
-        } 
-        // else if (ret == 1 && strstr(rsp_bufs[0], "+CME ERROR: 10") != NULL) {
-        //     return MODEM_ERR_INVALID_STATE;
-        // }
+        } else if (ret == 1 && strstr(rsp_bufs[0], "+CME ERROR: 10") != NULL && no_sim_times++ > 10) {
+            return MODEM_ERR_INVALID_STATE;
+        }
         osDelay(100);
     } while (diff_time < timeout_ms);
 
@@ -439,26 +484,47 @@ int modem_device_get_info(modem_info_t *info, uint8_t is_update_all)
     char *value_ptr = NULL, *value_ptr2 = NULL;
     int csq = 0, ber = 0, dBm = 0;
     int ret = MODEM_OK;
+    uint8_t try_times = 0;
     if (info == NULL) return MODEM_ERR_INVALID_ARG;
     if (modem_state != MODEM_STATE_INIT) return MODEM_ERR_INVALID_STATE;
 
     if (is_update_all) {
+        // Get Model Name, IMEI, Version
         ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CGMM\r\n", rsp_bufs, 2, 500);
-        if (ret != 2) return ret;
-        if (strstr(rsp_bufs[1], "OK") == NULL) return MODEM_ERR_FAILED;
-        strncpy(info->model_name, rsp_bufs[0], sizeof(info->model_name) - 1);
-
+        if (ret == 2) {
+            ret = MODEM_OK;
+            if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+            else strncpy(info->model_name, rsp_bufs[0], sizeof(info->model_name) - 1);
+        }
+        if (ret != MODEM_OK) {
+            strncpy(info->model_name, "-", sizeof(info->model_name) - 1);
+            MODEM_LOGE("Get Model Name failed(ret = %d)!", ret);
+        }
+        
         ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+GSN\r\n", rsp_bufs, 2, 500);
-        if (ret != 2) return ret;
-        if (strstr(rsp_bufs[1], "OK") == NULL) return MODEM_ERR_FAILED;
-        strncpy(info->imei, rsp_bufs[0], sizeof(info->imei) - 1);
+        if (ret == 2) {
+            ret = MODEM_OK;
+            if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+            else strncpy(info->imei, rsp_bufs[0], sizeof(info->imei) - 1);
+        }
+        if (ret != MODEM_OK) {
+            strncpy(info->imei, "-", sizeof(info->imei) - 1);
+            MODEM_LOGE("Get IMEI failed(ret = %d)!", ret);
+        }
 
         ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CGMR\r\n", rsp_bufs, 2, 500);
-        if (ret != 2) return ret;
-        if (strstr(rsp_bufs[1], "OK") == NULL) return MODEM_ERR_FAILED;
-        strncpy(info->version, rsp_bufs[0], sizeof(info->version) - 1);
+        if (ret == 2) {
+            ret = MODEM_OK;
+            if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+            else strncpy(info->version, rsp_bufs[0], sizeof(info->version) - 1);
+        }
+        if (ret != MODEM_OK) {
+            strncpy(info->version, "-", sizeof(info->version) - 1);
+            MODEM_LOGE("Get Version failed(ret = %d)!", ret);
+        }
     }
 
+    // Get SIM Status, IMSI, ICCID, PLMN ID
     ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CPIN?\r\n", rsp_bufs, 2, 500);
     if (ret == 1 && strstr(rsp_bufs[0], "+CME ERROR") != NULL) {
         sscanf(rsp_bufs[0], "+CME ERROR: %d", &ret);
@@ -476,48 +542,184 @@ int modem_device_get_info(modem_info_t *info, uint8_t is_update_all)
 
     if (strstr(info->sim_status, "READY") != NULL) {
         ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CIMI\r\n", rsp_bufs, 2, 500);
-        if (ret < 1) return ret;
-        // Not checking for abnormalities
-        strncpy(info->imsi, rsp_bufs[0], sizeof(info->imsi) - 1);
+        if (ret == 2) {
+            ret = MODEM_OK;
+            if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+            else strncpy(info->imsi, rsp_bufs[0], sizeof(info->imsi) - 1);
+        }
+        if (ret != MODEM_OK) {
+            strncpy(info->imsi, "-", sizeof(info->imsi) - 1);
+            MODEM_LOGE("Get IMSI failed(ret = %d)!", ret);
+        }
+        if (strlen(info->imsi) < 5) strncpy(info->plmn_id, "-", sizeof(info->plmn_id) - 1);
+        else strncpy(info->plmn_id, info->imsi, 5);
 
         ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+QCCID\r\n", rsp_bufs, 2, 500);
-        if (ret < 1) return ret;
-        // Not checking for abnormalities
-        value_ptr = strstr(rsp_bufs[0], "+QCCID:");
-        if (value_ptr == NULL) strncpy(info->iccid, rsp_bufs[0], sizeof(info->iccid) - 1);
-        else strncpy(info->iccid, value_ptr + strlen("+QCCID:"), sizeof(info->iccid) - 1);
-
-        ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CSQ\r\n", rsp_bufs, 2, 500);
-        if (ret != 2) return ret;
-        if (strstr(rsp_bufs[1], "OK") == NULL) return MODEM_ERR_FAILED;
-        if (sscanf(rsp_bufs[0], "+CSQ: %d,%d", &csq, &ber) != 2) return MODEM_ERR_FMT;
-        if (csq >= 0 && csq <= 31) {
-            dBm = -113 + 2 * csq;
-            info->csq_value = csq;
-            info->ber_value = ber;
-            info->rssi = dBm;
-            if (dBm >= -53) info->csq_level = 5;
-            else if (dBm >= -63) info->csq_level = 4;
-            else if (dBm >= -73) info->csq_level = 3;
-            else if (dBm >= -83) info->csq_level = 2;
-            else if (dBm >= -93) info->csq_level = 1;
-            else info->csq_level = 0;
-        } else info->csq_level = 0;
+        if (ret == 2) {
+            ret = MODEM_OK;
+            if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+            value_ptr = strstr(rsp_bufs[0], "+QCCID:");
+            if (value_ptr == NULL) strncpy(info->iccid, rsp_bufs[0], sizeof(info->iccid) - 1);
+            else strncpy(info->iccid, value_ptr + strlen("+QCCID:"), sizeof(info->iccid) - 1);
+        }
+        if (ret != MODEM_OK) {
+            strncpy(info->iccid, "-", sizeof(info->iccid) - 1);
+            MODEM_LOGE("Get ICCID failed(ret = %d)!", ret);
+        }
+    }
+    
+    // Get Signal Quality
+    ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CSQ\r\n", rsp_bufs, 2, 500);
+    if (ret == 2) {
+        ret = MODEM_OK;
+        if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+        else if (sscanf(rsp_bufs[0], "+CSQ: %d,%d", &csq, &ber) != 2) ret = MODEM_ERR_FMT;
+        else {
+            if (csq >= 0 && csq <= 31) {
+                dBm = -113 + 2 * csq;
+                info->csq_value = csq;
+                info->ber_value = ber;
+                info->rssi = dBm;
+                if (dBm >= -53) info->csq_level = 5;
+                else if (dBm >= -63) info->csq_level = 4;
+                else if (dBm >= -73) info->csq_level = 3;
+                else if (dBm >= -83) info->csq_level = 2;
+                else if (dBm >= -93) info->csq_level = 1;
+                else info->csq_level = 0;
+            } else info->csq_level = 0;
+        }
+    }
+    if (ret != MODEM_OK) {
+        info->csq_value = 99;
+        info->ber_value = 99;
+        info->rssi = -113;
+        info->csq_level = 0;
+        MODEM_LOGE("Get CSQ failed(ret = %d)!", ret);
     }
 
+    // Get Operator
     ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+COPS?\r\n", rsp_bufs, 2, 500);
-    if (ret != 2) return ret;
-    if (strstr(rsp_bufs[1], "OK") == NULL) return MODEM_ERR_FAILED;
-    value_ptr = strstr(rsp_bufs[0], ",\"");
-    value_ptr2 = strstr(value_ptr + 2, "\",");
-    if (value_ptr == NULL || value_ptr2 == NULL) {
-        value_ptr = strstr(rsp_bufs[0], "+COPS:");
-        if (value_ptr == NULL) return MODEM_ERR_FAILED;
-        strncpy(info->operator, value_ptr + strlen("+COPS:"), sizeof(info->operator) - 1);
-    } else {
-        memcpy(info->operator, value_ptr + 2, ((uint32_t)value_ptr2 - (uint32_t)value_ptr - 2));
-        info->operator[((uint32_t)value_ptr2 - (uint32_t)value_ptr - 2)] = '\0';
+    if (ret == 2) {
+        ret = MODEM_OK;
+        if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+        else {
+            value_ptr = strstr(rsp_bufs[0], ",\"");
+            if (value_ptr == NULL) ret = MODEM_ERR_FAILED;
+            else {
+                value_ptr2 = strstr(value_ptr + 2, "\",");
+                if (value_ptr2 == NULL) ret = MODEM_ERR_FMT;
+                else if (((uint32_t)value_ptr2 - (uint32_t)value_ptr - 2) >= sizeof(info->operator)) ret = MODEM_ERR_INVALID_SIZE;
+                else {
+                    memcpy(info->operator, value_ptr + 2, ((uint32_t)value_ptr2 - (uint32_t)value_ptr - 2));
+                    info->operator[((uint32_t)value_ptr2 - (uint32_t)value_ptr - 2)] = '\0';
+                }
+            }
+        }
     }
+    if (ret != MODEM_OK) {
+        strncpy(info->operator, "-", sizeof(info->operator) - 1);
+        MODEM_LOGE("Get Operator failed(ret = %d)!", ret);
+    }
+
+    // Get Network Info (+QNWINFO: "FDD LTE","46011","LTE BAND 5",2452)
+    ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+QNWINFO\r\n", rsp_bufs, 2, 500);
+    if (ret == 2) {
+        ret = MODEM_OK;
+        if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+        else {
+            value_ptr = strstr(rsp_bufs[0], "+QNWINFO: \"");
+            if (value_ptr == NULL) ret = MODEM_ERR_FAILED;
+            else {
+                value_ptr += strlen("+QNWINFO: \"");
+                value_ptr2 = strstr(value_ptr, "\",\"");
+                if (value_ptr2 == NULL) ret = MODEM_ERR_FMT;
+                else if (((uint32_t)value_ptr2 - (uint32_t)value_ptr) >= sizeof(info->network_type)) ret = MODEM_ERR_INVALID_SIZE;
+                else {
+                    memcpy(info->network_type, value_ptr, ((uint32_t)value_ptr2 - (uint32_t)value_ptr));
+                    info->network_type[((uint32_t)value_ptr2 - (uint32_t)value_ptr)] = '\0';
+                }
+            }
+        }
+    }
+    if (ret != MODEM_OK) {
+        strncpy(info->network_type, "-", sizeof(info->network_type) - 1);
+        MODEM_LOGE("Get Network Type failed(ret = %d)!", ret);
+    }
+
+    // SIM card registration status、LAC、Cell ID, (+CREG: 2,1,"5F0C","E0B70B",7)
+    strncpy(info->lac, "-", sizeof(info->lac) - 1);
+    strncpy(info->cell_id, "-", sizeof(info->cell_id) - 1);
+    strncpy(info->registration_status, "Unknown", sizeof(info->registration_status) - 1);
+    do {
+        ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CREG?\r\n", rsp_bufs, 2, 500);
+        if (ret == 2) {
+            if (strstr(rsp_bufs[0], "+CREG: 2,") == NULL) {
+                if (try_times > 1) {
+                    ret = MODEM_ERR_NOT_SUPPORT;
+                    break;
+                } else {
+                    try_times++;
+                    ret = modem_at_cmd_wait_ok(&modem_at_handle, "AT+CREG=2\r\n", 500);
+                    if (ret != MODEM_OK) break;
+                    else continue;
+                }
+            }
+            ret = MODEM_OK;
+            if (strstr(rsp_bufs[1], "OK") == NULL) ret = MODEM_ERR_FAILED;
+            else {
+                char delimiters[] = ":,\"";
+                char *saveptr;
+                char *p = strtok_r(rsp_bufs[0], delimiters, &saveptr);
+                int field = 0;
+                while (p) {
+                    switch (field) {
+                        case 2: {
+                            int n = atoi(p);
+                            switch (n) {
+                                case 0:
+                                    strncpy(info->registration_status, "Not registered", sizeof(info->registration_status) - 1);
+                                    break;
+                                case 1:
+                                    strncpy(info->registration_status, "Registered (Home network)", sizeof(info->registration_status) - 1);
+                                    break;
+                                case 2:
+                                    strncpy(info->registration_status, "Searching", sizeof(info->registration_status) - 1);
+                                    break;
+                                case 3:
+                                    strncpy(info->registration_status, "Registration denied", sizeof(info->registration_status) - 1);    
+                                    break;
+                                case 4:
+                                    strncpy(info->registration_status, "Unknown", sizeof(info->registration_status) - 1);    
+                                    break;
+                                case 5:
+                                    strncpy(info->registration_status, "Registered (Roaming)", sizeof(info->registration_status) - 1);
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+                        }
+                        case 3: {
+                            if (strlen(p) >= sizeof(info->lac)) ret = MODEM_ERR_INVALID_SIZE;
+                            else snprintf(info->lac, sizeof(info->lac), "%s", p);
+                            break;
+                        }
+                        case 4: {
+                            if (strlen(p) >= sizeof(info->cell_id)) ret = MODEM_ERR_INVALID_SIZE;
+                            else snprintf(info->cell_id, sizeof(info->cell_id), "%s", p);
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                    p = strtok_r(NULL, delimiters, &saveptr);
+                    field++;
+                }
+            }
+        }
+        break;
+    } while (try_times < 3);
+    if (ret != MODEM_OK) MODEM_LOGE("Get CREG info failed(ret = %d)!", ret);
     
     return MODEM_OK;
 }
@@ -538,7 +740,7 @@ int modem_device_set_config(const modem_config_t *config)
     }
 
     if (strcmp(config->apn, g_modem_config.apn) != 0 || strcmp(config->user, g_modem_config.user) != 0 || strcmp(config->passwd, g_modem_config.passwd) != 0 || config->authentication != g_modem_config.authentication) {
-        snprintf(at_cmd, sizeof(at_cmd), "AT+QICSGP=1,1,\"%s\",\"%s\",\"%s\",%d", config->apn, config->user, config->passwd, config->authentication);
+        snprintf(at_cmd, sizeof(at_cmd), "AT+QICSGP=1,1,\"%s\",\"%s\",\"%s\",%d\r\n", config->apn, config->user, config->passwd, config->authentication);
         ret = modem_at_cmd_wait_ok(&modem_at_handle, at_cmd, 500);
         if (ret != MODEM_OK) return ret;
         MODEM_LOGD("Set Modem QICSGP: %s, %s, %s, %d => %s, %s, %s, %d.", g_modem_config.apn, g_modem_config.user, g_modem_config.passwd, g_modem_config.authentication, config->apn, config->user, config->passwd, config->authentication);
@@ -581,17 +783,23 @@ int modem_device_get_config(modem_config_t *config)
     ret = modem_at_cmd_wait_rsp(&modem_at_handle, "AT+CGDCONT?\r\n", rsp_bufs, 2, 500);
     if (ret < 1) return ret;
     if (strstr(rsp_bufs[0], "+CGDCONT:") != NULL) {
-        value_ptr1 = strstr(rsp_bufs[0], "+CGDCONT: 1,\"IP\",\"");
-        if (value_ptr1 == NULL) return MODEM_ERR_FAILED;
-        value_ptr1 += strlen("+CGDCONT: 1,\"IP\",\"");
-        value_ptr2 = strchr(value_ptr1, '"');
-        if (value_ptr2 == NULL) return MODEM_ERR_FAILED;
-        if (value_ptr2 == value_ptr1) {
-            config->apn[0] = 0;
-            g_modem_config.apn[0] = 0;
-        } else {
-            strncpy(config->apn, value_ptr1, value_ptr2 - value_ptr1);
-            strncpy(g_modem_config.apn, config->apn, sizeof(g_modem_config.apn) - 1);
+        if (strstr(rsp_bufs[0], "1,\"IP\"") != NULL) {
+            value_ptr1 = strstr(rsp_bufs[0], "+CGDCONT: 1,\"IP\",\"");
+            if (value_ptr1 != NULL) value_ptr1 += strlen("+CGDCONT: 1,\"IP\",\"");
+        } else if (strstr(rsp_bufs[0], "1,\"IPV4V6\"") != NULL) {
+            value_ptr1 = strstr(rsp_bufs[0], "+CGDCONT: 1,\"IPV4V6\",\"");
+            if (value_ptr1 != NULL) value_ptr1 += strlen("+CGDCONT: 1,\"IPV4V6\",\"");
+        }
+        if (value_ptr1 != NULL) {
+            value_ptr2 = strchr(value_ptr1, '"');
+            if (value_ptr2 == NULL) return MODEM_ERR_FAILED;
+            if (value_ptr2 == value_ptr1) {
+                config->apn[0] = 0;
+                g_modem_config.apn[0] = 0;
+            } else {
+                strncpy(config->apn, value_ptr1, value_ptr2 - value_ptr1);
+                strncpy(g_modem_config.apn, config->apn, sizeof(g_modem_config.apn) - 1);
+            }
         }
     }
 
@@ -680,13 +888,15 @@ int modem_device_exit_ppp(uint8_t is_focre)
     if (modem_state != MODEM_STATE_PPP) return MODEM_ERR_INVALID_STATE;
 
     xSemaphoreTake(recv_mutex, portMAX_DELAY);
-    modem_state = MODEM_STATE_INIT;
     ppp_recv_callback = NULL;
     xSemaphoreGive(recv_mutex);
     if (is_focre) {
-        osDelay(1500);
-        ret = modem_at_cmd_wait_str(&modem_at_handle, "+++", "OK|NO CARRIER", 1500);
+        osDelay(2000);
+        ret = modem_at_cmd_wait_str(&modem_at_handle, "+++", "OK|NO CARRIER", 2000);
     }
+    xSemaphoreTake(recv_mutex, portMAX_DELAY);
+    modem_state = MODEM_STATE_INIT;
+    xSemaphoreGive(recv_mutex);
     
     return ret;
 }

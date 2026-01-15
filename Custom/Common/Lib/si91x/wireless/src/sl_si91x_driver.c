@@ -436,6 +436,12 @@ sl_status_t sl_si91x_driver_init(const sl_wifi_device_configuration_t *config, s
 
   // sl_si91x_bus_init() will be implemented for all available buses
   status = sl_si91x_bus_init();
+  if (status != SL_STATUS_OK) {
+    sl_si91x_host_disable_bus_interrupt();
+    sli_si91x_platform_deinit();
+    sl_si91x_host_deinit();
+    sli_si91x_host_deinit_buffer_manager();
+  }
   VERIFY_STATUS_AND_RETURN(status);
 
 #ifdef SLI_SI91X_MCU_INTERFACE
@@ -452,6 +458,12 @@ sl_status_t sl_si91x_driver_init(const sl_wifi_device_configuration_t *config, s
   }
 #else
   status = sli_si91x_bootup_firmware(select_option, config->nwp_fw_image_number);
+  if (status != SL_STATUS_OK) {
+    sl_si91x_host_disable_bus_interrupt();
+    sli_si91x_platform_deinit();
+    sl_si91x_host_deinit();
+    sli_si91x_host_deinit_buffer_manager();
+  }
   VERIFY_STATUS_AND_RETURN(status);
 #endif
 
@@ -643,7 +655,8 @@ sl_status_t sl_si91x_driver_deinit(void)
   if (!device_initialized) {
     return SL_STATUS_NOT_INITIALIZED;
   }
-
+  
+  sl_si91x_host_disable_bus_interrupt();
 #ifdef SLI_SI91X_MCU_INTERFACE
   // If the SLI_SI91X_MCU_INTERFACE is defined, perform a soft reset
   status = sl_si91x_soft_reset();
@@ -716,8 +729,6 @@ sl_status_t sl_si91x_driver_deinit(void)
   status = sli_si91x_host_deinit_buffer_manager();
   VERIFY_STATUS_AND_RETURN(status);
 
-  sl_si91x_host_disable_bus_interrupt();
-
   status = sl_si91x_host_power_cycle();
   VERIFY_STATUS_AND_RETURN(status);
 
@@ -789,7 +800,7 @@ sl_status_t sl_si91x_driver_raw_send_command(uint8_t command,
   status = sl_si91x_allocate_data_buffer(&buffer,
                                          (void **)&packet,
                                          sizeof(sl_wifi_system_packet_t) + data_length,
-                                         SLI_WIFI_ALLOCATE_COMMAND_BUFFER_WAIT_TIME);
+                                         100);
   VERIFY_STATUS_AND_RETURN(status);
 
   // If the packet is not allocated successfully, return an allocation failed error

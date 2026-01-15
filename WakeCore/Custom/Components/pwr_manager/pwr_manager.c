@@ -1,4 +1,5 @@
 #include "gpio.h"
+#include "iwdg.h"
 #include "rtc.h"
 #include "pir.h"
 #include "usart.h"
@@ -649,6 +650,11 @@ void pwr_enter_stop2(uint32_t wakeup_flags, uint32_t switch_bits, pwr_rtc_wakeup
         HAL_GPIO_Init(WIFI_SPI_IRQ_GPIO_Port, &GPIO_InitStruct);
     }
     
+    // IF PWR_WAKEUP_FLAG_CONFIG_KEY, we should wait for the key released
+    if (global_wakeup_flags & PWR_WAKEUP_FLAG_CONFIG_KEY) {
+        pwr_wait_for_key_release();
+    }
+
     if (!(switch_bits & PWR_3V3_SWITCH_BIT)) {
         HAL_GPIO_WritePin(PWR_3V3_GPIO_Port, PWR_3V3_Pin, GPIO_PIN_SET);
         if (usb_in_status == 0) {
@@ -729,4 +735,28 @@ uint32_t pwr_usb_is_active(void)
         }
     }
     return 0;
+}
+
+void pwr_wait_for_key_release(void)
+{
+    uint32_t start_tick = 0, end_tick = 0, diff_tick = 0;
+        
+    start_tick = HAL_GetTick();
+    do {
+        if (HAL_GPIO_ReadPin(CONFIG_KEY_GPIO_Port, CONFIG_KEY_Pin) == GPIO_PIN_SET) {
+            delay_us(100);
+            if (HAL_GPIO_ReadPin(CONFIG_KEY_GPIO_Port, CONFIG_KEY_Pin) == GPIO_PIN_SET) {
+                break;
+            }
+        }
+        HAL_Delay(10);
+        HAL_IWDG_Refresh(&hiwdg);
+        end_tick = HAL_GetTick();
+        diff_tick = (end_tick >= start_tick) ? (end_tick - start_tick) : (end_tick + (0xFFFFFFFFU - start_tick));
+    } while (diff_tick < PWR_WAKEUP_KEY_MAX_PRESS_MS);
+    if (diff_tick >= PWR_WAKEUP_KEY_MAX_PRESS_MS) {
+        global_wakeup_flags |= PWR_WAKEUP_FLAG_KEY_MAX_PRESS;
+    } else if (diff_tick >= PWR_WAKEUP_KEY_LONG_PRESS_MS) {
+        global_wakeup_flags |= PWR_WAKEUP_FLAG_KEY_LONG_PRESS;
+    }
 }

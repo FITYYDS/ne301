@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
@@ -10,10 +10,19 @@ import FirmwareUpgrade from './firmware-upgrade';
 import { useLingui } from '@lingui/react';
 import SvgIcon from '@/components/svg-icon';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useCommunicationData } from '@/store/communicationData';
 
 export default function ApplicationManagement() {
   const { i18n } = useLingui();
   const isMobile = useIsMobile();
+
+  const { getCommunicationData, communicationData } = useCommunicationData();
+
+  useEffect(() => {
+    if (isMobile) {
+      getCommunicationData();
+    }
+  }, []);
 
   const [currentPage, setCurrentPage] = useState<string | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -64,7 +73,7 @@ export default function ApplicationManagement() {
           >
             <Label>{i18n._('sys.system_management.communication_title')}</Label>
             <div className="flex items-center gap-2">
-              WI-FI
+              {communicationData?.selected_type === 'cellular' ? i18n._('sys.system_management.cellular_network') : communicationData?.selected_type === 'poe' ? i18n._('sys.system_management.poe_network') : i18n._('sys.system_management.wifi')}
               <SvgIcon icon="right" className="w-4 h-4" />
             </div>
           </div>

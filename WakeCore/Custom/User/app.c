@@ -434,8 +434,14 @@ void app_task(void *argument)
 
 void app_init(void)
 {
+    uint32_t wakeup_flag = 0;
+
+    wakeup_flag = pwr_get_wakeup_flags();
+    // IF PWR_WAKEUP_FLAG_CONFIG_KEY, we should wait for the key released
+    if (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) {
+        pwr_wait_for_key_release();
+    }
     pwr_ctrl_bits(PWR_DEFAULT_SWITCH_BITS);
-    pwr_get_wakeup_flags();
     n6_comm_init();
     n6_comm_set_recv_callback(n6_comm_recv_callback);
 #if APP_IS_USER_STR_CMD == 0

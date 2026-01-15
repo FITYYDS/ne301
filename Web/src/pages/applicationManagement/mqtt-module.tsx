@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/tooltip';
 import Upload from '@/components/upload';
 import { useLingui } from '@lingui/react';
 import SvgIcon from '@/components/svg-icon';
@@ -14,6 +15,7 @@ import { toast } from 'sonner';
 import { readCertificateFile } from '@/utils/readFile';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/dialog';
 // import { toast } from 'sonner';
+import { isValidMqttHost } from '@/utils/verify';
 
 type ProtocolType = 'mqtt' | 'mqtts';
 type ErrorType = {
@@ -111,13 +113,7 @@ export default function MqttModule() {
             message: '',
         },
     });
-    // const isVAlidChar = (str: string) => {
-    //     if (!/^[a-zA-Z0-9_]+$/.test(str)) {
-    //         return false;
-    //     }
-    //     return true;
-    // }
-    // removed unused refs
+    
     const validateMqttConfig = (): boolean => {
         let isValid = true;
         const { hostname } = mqttConfig.connection;
@@ -130,6 +126,9 @@ export default function MqttModule() {
             isValid = false;
         } else if (hostname.length <= 0 || hostname.length > 64) {
             setErrors(prev => ({ ...prev, hostname: { error: true, message: 'sys.application_management.server_address_error' } }));
+            isValid = false;
+        } else if (!isValidMqttHost(hostname)) {
+            setErrors(prev => ({ ...prev, hostname: { error: true, message: 'sys.application_management.invalid_url' } }));
             isValid = false;
         } else {
             setErrors(prev => ({ ...prev, hostname: { error: false, message: '' } }));
@@ -357,7 +356,15 @@ export default function MqttModule() {
         <div>
             <div className="flex flex-col gap-2 bg-gray-100 p-4 rounded-lg mt-4">
                 <div className="flex justify-between">
-                    <Label>{i18n._('sys.application_management.ca_cert')}</Label>
+                    <div className="flex items-center gap-2">
+                        <Label>{i18n._('sys.application_management.ca_cert')}</Label>
+                        <Tooltip>
+                            <TooltipTrigger>
+                                <SvgIcon icon="info" className="w-4 h-4" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-[300px] text-pretty">{i18n._('sys.application_management.ca_cert_tooltip')}</TooltipContent>
+                        </Tooltip>
+                    </div>
                     <div className="flex items-center gap-2">
                         {mqttConfig.authentication.ca_cert_path ? <p className="text-sm text-text-primary">{mqttConfig.authentication.ca_cert_path}</p>
                             : <p className={`text-sm  ${errors.caCert.error ? 'text-red-500' : 'text-gray-400'}`}>{errors.caCert.error ? i18n._(errors.caCert.message) : i18n._('sys.application_management.ca_cert_placeholder')}</p>}
