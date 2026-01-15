@@ -59,6 +59,9 @@ C_SOURCES += ../Custom/Core/Log/debug.c
 # Custom - Core/Security
 C_SOURCES += ../Custom/Core/Security/auth_mgr.c
 
+# Custom - Core/Factory
+C_SOURCES += ../Custom/Core/Factory/factory_test.c
+
 # Custom - Core/System
 C_SOURCES += ../Custom/Core/System/dev_manager.c
 C_SOURCES += ../Custom/Core/System/event_bus.c
@@ -80,6 +83,9 @@ C_SOURCES += ../Custom/Core/Video/video_encoder_node.c
 C_SOURCES += ../Custom/Core/Video/video_frame_mgr.c
 C_SOURCES += ../Custom/Core/Video/video_pipeline.c
 
+# Custom - Services/Video
+C_SOURCES += ../Custom/Services/Video/video_stream_hub.c
+
 # Custom - Hal
 C_SOURCES += ../Custom/Hal/ai_draw.c
 C_SOURCES += ../Custom/Hal/camera.c
@@ -98,6 +104,7 @@ C_SOURCES += ../Custom/Hal/pixel_format_map.c
 C_SOURCES += ../Custom/Hal/pwr.c
 C_SOURCES += ../Custom/Hal/sd_file.c
 C_SOURCES += ../Custom/Hal/si91x_ncp_host.c
+C_SOURCES += ../Custom/Hal/rs485_driver.c
 C_SOURCES += ../Custom/Hal/storage.c
 C_SOURCES += ../Custom/Hal/system_top.c
 C_SOURCES += ../Custom/Hal/u0_module.c
@@ -140,7 +147,9 @@ C_SOURCES += ../Custom/Services/Communication/communication_service.c
 C_SOURCES += ../Custom/Services/Device/device_service.c
 C_SOURCES += ../Custom/Services/MQTT/mqtt_service.c
 C_SOURCES += ../Custom/Services/OTA/ota_service.c
+C_SOURCES += ../Custom/Services/RTMP/rtmp_service.c
 C_SOURCES += ../Custom/Services/System/system_service.c
+# video_stream_hub moved to Core/Video
 
 # Custom - Services/Web
 C_SOURCES += ../Custom/Services/Web/web_api.c
@@ -155,6 +164,8 @@ C_SOURCES += ../Custom/Services/Web/api/api_model_validation_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_mqtt_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_network_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_ota_module.c
+C_SOURCES += ../Custom/Services/Web/api/api_rtmp_module.c
+C_SOURCES += ../Custom/Services/Web/api/api_preview_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_work_mode_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_business_error.c
 
@@ -237,7 +248,8 @@ C_SOURCES += $(wildcard ../Custom/Common/Lib/MbedTLS/port/*.c)
 
 # Custom - Common/Lib/lwip
 C_SOURCES += $(wildcard ../Custom/Common/Lib/lwip/api/*.c)
-C_SOURCES += ../Custom/Common/Lib/lwip/apps/sntp/sntp.c
+C_SOURCES += $(wildcard ../Custom/Common/Lib/lwip/apps/sntp/*.c)
+C_SOURCES += $(wildcard ../Custom/Common/Lib/lwip/apps/mdns/*.c)
 C_SOURCES += $(wildcard ../Custom/Common/Lib/lwip/core/*.c)
 C_SOURCES += $(wildcard ../Custom/Common/Lib/lwip/core/ipv4/*.c)
 C_SOURCES += $(wildcard ../Custom/Common/Lib/lwip/core/ipv6/*.c)
@@ -669,6 +681,9 @@ C_DEFS += -DMG_ENABLE_LWIP=1
 C_DEFS += -DUSE_LWIP
 C_DEFS += -DSTM32N6
 
+# Video Encoder - increase HW timeout (default 100ms may be too short)
+C_DEFS += -DEWL_TIMEOUT=500UL
+
 # Si91x WiFi
 C_DEFS += -DSLI_SI917
 C_DEFS += -DSL_CATALOG_FREERTOS_KERNEL_PRESENT
@@ -681,9 +696,10 @@ C_DEFS += -DSLI_SI91X_OFFLOAD_NETWORK_STACK
 C_DEFS += -DSLI_SI91X_EMBEDDED_MQTT_CLIENT
 C_DEFS += -DSLI_SI91X_CONFIG_WIFI6_PARAMS=1
 C_DEFS += -DSLI_SI91X_NETWORK_DUAL_STACK_
-C_DEFS += -DSLI_SI91X_ENABLE_BLE
+# C_DEFS += -DSLI_SI91X_ENABLE_BLE
 C_DEFS += -DSL_SI91X_ENABLE_LITTLE_ENDIAN
 C_DEFS += -DSPI_EXTENDED_TX_LEN_2K
+# C_DEFS += -DSLI_SI91X_SIMULATION_C1C2_ERROR
 
 ######################################
 # Assembly-specific Defines
@@ -701,7 +717,6 @@ AS_DEFS += -DTX_HAS_PARALLEL_NETWORKS=0
 AS_DEFS += -DTX_SINGLE_MODE_SECURE=1
 AS_DEFS += -DFEAT_THREADX
 AS_DEFS += -DTX_INCLUDE_USER_DEFINE_FILE
-AS_DEFS += -DTX_EXECUTION_PROFILE_ENABLE
 AS_DEFS += -DUVC_LIB_USE_USBX
 AS_DEFS += -DUX_INCLUDE_USER_DEFINE_FILE
 AS_DEFS += -DUSBL_PACKET_PER_MICRO_FRAME=3
@@ -747,6 +762,7 @@ C_INCLUDES += -I../Custom/Core/Data
 C_INCLUDES += -I../Custom/Core/Example
 C_INCLUDES += -I../Custom/Core/Log
 C_INCLUDES += -I../Custom/Core/Security
+C_INCLUDES += -I../Custom/Core/Factory
 C_INCLUDES += -I../Custom/Core/System
 C_INCLUDES += -I../Custom/Core/Video
 
@@ -769,6 +785,7 @@ C_INCLUDES += -I../Custom/Services/Communication
 C_INCLUDES += -I../Custom/Services/Device
 C_INCLUDES += -I../Custom/Services/MQTT
 C_INCLUDES += -I../Custom/Services/OTA
+C_INCLUDES += -I../Custom/Services/RTMP
 C_INCLUDES += -I../Custom/Services/System
 C_INCLUDES += -I../Custom/Services/Web
 C_INCLUDES += -I../Custom/Services/Web/api

@@ -25,7 +25,7 @@ export default function DevicePassword({ setCurrentPage }: { setCurrentPage: (pa
     const navigate = useNavigate();
     const { changePassword } = loginApis;
     const [isLoading, setIsLoading] = useState(false);
-    const { getNetworkStatus, setWifiConfig } = systemSettings;
+    const { getAPConfigReq, setWifiConfig } = systemSettings;
     const [wifiParams, setWifiParams] = useState({
         ssid: '',
         password: '',
@@ -64,11 +64,12 @@ export default function DevicePassword({ setCurrentPage }: { setCurrentPage: (pa
         try {
             setIsLoading(true);
             // Initialize WiFi configuration
-            const res = await getNetworkStatus();
+            const res = await getAPConfigReq();
+            console.log(res.data);
             setWifiParams({
-                ssid: String(res.data.network_service?.ssid ?? ''),
-                password: String(res.data.network_service?.password ?? ''),
-                ap_sleep_time: String(Number(res.data.network_service?.ap_sleep_time ?? 0) / 60)
+                ssid: String(res.data?.ssid ?? ''),
+                password: String(res.data?.password ?? ''),
+                ap_sleep_time: String(Number(res.data?.ap_sleep_time ?? 0) / 60)
             });
             // setOldWifiPassword(res.data.network_service?.password ?? '');
             const currentPassword = await getOldLoginPassword();

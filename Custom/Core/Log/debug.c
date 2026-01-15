@@ -870,7 +870,7 @@ static void debug_uart_log_output(const char *msg, int len)
 
 /* ==================== Driver Command Registration System ==================== */
 
-#define MAX_DRIVER_CMD_CALLBACKS 16
+#define MAX_DRIVER_CMD_CALLBACKS 32
 
 typedef void (*driver_cmd_register_func_t)(void);
 
@@ -894,6 +894,13 @@ int driver_cmd_register_callback(const char* name, driver_cmd_register_func_t re
     if (g_driver_cmd_callback_count >= MAX_DRIVER_CMD_CALLBACKS) {
         LOG_CORE_WARN("Too many driver command callbacks, ignoring %s", name);
             return -1;
+    }
+
+    for (int i = 0; i < g_driver_cmd_callback_count; i++) {
+        if (strcmp(g_driver_cmd_callbacks[i].name, name) == 0) {
+            LOG_CORE_WARN("Driver command callback %s already registered, ignoring", name);
+            return -1;
+        }
     }
     
     strncpy(g_driver_cmd_callbacks[g_driver_cmd_callback_count].name, name, sizeof(g_driver_cmd_callbacks[0].name) - 1);

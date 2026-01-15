@@ -27,6 +27,10 @@
 #include "isp_param_conf.h"
 #include "isp_services.h"
 
+#ifndef ISP_MW_TUNING_TOOL_SUPPORT
+static int isp_is_initialized = 0;
+#endif
+
 static int CMW_OS04C10_GetResType(uint32_t width, uint32_t height, uint32_t*res)
 {
   if (width == 1920 && height == 1080)
@@ -71,7 +75,7 @@ static int32_t CMW_OS04C10_getMirrorFlipConfig(uint32_t Config)
 static int32_t CMW_OS04C10_DeInit(void *io_ctx)
 {
   int ret = CMW_ERROR_NONE;
-  ret = ISP_DeInit(&((CMW_OS04C10_t *)io_ctx)->hIsp);
+  ret = OS04C10_Stop(&((CMW_OS04C10_t *)io_ctx)->ctx_driver);
   if (ret)
   {
     return CMW_ERROR_COMPONENT_FAILURE;
@@ -82,6 +86,17 @@ static int32_t CMW_OS04C10_DeInit(void *io_ctx)
   {
     return CMW_ERROR_COMPONENT_FAILURE;
   }
+  
+#ifndef ISP_MW_TUNING_TOOL_SUPPORT
+  // int ret;
+
+  ret = ISP_DeInit(&((CMW_OS04C10_t *)io_ctx)->hIsp);
+  if (ret != ISP_OK)
+  {
+      return CMW_ERROR_PERIPH_FAILURE;
+  }
+  isp_is_initialized = 0;
+#endif
   return ret;
 }
 
@@ -224,16 +239,19 @@ static int32_t CMW_OS04C10_Start(void *io_ctx)
     */
   __attribute__((unused)) ISP_StatAreaTypeDef isp_stat_area = {0};
   (void) ISP_IQParamCacheInit; /* unused */
-  ret = ISP_Init(&((CMW_OS04C10_t *)io_ctx)->hIsp, ((CMW_OS04C10_t *)io_ctx)->hdcmipp, 0, &((CMW_OS04C10_t *)io_ctx)->appliHelpers,/* &isp_stat_area,*/ &ISP_IQParamCacheInit_OS04C10);
-  if (ret != ISP_OK)
-  {
-    return CMW_ERROR_COMPONENT_FAILURE;
-  }
+  if (isp_is_initialized == 0) {
+    ret = ISP_Init(&((CMW_OS04C10_t *)io_ctx)->hIsp, ((CMW_OS04C10_t *)io_ctx)->hdcmipp, 0, &((CMW_OS04C10_t *)io_ctx)->appliHelpers,/* &isp_stat_area,*/ &ISP_IQParamCacheInit_OS04C10);
+    if (ret != ISP_OK)
+    {
+      return CMW_ERROR_COMPONENT_FAILURE;
+    }
 
-  ret = ISP_Start(&((CMW_OS04C10_t *)io_ctx)->hIsp);
-  if (ret != ISP_OK)
-  {
-      return CMW_ERROR_PERIPH_FAILURE;
+    ret = ISP_Start(&((CMW_OS04C10_t *)io_ctx)->hIsp);
+    if (ret != ISP_OK)
+    {
+        return CMW_ERROR_PERIPH_FAILURE;
+    }
+    isp_is_initialized = 1;
   }
 #endif
   return OS04C10_Start(&((CMW_OS04C10_t *)io_ctx)->ctx_driver);
@@ -242,15 +260,6 @@ static int32_t CMW_OS04C10_Start(void *io_ctx)
 
 static int32_t CMW_OS04C10_Stop(void *io_ctx)
 {
-#ifndef ISP_MW_TUNING_TOOL_SUPPORT
-  int ret;
-
-  ret = ISP_DeInit(&((CMW_OS04C10_t *)io_ctx)->hIsp);
-  if (ret != ISP_OK)
-  {
-      return CMW_ERROR_PERIPH_FAILURE;
-  }
-#endif
   return OS04C10_Stop(&((CMW_OS04C10_t *)io_ctx)->ctx_driver);
   // return CMW_ERROR_NONE;
 }

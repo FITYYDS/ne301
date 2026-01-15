@@ -133,7 +133,7 @@ static void mem_pool_stat(mem_handle_t handle)
         return;
     }
     MEM_LOCK(handle);
-    ngx_slab_stat(handle->pool);
+    ngx_slab_stat(handle->pool, NULL);
     MEM_UNLOCK(handle);
 }
 
@@ -159,7 +159,7 @@ static void mem_pool_status(mem_handle_t handle)
         return;
     }
     printf("Pool status: ----------------%s----------------\r\n", handle->name);
-    ngx_slab_stat(handle->pool);
+    ngx_slab_stat(handle->pool, NULL);
 }
 
 /* Public API Implementation */
@@ -328,6 +328,56 @@ void *hal_mem_realloc(void *ptr, size_t size, mem_type_t type)
     }
     hal_mem_free(ptr);
     return new_ptr;
+}
+
+int32_t hal_mem_get_info(uint32_t *total_size, uint32_t *used_size, mem_type_t type)
+{
+    ngx_slab_info_t stat_info;
+    if (!g_slab_pools_initialized || total_size == NULL || used_size == NULL) {
+        return MEM_INVALID_PARAM;
+    }
+    
+    switch (type) {
+        case MEM_FAST:
+            if (g_internal_mem_handle) {
+                MEM_LOCK(g_internal_mem_handle);
+                ngx_slab_stat(g_internal_mem_handle->pool, &stat_info);
+                *total_size = stat_info.pool_size;
+                *used_size = stat_info.used_size;
+                MEM_UNLOCK(g_internal_mem_handle);
+            }
+            break;
+
+        case MEM_LARGE:
+            if (g_external_mem_handle) {
+                MEM_LOCK(g_external_mem_handle);
+                ngx_slab_stat(g_external_mem_handle->pool, &stat_info);
+                *total_size = stat_info.pool_size;
+                *used_size = stat_info.used_size;
+                MEM_UNLOCK(g_external_mem_handle);
+            }
+            break;
+        case MEM_ANY:
+        default:
+            *total_size = 0;
+            *used_size = 0;
+            if (g_internal_mem_handle) {
+                MEM_LOCK(g_internal_mem_handle);
+                ngx_slab_stat(g_internal_mem_handle->pool, &stat_info);
+                *total_size += stat_info.pool_size;
+                *used_size += stat_info.used_size;
+                MEM_UNLOCK(g_internal_mem_handle);
+            }
+            if (g_external_mem_handle) {
+                MEM_LOCK(g_external_mem_handle);
+                ngx_slab_stat(g_external_mem_handle->pool, &stat_info);
+                *total_size += stat_info.pool_size;
+                *used_size += stat_info.used_size;
+                MEM_UNLOCK(g_external_mem_handle);
+            }
+            break;
+    }
+    return MEM_OK;
 }
 
 int32_t hal_mem_get_stats(void)

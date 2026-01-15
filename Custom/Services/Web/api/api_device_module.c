@@ -1751,7 +1751,12 @@ static void get_firmware_version_string(FirmwareType fw_type, char *version_str,
     
     int active_slot = sys_state->active_slot[fw_type];
     const slot_info_t *slot_info = ota_get_slot_info(fw_type, active_slot);
-    
+
+    if(fw_type == FIRMWARE_FSBL) {
+        ota_version_to_string(slot_info->version, version_str, size);
+        return;
+    }
+
     if (!slot_info) {
         snprintf(version_str, size, "unknown");
         return;
@@ -1799,7 +1804,8 @@ static aicam_result_t firmware_versions_handler(http_handler_context_t *ctx)
     char version_str[64];
     
     // FSBL version
-    cJSON_AddStringToObject(response, "fsbl", FSBL_VERSION_STRING);
+    get_firmware_version_string(FIRMWARE_FSBL, version_str, sizeof(version_str));
+    cJSON_AddStringToObject(response, "fsbl", version_str);
     
     // APP version
     get_firmware_version_string(FIRMWARE_APP, version_str, sizeof(version_str));
@@ -1815,7 +1821,19 @@ static aicam_result_t firmware_versions_handler(http_handler_context_t *ctx)
     cJSON_AddStringToObject(response, "model", version_str);
     
     // WAKECORE version (use current running version)
-    cJSON_AddStringToObject(response, "wakecore", WAKECORE_VERSION_STRING);
+#if ENABLE_U0_MODULE
+    {
+        ms_bridging_version_t wakecore_version = {0};
+        char wakecore_version_str[32] = "unknown";
+        if (u0_module_get_version(&wakecore_version) == 0) {
+            snprintf(wakecore_version_str, sizeof(wakecore_version_str), "%d.%d.%d.%d", 
+                     wakecore_version.major, wakecore_version.minor, wakecore_version.patch, wakecore_version.build);
+        }
+        cJSON_AddStringToObject(response, "wakecore", wakecore_version_str);
+    }
+#else
+    cJSON_AddStringToObject(response, "wakecore", "N/A");
+#endif
     
     // Convert to string
     char *json_str = cJSON_PrintUnformatted(response);

@@ -33,9 +33,8 @@ export default function Log({ isOpen, setOpen }: {isOpen: boolean, setOpen: (ope
             const res = await exportLogsReq();
             const logFiles = res.data.log_files
             const currentTime = new Date().getTime();
-            logFiles.forEach(async (file: any) => {
-                await downloadFile(file.content, `${file.filename}_${currentTime}.log`);
-            });
+            const mergedContent = logFiles.reverse().map((file: any) => file.content);
+            await downloadFile(mergedContent, `logs_${currentTime}.log`);
         } catch (error) {
             console.error('exportLogs', error);
         }

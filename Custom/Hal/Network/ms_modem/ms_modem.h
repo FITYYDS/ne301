@@ -12,6 +12,7 @@ extern "C" {
 #define MODEM_TX_TASK_STACK_SIZE        (4096)                      // Task stack
 #define MODEM_TX_TASK_PRIORITY          (osPriorityRealtime4)       // Task priority
 #define MODEM_POWER_ON_DELAY_MS         (1000)                      // Module power-on stabilization delay
+#define MODEM_GPIO_READY_TIMEOUT_MS     (3000)                      // Module power-on GPIO ready timeout
 #define MODEM_UART_CHECK_BAUDRATE_MODE  (1)                         // UART baud rate detection mode 0: interrupt mode, 1: DMA mode
 #define MODEM_UART_SEND_MAX_TIME_MS     (1000)                      // Maximum wait time for sending data 1s
 #define MODEM_UART_BAUDRATE             (921600U)                   // UART baud rate
@@ -39,6 +40,11 @@ typedef struct {
     char sim_status[32];                 // SIM card status
     char operator[32];                   // Current network operator name
     char version[32];                    // Firmware version
+    char plmn_id[8];                     // Current network PLMN ID
+    char cell_id[32];                    // Current cell ID
+    char lac[32];                        // Location area code
+    char network_type[16];               // Network type
+    char registration_status[64];        // Network registration status
 } modem_info_t;
 /// @brief MODEM configuration parameters
 typedef struct {

@@ -79,14 +79,10 @@ request.interceptors.response.use(
       return Promise.reject(response)
   },
   (error) => {
-    // Handle network errors
+    console.log('error', error.code);
     if (!error.response) {
       const errorMessage = String(error)
-      if (error.code === 'ECONNABORTED') {
-        debouncedTimeoutError(errorMessage)
-      } else {
-        toast.error(errorMessage)
-      }
+      debouncedTimeoutError(errorMessage)
       return Promise.reject(new Error(error))
     }
     const { status } = error.response
@@ -95,7 +91,7 @@ request.interceptors.response.use(
         // Unauthorized, clear token and redirect to login page
         localStorage.removeItem('token')
         // 'login route
-        if (window.location.pathname !== '/login' &&  window.location.pathname !== '/') {
+        if (!window.location.pathname.includes('/login') &&  window.location.pathname !== '/') {
           toast.error(i18n._('errors.http.401'))
           window.location.href = '/login'
         }

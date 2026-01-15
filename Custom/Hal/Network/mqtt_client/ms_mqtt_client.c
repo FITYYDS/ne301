@@ -260,11 +260,8 @@ static int ms_mqtt_client_connect(ms_mqtt_client_handle_t client)
 {
     int slen = 0, rlen = 0, ret = 0;
     uint8_t *buffer = NULL;
+    uint32_t buf_len = 32;
     MQTTPacket_connectData options = MQTTPacket_connectData_initializer;
-
-    buffer = (uint8_t *)hal_mem_alloc_large(MS_MQTT_MAX(client->config->network.tx_buf_size, client->config->network.rx_buf_size));
-    if (buffer == NULL) return MQTT_ERR_MEM;
-    
     options.MQTTVersion = client->config->base.protocol_ver;
     options.clientID.cstring = client->config->base.client_id;
     options.keepAliveInterval = client->config->base.keepalive;
@@ -283,7 +280,26 @@ static int ms_mqtt_client_connect(ms_mqtt_client_handle_t client)
     options.username.cstring = client->config->authentication.username;
     options.password.cstring = client->config->authentication.password;
 
-    slen = MQTTSerialize_connect(buffer, client->config->network.tx_buf_size, &options);
+    buf_len += MQTTstrlen(options.clientID);
+    if (options.willFlag) {
+        buf_len += MQTTstrlen(options.will.topicName);
+        buf_len += MQTTstrlen(options.will.message);
+    }
+    if (options.username.cstring) buf_len += MQTTstrlen(options.username);
+    if (options.password.cstring) buf_len += MQTTstrlen(options.password);
+
+    if (buf_len > MS_MQTT_MAX(client->config->network.tx_buf_size, client->config->network.rx_buf_size)) {
+        LOG_LIB_ERROR("MQTT connect buffer size is too large(%ld > %ld)!", buf_len, MS_MQTT_MAX(client->config->network.tx_buf_size, client->config->network.rx_buf_size));
+        return MQTT_ERR_MEM;
+    }
+
+    buffer = (uint8_t *)hal_mem_alloc_large(buf_len);
+    if (buffer == NULL) {
+        LOG_LIB_ERROR("MQTT connect buffer alloc failed(buf_len = %ld)!", buf_len);
+        return MQTT_ERR_MEM;
+    }
+
+    slen = MQTTSerialize_connect(buffer, buf_len, &options);
     if (slen <= 0) {
         hal_mem_free(buffer);
         return MQTT_ERR_SERIAL;
@@ -296,7 +312,7 @@ static int ms_mqtt_client_connect(ms_mqtt_client_handle_t client)
         return ret;
     }
 
-    ret = ms_mqtt_client_read_message(client, buffer, client->config->network.rx_buf_size, client->config->network.timeout_ms);
+    ret = ms_mqtt_client_read_message(client, buffer, buf_len, client->config->network.timeout_ms);
     if (ret < 0) {
         hal_mem_free(buffer);
         return ret;
@@ -591,9 +607,9 @@ static void ms_mqtt_client_task(void *param)
         MS_MQTT_CLIENT_LOCK(client);
         memset(&client->event, 0, sizeof(ms_mqtt_event_data_t));
         client->event.client = client;
-        ms_mqtt_client_delete_expired_messages(client);
         state = client->state;
         MS_MQTT_CLIENT_UNLOCK(client);
+        ms_mqtt_client_delete_expired_messages(client);
         switch (state) {
             case MQTT_STATE_STARTING:
                 xEventGroupClearBits(client->status_bits, RECONNECT_BIT | DISCONNECT_BIT);
@@ -1069,8 +1085,9 @@ int ms_mqtt_client_disconnect(ms_mqtt_client_handle_t client)
     if (client->state == MQTT_STATE_DISCONNECTED) return MQTT_ERR_OK;
     // if (client->state != MQTT_STATE_WAIT_RECONNECT && client->state != MQTT_STATE_CONNECTED) {
     if (client->state == MQTT_STATE_STOPPED) {
-        MQTT_PRINTF_ERROR_CODE(MQTT_ERR_INVALID_STATE);
-        return MQTT_ERR_INVALID_STATE;
+        // MQTT_PRINTF_ERROR_CODE(MQTT_ERR_INVALID_STATE);
+        // return MQTT_ERR_INVALID_STATE;
+        return MQTT_ERR_OK;
     }
 
     xEventGroupSetBits(client->status_bits, DISCONNECT_BIT);
@@ -1085,8 +1102,9 @@ int ms_mqtt_client_stop(ms_mqtt_client_handle_t client)
     MS_MQTT_CLIENT_LOCK(client);
     if (client->task_handle == NULL) {
         MS_MQTT_CLIENT_UNLOCK(client); 
-        MQTT_PRINTF_ERROR_CODE(MQTT_ERR_INVALID_STATE);
-        return MQTT_ERR_INVALID_STATE;
+        // MQTT_PRINTF_ERROR_CODE(MQTT_ERR_INVALID_STATE);
+        // return MQTT_ERR_INVALID_STATE;
+        return MQTT_ERR_OK;
     }
 
     if (client->run) {
@@ -1122,6 +1140,7 @@ int ms_mqtt_client_subscribe_multiple(ms_mqtt_client_handle_t client, const ms_m
     int slen = 0, ret = 0, i = 0;
     uint8_t *buffer = NULL;
     uint16_t msg_id = 0;
+    uint32_t buf_len = 8;
     MQTTString *topics = NULL;
     int *qoss = NULL;
     if (client == NULL || topic_list == NULL || size <= 0) return MQTT_ERR_INVALID_ARG;
@@ -1132,12 +1151,6 @@ int ms_mqtt_client_subscribe_multiple(ms_mqtt_client_handle_t client, const ms_m
     if (client->config->network.outbox_limit > 0 && ms_mqtt_client_get_outbox_size(client) > client->config->network.outbox_limit) {
         MQTT_PRINTF_ERROR_CODE(MQTT_ERR_LIMIT);
         return MQTT_ERR_LIMIT;
-    }
-
-    buffer = (uint8_t *)hal_mem_alloc_large(client->config->network.tx_buf_size);
-    if (buffer == NULL) {
-        ret = MQTT_ERR_MEM;
-        goto ms_mqtt_client_subscribe_multiple_end;
     }
 
     topics = (MQTTString *)hal_mem_alloc_large(sizeof(MQTTString) * size);
@@ -1157,12 +1170,24 @@ int ms_mqtt_client_subscribe_multiple(ms_mqtt_client_handle_t client, const ms_m
         topics[i].lenstring.data = NULL;
         topics[i].lenstring.len = 0;
         qoss[i] = topic_list[i].qos;
+        buf_len += (MQTTstrlen(topics[i]) + 4);
+    }
+
+    if (buf_len > client->config->network.tx_buf_size) {
+        ret = MQTT_ERR_MEM;
+        goto ms_mqtt_client_subscribe_multiple_end;
+    }
+
+    buffer = (uint8_t *)hal_mem_alloc_large(buf_len);
+    if (buffer == NULL) {
+        ret = MQTT_ERR_MEM;
+        goto ms_mqtt_client_subscribe_multiple_end;
     }
 
     MS_MQTT_CLIENT_LOCK(client);
     msg_id = MS_MQTT_MSG_ID(client);
     MS_MQTT_CLIENT_UNLOCK(client);
-    slen = MQTTSerialize_subscribe(buffer, client->config->network.tx_buf_size, 0, msg_id, size, topics, qoss);
+    slen = MQTTSerialize_subscribe(buffer, buf_len, 0, msg_id, size, topics, qoss);
     if (slen <= 0) {
         ret = MQTT_ERR_SERIAL;
         goto ms_mqtt_client_subscribe_multiple_end;
@@ -1198,6 +1223,7 @@ int ms_mqtt_client_unsubscribe(ms_mqtt_client_handle_t client, char *topic)
     int slen = 0, ret = 0;
     uint8_t *buffer = NULL;
     uint16_t msg_id = 0;
+    uint32_t buf_len = 8;
     MQTTString topic_str = MQTTString_initializer;
     if (client == NULL || topic == NULL) return MQTT_ERR_INVALID_ARG;
     if (client->state != MQTT_STATE_CONNECTED) {
@@ -1209,7 +1235,13 @@ int ms_mqtt_client_unsubscribe(ms_mqtt_client_handle_t client, char *topic)
         return MQTT_ERR_LIMIT;
     }
 
-    buffer = (uint8_t *)hal_mem_alloc_large(client->config->network.tx_buf_size);
+    buf_len += (strlen(topic) + 4);
+    if (buf_len > client->config->network.tx_buf_size) {
+        ret = MQTT_ERR_MEM;
+        goto ms_mqtt_client_unsubscribe_end;
+    }
+
+    buffer = (uint8_t *)hal_mem_alloc_large(buf_len);
     if (buffer == NULL) {
         ret = MQTT_ERR_MEM;
         goto ms_mqtt_client_unsubscribe_end;
@@ -1219,7 +1251,7 @@ int ms_mqtt_client_unsubscribe(ms_mqtt_client_handle_t client, char *topic)
     msg_id = MS_MQTT_MSG_ID(client);
     MS_MQTT_CLIENT_UNLOCK(client);
     topic_str.cstring = topic;
-    slen = MQTTSerialize_unsubscribe(buffer, client->config->network.tx_buf_size, 0, msg_id, 1, &topic_str);
+    slen = MQTTSerialize_unsubscribe(buffer, buf_len, 0, msg_id, 1, &topic_str);
     if (slen <= 0) {
         ret = MQTT_ERR_SERIAL;
         goto ms_mqtt_client_unsubscribe_end;
@@ -1252,6 +1284,7 @@ int ms_mqtt_client_publish(ms_mqtt_client_handle_t client, char *topic, uint8_t 
     int slen = 0, ret = 0;
     uint8_t *buffer = NULL;
     uint16_t msg_id = 0;
+    uint32_t buf_len = 8;
     MQTTString topic_str = MQTTString_initializer;
     if (client == NULL || topic == NULL) return MQTT_ERR_INVALID_ARG;
     if (qos == 0 && client->state != MQTT_STATE_CONNECTED) {
@@ -1263,7 +1296,14 @@ int ms_mqtt_client_publish(ms_mqtt_client_handle_t client, char *topic, uint8_t 
         return MQTT_ERR_LIMIT;
     }
 
-    buffer = (uint8_t *)hal_mem_alloc_large(client->config->network.tx_buf_size);
+    buf_len += (strlen(topic) + 4);
+    buf_len += len;
+    if (buf_len > client->config->network.tx_buf_size) {
+        ret = MQTT_ERR_MEM;
+        goto ms_mqtt_client_publish_end;
+    }
+
+    buffer = (uint8_t *)hal_mem_alloc_large(buf_len);
     if (buffer == NULL) {
         ret = MQTT_ERR_MEM;
         goto ms_mqtt_client_publish_end;
@@ -1275,7 +1315,7 @@ int ms_mqtt_client_publish(ms_mqtt_client_handle_t client, char *topic, uint8_t 
         MS_MQTT_CLIENT_UNLOCK(client);
     }
     topic_str.cstring = topic;
-    slen = MQTTSerialize_publish(buffer, client->config->network.tx_buf_size, 0, qos, retain, msg_id, topic_str, data, len);
+    slen = MQTTSerialize_publish(buffer, buf_len, 0, qos, retain, msg_id, topic_str, data, len);
     if (slen <= 0) {
         ret = MQTT_ERR_SERIAL;
         goto ms_mqtt_client_publish_end;
@@ -1315,6 +1355,7 @@ int ms_mqtt_client_enqueue(ms_mqtt_client_handle_t client, char *topic, uint8_t 
     int slen = 0, ret = 0;
     uint8_t *buffer = NULL;
     uint16_t msg_id = 0;
+    uint32_t buf_len = 8;
     MQTTString topic_str = MQTTString_initializer;
     if (client == NULL || topic == NULL) return MQTT_ERR_INVALID_ARG;
     if (client->config->network.outbox_limit > 0 && ms_mqtt_client_get_outbox_size(client) > client->config->network.outbox_limit) {
@@ -1322,7 +1363,14 @@ int ms_mqtt_client_enqueue(ms_mqtt_client_handle_t client, char *topic, uint8_t 
         return MQTT_ERR_LIMIT;
     }
 
-    buffer = (uint8_t *)hal_mem_alloc_large(client->config->network.tx_buf_size);
+    buf_len += (strlen(topic) + 4);
+    buf_len += len;
+    if (buf_len > client->config->network.tx_buf_size) {
+        ret = MQTT_ERR_MEM;
+        goto ms_mqtt_client_enqueue_end;
+    }
+
+    buffer = (uint8_t *)hal_mem_alloc_large(buf_len);
     if (buffer == NULL) {
         ret = MQTT_ERR_MEM;
         goto ms_mqtt_client_enqueue_end;
@@ -1334,7 +1382,7 @@ int ms_mqtt_client_enqueue(ms_mqtt_client_handle_t client, char *topic, uint8_t 
         MS_MQTT_CLIENT_UNLOCK(client);
     }
     topic_str.cstring = topic;
-    slen = MQTTSerialize_publish(buffer, client->config->network.tx_buf_size, 0, qos, retain, msg_id, topic_str, data, len);
+    slen = MQTTSerialize_publish(buffer, buf_len, 0, qos, retain, msg_id, topic_str, data, len);
     if (slen <= 0) {
         ret = MQTT_ERR_SERIAL;
         goto ms_mqtt_client_enqueue_end;

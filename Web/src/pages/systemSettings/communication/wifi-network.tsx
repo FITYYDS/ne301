@@ -4,7 +4,7 @@ import SvgIcon from '@/components/svg-icon';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+import CommunicationSkeleton from './skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose, DialogFooter } from '@/components/dialog';
 import {
     Popover,
@@ -15,9 +15,8 @@ import systemSettings from '@/services/api/systemSettings';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Input } from '@/components/ui/input';
 import WifiReloadMask from '@/components/wifi-reload-mask';
-import { retryFetch } from '@/utils';
+import { sleep, retryFetch } from '@/utils';
 import { useCommunicationData } from '@/store/communicationData';
-import { sleep } from '@/utils';
 
 type WifiData = {
     ssid: string;
@@ -32,9 +31,9 @@ type WifiData = {
 export default function WifiNetworkPage() {
     const { i18n } = useLingui();
     const isMobile = useIsMobile();
-    const { scanWifi, setWifi, disconnectWifi, deleteWifi } = systemSettings;
+    const { getNetworkSTAReq, scanWifi, setWifi, disconnectWifi, deleteWifi } = systemSettings;
+    const { getCommunicationData } = useCommunicationData();
     // const wifiDataList = wifiData.data.scan_results.known_networks;
-    const { setCommunicationData } = useCommunicationData();
     const [isLoading, setIsLoading] = useState(true);
     const [currentWifiData, setCurrentWifiData] = useState<WifiData | null>(null);
     const [knownWifiDataList, setKnownWifiDataList] = useState<WifiData[]>([]);
@@ -47,42 +46,22 @@ export default function WifiNetworkPage() {
     const [loadingText, setLoadingText] = useState('');
     const [isReloading, setIsReloading] = useState(false);
     const [isErrorWifiPassword, setIsErrorWifiPassword] = useState(false);
-    const initWifiList = async () => {
+    const getNetworkSTA = async () => {
         try {
             setIsLoading(true);
-            const scanData = await setCommunicationData();
-            const scanResults = scanData.data.scan_results;
-            setCurrentWifiData(() => scanData.data.interfaces.find((item: any) => item.name === 'wl' && item.connected) || null);
-            setKnownWifiDataList(scanResults.known_networks);
-            setOtherWifiDataList(scanResults.unknown_networks);
-            return scanResults;
+            const res = await getNetworkSTAReq();
+            setCurrentWifiData(res.data);
+            setKnownWifiDataList(res.data.scan_results.known_networks);
+            setOtherWifiDataList(res.data.scan_results.unknown_networks);
         } catch (error) {
             console.error(error);
-            return null;
         } finally {
             setIsLoading(false);
         }
     }
     useEffect(() => {
-        initWifiList();
+        getNetworkSTA();
     }, []);
-
-    const skeleton = () => (
-        <div>
-            <div>
-                <Skeleton className="h-6 w-25 mb-2" />
-                <Skeleton className="h-10 w-full mb-2" />
-                <Skeleton className="h-10 w-full mb-4" />
-                <Skeleton className="h-6 w-20 mb-2" />
-                <Skeleton className="h-10 w-full mb-2" />
-                <Skeleton className="h-10 w-full mb-2" />
-                <Skeleton className="h-10 w-full mb-4" />
-                <Skeleton className="h-6 w-20 mb-2" />
-                <Skeleton className="h-10 w-full mb-2" />
-                <Skeleton className="h-10 w-full mb-4" />
-            </div>
-        </div>
-    )
     const isValidateWifiPassword = (password: string, minLength: number, maxLength: number) => {
         const allowedPattern = /^[a-zA-Z0-9!@#$%^&*()_+\-=[\]{}|;':",./<>?`~]+$/;
         if (!allowedPattern.test(password)) {
@@ -198,7 +177,8 @@ export default function WifiNetworkPage() {
     const handleForgetWifi = async () => {
         try {
             await disconnectWifi({ interface: 'wl' });
-            initWifiList();
+            getNetworkSTA();      
+            getCommunicationData();
         } catch (error) {
             console.error('handleForgetWifi', error);
         }
@@ -221,7 +201,7 @@ export default function WifiNetworkPage() {
     const handleDeleteWifi = async (wifiData: WifiData) => {
         try {
             await deleteWifi({ ssid: wifiData.ssid, bssid: wifiData.bssid });
-            initWifiList();
+            getNetworkSTA();
         } catch (error) {
             console.error('handleDeleteWifi', error);
         }
@@ -232,13 +212,13 @@ export default function WifiNetworkPage() {
         setIsReloading(true);
         setShowWifiReloadMask(true);
         fetchFn().then(async () => {
-            const result = await retryFetch(initWifiList, loadingTime, loadCount);
+            const result = await retryFetch(getNetworkSTA, loadingTime, loadCount);
             if (result) {
                 setShowWifiReloadMask(false);
             }
         }).catch(async (error) => {
             if (error.status && error.status === 200) {
-                const result = await retryFetch(initWifiList, loadingTime, loadCount);
+                const result = await retryFetch(getNetworkSTA, loadingTime, loadCount);
                 if (result) {
                     setShowWifiReloadMask(false);
                 }
@@ -251,7 +231,7 @@ export default function WifiNetworkPage() {
     }
     return (
         <div className="mt-2">
-            {isLoading && skeleton()}
+            {isLoading && <CommunicationSkeleton />}
             {!isLoading && (
                 <div className="relative">
                     <Button
@@ -263,7 +243,7 @@ export default function WifiNetworkPage() {
                         <SvgIcon icon="reload2" className="w-6 h-6" />
                     </Button>
 
-                    {!currentWifiData && knownWifiDataList.length === 0 && otherWifiDataList.length === 0
+                    {!currentWifiData?.connected && knownWifiDataList.length === 0 && otherWifiDataList.length === 0
                         && (
                             <div className="h-[400px] flex flex-col items-center justify-center ">
                                 <SvgIcon icon="empty" className="w-40 h-40" />
@@ -271,7 +251,7 @@ export default function WifiNetworkPage() {
                             </div>
 
                         )}
-                    {currentWifiData && (
+                    {currentWifiData?.connected && (
                         <>
                             <p className="text-sm font-bold mb-2">{i18n._('sys.system_management.communication_mode')}</p>
                             <div className="flex flex-col gap-2 bg-gray-100 p-4 rounded-lg">
@@ -291,7 +271,7 @@ export default function WifiNetworkPage() {
                                             <SvgIcon icon="check" className="w-4 h-4" />
                                             <p className="text-sm text-green-500">{i18n._('common.connected')}</p>
                                         </div>
-                                        <SvgIcon icon={currentWifiData.rssi >= -55 ? 'wifi' : currentWifiData.rssi >= -75 ? 'wifi-middle' : 'wifi-low'} className="w-4 h-4 text-[#272E3B]" />
+                                        <SvgIcon icon={currentWifiData.rssi >= -55 ? 'wifi' : currentWifiData.rssi >= -75 ? 'wifi_middle' : 'wifi_low'} className="w-4 h-4 text-[#272E3B]" />
                                         <Popover>
                                             <PopoverTrigger onClick={(e: any) => e.stopPropagation()}>
                                                 <SvgIcon icon="more" className="w-4 h-4 text-white cursor-pointer" />
@@ -320,7 +300,7 @@ export default function WifiNetworkPage() {
                                             <div className="flex items-center gap-1">
                                                 <Button size="sm" variant="outline" onClick={() => openConnectWifiDialog(item, 'known')} className="mr-2 opacity-0 group-hover:opacity-100 transition-opacity">{i18n._('common.connect')}</Button>
                                                 {/* {item.security !== 'open' && <SvgIcon icon="lock" className="w-4 h-4" />} */}
-                                                <SvgIcon icon={item.rssi >= -55 ? 'wifi' : item.rssi >= -75 ? 'wifi-middle' : 'wifi-low'} className="w-4 h-4 text-[#272E3B]" />
+                                                <SvgIcon icon={item.rssi >= -55 ? 'wifi' : item.rssi >= -75 ? 'wifi_middle' : 'wifi_low'} className="w-4 h-4 text-[#272E3B]" />
                                                 <Popover>
                                                     <PopoverTrigger onClick={(e: any) => e.stopPropagation()}>
                                                         <SvgIcon icon="more" className="w-4 h-4 text-white cursor-pointer" />
@@ -350,7 +330,7 @@ export default function WifiNetworkPage() {
                                             <div className="flex items-center gap-1">
                                                 <Button size="sm" variant="outline" onClick={() => openConnectWifiDialog(item, 'unknown')} className="mr-2 opacity-0 group-hover:opacity-100 transition-opacity">{i18n._('common.connect')}</Button>
                                                 {item.security !== 'open' && <SvgIcon icon="lock" className="w-4 h-4 mr-1" />}
-                                                <SvgIcon icon={item.rssi >= -55 ? 'wifi' : item.rssi >= -75 ? 'wifi-middle' : 'wifi-low'} className="w-4 h-4 text-[#272E3B]" />
+                                                <SvgIcon icon={item.rssi >= -55 ? 'wifi' : item.rssi >= -75 ? 'wifi_middle' : 'wifi_low'} className="w-4 h-4 text-[#272E3B]" />
                                             </div>
                                         </div>
                                         {index !== otherWifiDataList.length - 1 && <Separator />}

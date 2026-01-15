@@ -31,8 +31,9 @@
 #include "json_config_mgr.h"
 #include "mem_map.h"
 #include "pixel_format_map.h"
+#include "u0_module.h"
 
-static uint8_t check_double_click_timeout_stack_buffer[1024] ALIGN_32 IN_PSRAM;
+// Note: check_double_click_timeout_stack_buffer removed - factory reset now triggered by super long press (10s) only
 
 /* ==================== Device Service Context ==================== */
 
@@ -64,6 +65,7 @@ typedef struct {
     device_t *led_device;
     led_config_t led_config;
     aicam_bool_t led_initialized;
+    system_indicator_state_t indicator_state;  // Current system indicator state
     
     // Sensor management
     sensor_data_t sensor_data;
@@ -167,12 +169,26 @@ static aicam_result_t apply_camera_config_to_hardware(const camera_config_t *con
             LOG_SVC_ERROR("Failed to set sensor parameters: %d", result);
             return result;
         }
-        
+
         LOG_SVC_INFO("Applied camera configuration to hardware successfully");
     } else {
         LOG_SVC_DEBUG("No hardware changes needed");
     }
-    
+
+    // Apply startup skip frames configuration (also updates driver for next restart)
+    if (config->image_config.startup_skip_frames > 0) {
+        result = device_ioctl(g_device_service.camera_device,
+                            CAM_CMD_SET_STARTUP_SKIP_FRAMES,
+                            NULL,
+                            config->image_config.startup_skip_frames);
+        if (result != AICAM_OK) {
+            LOG_SVC_ERROR("Failed to set startup skip frames: %d", result);
+            // Non-fatal error, continue
+        } else {
+            LOG_SVC_DEBUG("Set startup skip frames to %u", config->image_config.startup_skip_frames);
+        }
+    }
+
     return AICAM_OK;
 }
 
@@ -251,9 +267,10 @@ static void init_default_camera_config(camera_config_t *config)
     config->image_config.horizontal_flip = image_config.horizontal_flip;
     config->image_config.vertical_flip = image_config.vertical_flip;
     config->image_config.aec = image_config.aec;
+    config->image_config.startup_skip_frames = image_config.startup_skip_frames;
 
-    LOG_SVC_DEBUG("Image configuration updated: brightness=%u, contrast=%u, horizontal_flip=%d, vertical_flip=%d, aec=%d",
-                config->image_config.brightness, config->image_config.contrast, config->image_config.horizontal_flip, config->image_config.vertical_flip, config->image_config.aec);
+    LOG_SVC_DEBUG("Image configuration updated: brightness=%u, contrast=%u, horizontal_flip=%d, vertical_flip=%d, aec=%d, startup_skip_frames=%u",
+                config->image_config.brightness, config->image_config.contrast, config->image_config.horizontal_flip, config->image_config.vertical_flip, config->image_config.aec, config->image_config.startup_skip_frames);
 }
 
 /**
@@ -345,30 +362,15 @@ void device_service_update_communication_type()
 {
     
     // Check WiFi connection status
-    netif_info_t netif_info;
-    aicam_result_t result = nm_get_netif_info(NETIF_NAME_WIFI_STA, &netif_info);
-    if (result == AICAM_OK && netif_info.state == NETIF_STATE_UP) {
-        //snprintf(info->communication_type, sizeof(info->communication_type), "WiFi STA (%s)", netif_info.wireless_cfg.ssid);
-        snprintf(g_device_service.device_info.communication_type, sizeof(g_device_service.device_info.communication_type), "WiFi");
-        return;
-    }
-    
-    result = nm_get_netif_info(NETIF_NAME_WIFI_AP, &netif_info);
-    if (result == AICAM_OK && netif_info.state == NETIF_STATE_UP) {
-        //snprintf(info->communication_type, sizeof(info->communication_type), "WiFi AP (%s)", netif_info.wireless_cfg.ssid);
-        snprintf(g_device_service.device_info.communication_type, sizeof(g_device_service.device_info.communication_type), "WiFi");
-        return;
-    }
+    communication_type_t communication_type = communication_get_selected_type();
+    snprintf(g_device_service.device_info.communication_type, sizeof(g_device_service.device_info.communication_type), "%s", communication_type_to_string(communication_type));
 
+    LOG_SVC_DEBUG("Communication type updated: %s", g_device_service.device_info.communication_type);
 
-    result = nm_get_netif_info(NETIF_NAME_4G_CAT1, &netif_info);
-    if (result == AICAM_OK && netif_info.state == NETIF_STATE_UP) {
-        snprintf(g_device_service.device_info.communication_type, sizeof(g_device_service.device_info.communication_type), "CAT1");
-        return;
-    }
-    
-    snprintf(g_device_service.device_info.communication_type, sizeof(g_device_service.device_info.communication_type), "Disconnected");
+    return;
 }
+    
+
 
 /**
  * @brief Update storage information from HAL layer
@@ -472,16 +474,32 @@ static void update_device_name(device_info_config_t *info)
  * @brief Update battery information from HAL layer
  */
 static void update_battery_info(device_info_config_t *info)
-{
+{   
+    int ret = 0;
+    uint8_t battery_rate = 0;
+#if ENABLE_U0_MODULE
+    uint32_t usbin_status = 0;
+#endif
+    device_t *battery_device = NULL;
     if (!info) return;
-    device_t *battery_device = device_find_pattern(BATTERY_DEVICE_NAME, DEV_TYPE_MISC);
+
+#if ENABLE_U0_MODULE
+    ret = u0_module_get_usbin_value(&usbin_status);
+    if (ret == 0 && usbin_status == 1) {
+        info->battery_percent = 0.0f;
+        snprintf(info->power_supply_type, sizeof(info->power_supply_type), "full-power");
+        LOG_SVC_DEBUG("Power from USB is connected.");
+        return;
+    }
+#endif
+
+    battery_device = device_find_pattern(BATTERY_DEVICE_NAME, DEV_TYPE_MISC);
     if (battery_device != NULL) {
-        uint8_t battery_rate = 0;
-        int ret = device_ioctl(battery_device, MISC_CMD_ADC_GET_PERCENT, (uint8_t *)&battery_rate, 0);
+        ret = device_ioctl(battery_device, MISC_CMD_ADC_GET_PERCENT, (uint8_t *)&battery_rate, 0);
         if (ret == 0) {
             info->battery_percent = (float)battery_rate;
             
-            if (info->battery_percent >= 100.0f) {
+            if (info->battery_percent > 100.0f) {
                 info->battery_percent = 0.0f;
                 snprintf(info->power_supply_type, sizeof(info->power_supply_type), "full-power");
             }
@@ -579,11 +597,19 @@ static void apply_light_control(const light_config_t *config)
 }
 
 /**
- * @brief Single press callback
+ * @brief Single press callback - Take photo
+ * @details Running state: Take photo, maintain current LED state
+ *          - AP off (slow blink): Take photo, maintain slow blink
+ *          - AP on (solid): Take photo, maintain solid
  */
 static void single_press_callback(void *user_data)
 {
-    LOG_SVC_INFO("Single press callback\r\n");
+    LOG_SVC_INFO("Single press callback - taking photo\r\n");
+    
+    // LED state is maintained (no change needed)
+    // - If AP is on, LED stays solid
+    // - If AP is off, LED stays slow blink
+    
     aicam_result_t result = system_service_capture_and_upload_mqtt(AICAM_TRUE, 0, AICAM_TRUE);
     if(result != AICAM_OK){
         LOG_SVC_ERROR("Upload image to mqtt failed :%d\r\n",result);
@@ -595,79 +621,45 @@ static void single_press_callback(void *user_data)
  */
 static void double_click_callback(void *user_data)
 {
-    LOG_SVC_INFO("Double click detected - entering reset mode\r\n");
-    
-    // Set double click detection flag and timestamp
-    g_device_service.double_click_detected = AICAM_TRUE;
-    g_device_service.double_click_timestamp = rtc_get_timeStamp(); // Get system timestamp using HAL library
-    g_device_service.reset_timeout_ms = 15000; // 15 second timeout
-    
-    LOG_SVC_INFO("Reset mode activated - long press within %u ms to reset device\r\n", 
-                g_device_service.reset_timeout_ms);
+    LOG_SVC_INFO("Double click detected\r\n");
+    // Double click is now available for other purposes
+    // Factory reset is triggered by super long press (10s) only
 }
 
 /**
- * @brief Long press callback - long press to wake up AP hotspot
+ * @brief Long press callback (2s) - Enable AP hotspot
+ * @details Running state:
+ *          - AP off (slow blink): Enable AP, LED solid on
+ *          - AP on (solid): Keep AP on, maintain solid
  */
 static void long_press_callback(void *user_data)
 {
-    LOG_SVC_INFO("Long press detected\r\n");
+    LOG_SVC_INFO("Long press (2s) detected - enabling AP\r\n");
+    
     if(communication_is_interface_connected(NETIF_NAME_WIFI_AP) == AICAM_FALSE){
         LOG_SVC_INFO("AP is not connected, starting AP\r\n");
+        // Set LED to solid on (AP will be enabled)
+        device_service_set_indicator_state(SYSTEM_INDICATOR_RUNNING_AP_ON);
         web_server_ap_sleep_timer_reset();
     } else {
-        LOG_SVC_INFO("AP is already connected, skipping\r\n");
+        LOG_SVC_INFO("AP is already connected, maintaining solid LED\r\n");
+        // Ensure LED is solid on
+        device_service_set_indicator_state(SYSTEM_INDICATOR_RUNNING_AP_ON);
     }
 }
 
 /**
- * @brief super long press callback - check if reset is triggered after double click
+ * @brief super long press callback - directly trigger factory reset (10s press)
  */
 static void super_long_press_callback(void *user_data)
 {
-    LOG_SVC_INFO("Super long press detected\r\n");
+    LOG_SVC_INFO("Super long press (10s) detected - triggering factory reset\r\n");
     
-    // Check if within valid time window after double click
-    if (g_device_service.double_click_detected) {
-        uint32_t current_time = rtc_get_timeStamp();
-        uint32_t elapsed_time = current_time - g_device_service.double_click_timestamp;
-        
-        if (elapsed_time <= g_device_service.reset_timeout_ms) {
-            LOG_SVC_INFO("Double click + Long press combination detected - triggering factory reset\r\n");
-            
-            // Clear double click detection flag
-            g_device_service.double_click_detected = AICAM_FALSE;
-            
-            // Trigger device reset
-            device_service_reset_to_factory_defaults();
-        } else {
-            LOG_SVC_INFO("Long press detected but outside reset window (%u ms elapsed)\r\n", elapsed_time);
-            g_device_service.double_click_detected = AICAM_FALSE;
-        }
-    } else {
-        LOG_SVC_INFO("Long press detected but no double click was registered\r\n");
-    }
+    // Directly trigger device reset on super long press
+    device_service_reset_to_factory_defaults();
 }
 
-/**
- * @brief Check and clear double click timeout
- * @details This function should be called periodically to clear expired double click state
- */
-static void check_double_click_timeout(void* argument)
-{
-    (void)argument;
-    while (1) {
-        osDelay(1000);
-        if (g_device_service.double_click_detected) {
-            uint32_t current_time = rtc_get_timeStamp();
-            uint32_t elapsed_time = (current_time - g_device_service.double_click_timestamp) * 1000;
-
-            if (elapsed_time > g_device_service.reset_timeout_ms) {
-                g_device_service.double_click_detected = AICAM_FALSE;
-            }
-        }
-    }
-}
+// Note: Double click timeout check removed - factory reset now triggered by super long press (10s) only
 
 /* ==================== Device Service Implementation ==================== */
 
@@ -708,10 +700,8 @@ aicam_result_t device_service_init(void *config)
     g_device_service.button_slp_callback = super_long_press_callback;
     g_device_service.button_user_data = NULL;
     
-    // Initialize reset trigger state
-    g_device_service.double_click_detected = AICAM_FALSE;
-    g_device_service.double_click_timestamp = 0;
-    g_device_service.reset_timeout_ms = 5000; // 5 second timeout
+    // Note: Reset trigger state fields kept for compatibility but no longer used
+    // Factory reset is now triggered by super long press (10s) only
     
     // Set initialization flags
     g_device_service.storage_initialized = AICAM_FALSE;
@@ -775,6 +765,10 @@ aicam_result_t device_service_start(void)
         LOG_SVC_INFO("LED device found");
         g_device_service.led_config.connected = AICAM_TRUE;
         g_device_service.led_initialized = AICAM_TRUE;
+        
+        // Set initial indicator state: system running, AP not yet started
+        g_device_service.indicator_state = SYSTEM_INDICATOR_RUNNING_AP_OFF;
+        device_service_set_indicator_state(SYSTEM_INDICATOR_RUNNING_AP_OFF);
     }
     
     // Find and initialize button device
@@ -801,18 +795,7 @@ aicam_result_t device_service_start(void)
     update_device_name(&g_device_service.device_info);
 
 
-    //start time check thread
-    osThreadAttr_t time_check_thread_attr = {
-        .name = "time_check_thread",
-        .stack_size = sizeof(check_double_click_timeout_stack_buffer),
-        .stack_mem = check_double_click_timeout_stack_buffer,
-        .priority = osPriorityHigh,
-    };
-    osThreadId_t time_check_thread_id = osThreadNew(check_double_click_timeout, NULL, &time_check_thread_attr);
-    if (time_check_thread_id == NULL) {
-        LOG_SVC_ERROR("Failed to create time check thread");
-        return AICAM_ERROR;
-    }
+    // Note: Double click timeout check thread removed - factory reset now triggered by super long press (10s) only
     
     g_device_service.running = AICAM_TRUE;
     g_device_service.state = SERVICE_STATE_RUNNING;
@@ -892,13 +875,13 @@ aicam_result_t device_service_get_info(device_info_config_t *info)
     
     // Update dynamic information
     if (g_device_service.running) {
-        device_service_update_communication_type();
         update_storage_info(&g_device_service.storage_info);
         update_battery_info(&g_device_service.device_info);
         update_device_name(&g_device_service.device_info);
         //device_service_update_device_mac_address();
     }
-    
+
+    device_service_update_communication_type();
     memcpy(info, &g_device_service.device_info, sizeof(device_info_config_t));
     
     return AICAM_OK;
@@ -1254,9 +1237,17 @@ aicam_result_t device_service_camera_start(void)
     if (!g_device_service.camera_initialized) {
         return AICAM_ERROR_NOT_INITIALIZED;
     }
-    
+
     if (!g_device_service.camera_device) {
         return AICAM_ERROR_NOT_FOUND;
+    }
+
+    // Apply startup_skip_frames BEFORE device_start, so pipe_start_common uses correct value
+    if (g_device_service.camera_config.image_config.startup_skip_frames > 0) {
+        device_ioctl(g_device_service.camera_device,
+                    CAM_CMD_SET_STARTUP_SKIP_FRAMES,
+                    NULL,
+                    g_device_service.camera_config.image_config.startup_skip_frames);
     }
 
     aicam_result_t result = device_start(g_device_service.camera_device);
@@ -1265,7 +1256,7 @@ aicam_result_t device_service_camera_start(void)
         return result;
     }
 
-    //apply camera config to hardware
+    //apply camera config to hardware (other settings like brightness, contrast, flip, aec)
     result = apply_camera_config_to_hardware(&g_device_service.camera_config);
     if (result != AICAM_OK) {
         LOG_SVC_ERROR("Failed to apply camera configuration to hardware: %d", result);
@@ -1713,6 +1704,14 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
             }
         }
 
+        // Apply startup_skip_frames BEFORE device_start
+        if (g_device_service.camera_config.image_config.startup_skip_frames > 0) {
+            device_ioctl(g_device_service.camera_device,
+                        CAM_CMD_SET_STARTUP_SKIP_FRAMES,
+                        NULL,
+                        g_device_service.camera_config.image_config.startup_skip_frames);
+        }
+
         LOG_SVC_INFO("[FAST] Starting camera...");
         result = device_start(g_device_service.camera_device);
         if (result != AICAM_OK) {
@@ -1801,7 +1800,7 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
     printf("camera photo time %lu ms\r\n", (unsigned long)rtc_get_uptime_ms());
     if (fb_len <= 0 || fb == NULL)
     {
-        LOG_SVC_WARN("[FAST] Failed to get pipe1 buffer");
+        LOG_SVC_WARN("[FAST] Failed to get pipe1 buffer, fb_len:%d", fb_len);
         result = AICAM_ERROR_INVALID_PARAM;
         goto cleanup;
     }
@@ -2048,11 +2047,10 @@ aicam_result_t device_service_reset_to_factory_defaults(void)
     
     LOG_SVC_INFO("Starting device reset to factory defaults...");
 
+    // Set indicator to fast blink (5Hz) during factory reset
+    device_service_set_indicator_state(SYSTEM_INDICATOR_FACTORY_RESET);
 
-    //led blink 5 times
-    device_service_led_blink(5, 100);
-
-    osDelay(500);
+    osDelay(200);
     
     // 1. reset NVS data
     aicam_result_t result = json_config_reset_to_default(NULL);
@@ -2175,16 +2173,18 @@ aicam_result_t device_service_led_off(void)
 
 aicam_result_t device_service_led_blink(uint32_t blink_times, uint32_t interval_ms)
 {
-    if (!g_device_service.initialized) {
-        return AICAM_ERROR_NOT_INITIALIZED;
-    }
-    
-    if (!g_device_service.led_initialized || !g_device_service.led_device) {
-        return AICAM_ERROR_NOT_FOUND;
-    }
+
     
     if (interval_ms == 0) {
         return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    if(!g_device_service.led_initialized || !g_device_service.led_device) {
+        g_device_service.led_device = device_find_pattern(IND_EXT_DEVICE_NAME, DEV_TYPE_MISC);
+        if(!g_device_service.led_device) {
+            return AICAM_ERROR_NOT_FOUND;
+        }
+        g_device_service.led_initialized = AICAM_TRUE;
     }
     
     blink_params_t blink_params;
@@ -2205,6 +2205,67 @@ aicam_result_t device_service_led_blink(uint32_t blink_times, uint32_t interval_
     }
     
     return result;
+}
+
+aicam_result_t device_service_set_indicator_state(system_indicator_state_t state)
+{
+    if (!g_device_service.initialized) {
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+    
+    if (state >= SYSTEM_INDICATOR_MAX) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    
+    aicam_result_t result = AICAM_OK;
+    
+    switch (state) {
+        case SYSTEM_INDICATOR_SLEEP:
+            // LED off - low power/power off mode
+            result = device_service_led_off();
+            if (result == AICAM_OK) {
+                LOG_SVC_INFO("System indicator: SLEEP (LED off)");
+            }
+            break;
+            
+        case SYSTEM_INDICATOR_RUNNING_AP_OFF:
+            // Slow blink 1Hz - 1 blink per second (500ms on + 500ms off)
+            result = device_service_led_blink(0, 500);  // 0 = infinite blink
+            if (result == AICAM_OK) {
+                LOG_SVC_INFO("System indicator: RUNNING_AP_OFF (1Hz slow blink)");
+            }
+            break;
+            
+        case SYSTEM_INDICATOR_RUNNING_AP_ON:
+            // LED solid on - AP is active
+            result = device_service_led_on();
+            if (result == AICAM_OK) {
+                LOG_SVC_INFO("System indicator: RUNNING_AP_ON (LED solid on)");
+            }
+            break;
+            
+        case SYSTEM_INDICATOR_FACTORY_RESET:
+            // Fast blink 5Hz - 5 blinks per second (100ms on + 100ms off)
+            result = device_service_led_blink(0, 100);  // 0 = infinite blink
+            if (result == AICAM_OK) {
+                LOG_SVC_INFO("System indicator: FACTORY_RESET (5Hz fast blink)");
+            }
+            break;
+            
+        default:
+            return AICAM_ERROR_INVALID_PARAM;
+    }
+    
+    if (result == AICAM_OK) {
+        g_device_service.indicator_state = state;
+    }
+    
+    return result;
+}
+
+system_indicator_state_t device_service_get_indicator_state(void)
+{
+    return g_device_service.indicator_state;
 }
  
  

@@ -202,6 +202,83 @@ static void parse_network_service(cJSON *json, network_service_config_t *cfg)
             }
         }
     }
+    
+    // Parse communication type settings
+    json_get_uint32(json, "preferred_comm_type", &cfg->preferred_comm_type);
+    json_get_bool(json, "enable_auto_priority", &cfg->enable_auto_priority);
+    
+    // Parse cellular configuration
+    cJSON *cellular = cJSON_GetObjectItem(json, "cellular");
+    if (cJSON_IsObject(cellular)) {
+        json_get_string(cellular, "apn", cfg->cellular.apn, sizeof(cfg->cellular.apn));
+        json_get_string(cellular, "username", cfg->cellular.username, sizeof(cfg->cellular.username));
+        json_get_string(cellular, "password", cfg->cellular.password, sizeof(cfg->cellular.password));
+        json_get_string(cellular, "pin_code", cfg->cellular.pin_code, sizeof(cfg->cellular.pin_code));
+        uint32_t auth = 0;
+        json_get_uint32(cellular, "authentication", &auth);
+        cfg->cellular.authentication = (uint8_t)auth;
+        json_get_bool(cellular, "enable_roaming", &cfg->cellular.enable_roaming);
+    }
+    
+    // Parse PoE/Ethernet configuration
+    cJSON *poe = cJSON_GetObjectItem(json, "poe");
+    if (cJSON_IsObject(poe)) {
+        uint32_t temp = 0;
+        json_get_uint32(poe, "ip_mode", &temp);
+        cfg->poe.ip_mode = (poe_ip_mode_t)temp;
+        
+        // Parse IP addresses from arrays
+        cJSON *ip_arr = cJSON_GetObjectItem(poe, "ip_addr");
+        if (cJSON_IsArray(ip_arr) && cJSON_GetArraySize(ip_arr) == 4) {
+            for (int i = 0; i < 4; i++) {
+                cfg->poe.ip_addr[i] = (uint8_t)cJSON_GetArrayItem(ip_arr, i)->valueint;
+            }
+        }
+        
+        cJSON *mask_arr = cJSON_GetObjectItem(poe, "netmask");
+        if (cJSON_IsArray(mask_arr) && cJSON_GetArraySize(mask_arr) == 4) {
+            for (int i = 0; i < 4; i++) {
+                cfg->poe.netmask[i] = (uint8_t)cJSON_GetArrayItem(mask_arr, i)->valueint;
+            }
+        }
+        
+        cJSON *gw_arr = cJSON_GetObjectItem(poe, "gateway");
+        if (cJSON_IsArray(gw_arr) && cJSON_GetArraySize(gw_arr) == 4) {
+            for (int i = 0; i < 4; i++) {
+                cfg->poe.gateway[i] = (uint8_t)cJSON_GetArrayItem(gw_arr, i)->valueint;
+            }
+        }
+        
+        cJSON *dns1_arr = cJSON_GetObjectItem(poe, "dns_primary");
+        if (cJSON_IsArray(dns1_arr) && cJSON_GetArraySize(dns1_arr) == 4) {
+            for (int i = 0; i < 4; i++) {
+                cfg->poe.dns_primary[i] = (uint8_t)cJSON_GetArrayItem(dns1_arr, i)->valueint;
+            }
+        }
+        
+        cJSON *dns2_arr = cJSON_GetObjectItem(poe, "dns_secondary");
+        if (cJSON_IsArray(dns2_arr) && cJSON_GetArraySize(dns2_arr) == 4) {
+            for (int i = 0; i < 4; i++) {
+                cfg->poe.dns_secondary[i] = (uint8_t)cJSON_GetArrayItem(dns2_arr, i)->valueint;
+            }
+        }
+        
+        json_get_string(poe, "hostname", cfg->poe.hostname, sizeof(cfg->poe.hostname));
+        
+        // DHCP settings
+        json_get_uint32(poe, "dhcp_timeout_ms", &cfg->poe.dhcp_timeout_ms);
+        json_get_uint32(poe, "dhcp_retry_count", &cfg->poe.dhcp_retry_count);
+        json_get_uint32(poe, "dhcp_retry_interval_ms", &cfg->poe.dhcp_retry_interval_ms);
+        
+        // Recovery settings
+        json_get_uint32(poe, "power_recovery_delay_ms", &cfg->poe.power_recovery_delay_ms);
+        json_get_bool(poe, "auto_reconnect", &cfg->poe.auto_reconnect);
+        json_get_bool(poe, "persist_last_ip", &cfg->poe.persist_last_ip);
+        
+        // Validation settings
+        json_get_bool(poe, "validate_gateway", &cfg->poe.validate_gateway);
+        json_get_bool(poe, "detect_ip_conflict", &cfg->poe.detect_ip_conflict);
+    }
 }
 
 static void json_save_cert_data(cJSON *obj, const char *key, const char *cert_path, uint16_t cert_len)
@@ -299,11 +376,11 @@ static void parse_mqtt_service(cJSON *json, mqtt_service_config_t *cfg)
         json_get_uint32(base_cfg, "timeout_ms", &temp_uint32);
         cfg->base_config.timeout_ms = (uint16_t)temp_uint32;
         json_get_uint32(base_cfg, "buffer_size", &temp_uint32);
-        cfg->base_config.buffer_size = (uint16_t)temp_uint32;
+        cfg->base_config.buffer_size = temp_uint32;
         json_get_uint32(base_cfg, "tx_buf_size", &temp_uint32);
-        cfg->base_config.tx_buf_size = (uint16_t)temp_uint32;
+        cfg->base_config.tx_buf_size = temp_uint32;
         json_get_uint32(base_cfg, "rx_buf_size", &temp_uint32);
-        cfg->base_config.rx_buf_size = (uint16_t)temp_uint32;
+        cfg->base_config.rx_buf_size = temp_uint32;
     }
 
     // Extended MQTT service configuration
@@ -546,6 +623,73 @@ static cJSON *serialize_network_service(const network_service_config_t *cfg)
         cJSON_AddItemToArray(networks, net);
     }
     cJSON_AddItemToObject(json, "known_networks", networks);
+    
+    // Serialize communication type settings
+    cJSON_AddNumberToObject(json, "preferred_comm_type", cfg->preferred_comm_type);
+    cJSON_AddBoolToObject(json, "enable_auto_priority", cfg->enable_auto_priority);
+    
+    // Serialize cellular configuration
+    cJSON *cellular = cJSON_CreateObject();
+    cJSON_AddStringToObject(cellular, "apn", cfg->cellular.apn);
+    cJSON_AddStringToObject(cellular, "username", cfg->cellular.username);
+    cJSON_AddStringToObject(cellular, "password", cfg->cellular.password);
+    cJSON_AddStringToObject(cellular, "pin_code", cfg->cellular.pin_code);
+    cJSON_AddNumberToObject(cellular, "authentication", cfg->cellular.authentication);
+    cJSON_AddBoolToObject(cellular, "enable_roaming", cfg->cellular.enable_roaming);
+    cJSON_AddItemToObject(json, "cellular", cellular);
+    
+    // Serialize PoE/Ethernet configuration
+    cJSON *poe = cJSON_CreateObject();
+    cJSON_AddNumberToObject(poe, "ip_mode", (int)cfg->poe.ip_mode);
+    
+    // Serialize IP addresses as arrays
+    cJSON *ip_arr = cJSON_CreateArray();
+    for (int i = 0; i < 4; i++) {
+        cJSON_AddItemToArray(ip_arr, cJSON_CreateNumber(cfg->poe.ip_addr[i]));
+    }
+    cJSON_AddItemToObject(poe, "ip_addr", ip_arr);
+    
+    cJSON *mask_arr = cJSON_CreateArray();
+    for (int i = 0; i < 4; i++) {
+        cJSON_AddItemToArray(mask_arr, cJSON_CreateNumber(cfg->poe.netmask[i]));
+    }
+    cJSON_AddItemToObject(poe, "netmask", mask_arr);
+    
+    cJSON *gw_arr = cJSON_CreateArray();
+    for (int i = 0; i < 4; i++) {
+        cJSON_AddItemToArray(gw_arr, cJSON_CreateNumber(cfg->poe.gateway[i]));
+    }
+    cJSON_AddItemToObject(poe, "gateway", gw_arr);
+    
+    cJSON *dns1_arr = cJSON_CreateArray();
+    for (int i = 0; i < 4; i++) {
+        cJSON_AddItemToArray(dns1_arr, cJSON_CreateNumber(cfg->poe.dns_primary[i]));
+    }
+    cJSON_AddItemToObject(poe, "dns_primary", dns1_arr);
+    
+    cJSON *dns2_arr = cJSON_CreateArray();
+    for (int i = 0; i < 4; i++) {
+        cJSON_AddItemToArray(dns2_arr, cJSON_CreateNumber(cfg->poe.dns_secondary[i]));
+    }
+    cJSON_AddItemToObject(poe, "dns_secondary", dns2_arr);
+    
+    cJSON_AddStringToObject(poe, "hostname", cfg->poe.hostname);
+    
+    // DHCP settings
+    cJSON_AddNumberToObject(poe, "dhcp_timeout_ms", cfg->poe.dhcp_timeout_ms);
+    cJSON_AddNumberToObject(poe, "dhcp_retry_count", cfg->poe.dhcp_retry_count);
+    cJSON_AddNumberToObject(poe, "dhcp_retry_interval_ms", cfg->poe.dhcp_retry_interval_ms);
+    
+    // Recovery settings
+    cJSON_AddNumberToObject(poe, "power_recovery_delay_ms", cfg->poe.power_recovery_delay_ms);
+    cJSON_AddBoolToObject(poe, "auto_reconnect", cfg->poe.auto_reconnect);
+    cJSON_AddBoolToObject(poe, "persist_last_ip", cfg->poe.persist_last_ip);
+    
+    // Validation settings
+    cJSON_AddBoolToObject(poe, "validate_gateway", cfg->poe.validate_gateway);
+    cJSON_AddBoolToObject(poe, "detect_ip_conflict", cfg->poe.detect_ip_conflict);
+    
+    cJSON_AddItemToObject(json, "poe", poe);
 
     return json;
 }

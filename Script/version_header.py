@@ -79,7 +79,10 @@ def parse_version_mk(version_mk_path):
     minor_match = re.search(r'VERSION_MINOR\s*:?=\s*(\d+)', content)
     patch_match = re.search(r'VERSION_PATCH\s*:?=\s*(\d+)', content)
     build_match = re.search(r'VERSION_BUILD\s*:?=\s*(\d+)', content)
-    suffix_match = re.search(r'VERSION_SUFFIX\s*:?=\s*(\S+)', content)
+    suffix_match = re.search(r'VERSION_SUFFIX\s*:?=\s*(\S+)', content, re.MULTILINE)
+    # Exclude comment markers - if suffix starts with #, it means the value is empty
+    if suffix_match and suffix_match.group(1).startswith('#'):
+        suffix_match = None
     
     if major_match:
         version['major'] = int(major_match.group(1))
@@ -138,7 +141,6 @@ def generate_version_header(output_path, version, build_override=None):
         version_string = f"{version_string}_{suffix}"
     
     # WakeCore version (from command line or use main version)
-    wakecore_version_string = version.get('wakecore_version', version_string)
     fsbl_version_string = version.get('fsbl_version', version_string)
     
     header_content = f'''/**
@@ -162,11 +164,6 @@ def generate_version_header(output_path, version, build_override=None):
 /* Packed version for numeric comparison: 0xMMmmPPBB */
 #define FW_VERSION_U32      (({major}U << 24) | ({minor}U << 16) | ({patch}U << 8) | {build & 0xFF}U)
 
-/* ==================== Component Versions ==================== */
-/* Note: These are generated from version.mk component settings */
-/* WakeCore Version (may differ from APP version) */
-#define WAKECORE_VERSION_STRING   "{wakecore_version_string}"
-#define FSBL_VERSION_STRING   "{fsbl_version_string}"
 
 /* ==================== Build Information ==================== */
 #define FW_BUILD_DATE       "{build_date}"
@@ -197,6 +194,26 @@ def generate_version_header(output_path, version, build_override=None):
     
     return 0
 
+def generate_fsbl_version_header(output_path, version_string):
+    """Generate fsbl_version.h file"""
+    header_content = f'''
+#ifndef FSBL_VERSION_H
+#define FSBL_VERSION_H
+
+#define FSBL_VERSION_STRING "{version_string}"
+#endif
+'''
+
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    with open(output_path, 'w', newline='\n') as f:
+        f.write(header_content)
+    
+    print(f"FSBL version header generated: {version_string}")
+    print(f"  Output: {output_path}")
+    return 0
+
 def main():
     import argparse
     
@@ -207,10 +224,10 @@ def main():
                         help='Input version.mk file path')
     parser.add_argument('-b', '--build', type=int, default=None,
                         help='Override BUILD number')
-    parser.add_argument('--wakecore-version', default=None,
-                        help='WakeCore version string (from Makefile)')
     parser.add_argument('--fsbl-version', default=None,
                         help='FSBL version string (from Makefile)')
+    parser.add_argument('--fsbl-output', default='FSBL/Core/Inc/fsbl_version.h',
+                        help='Output FSBL version header file path')
     
     args = parser.parse_args()
     
@@ -220,15 +237,17 @@ def main():
     
     version_mk_path = project_root / args.input
     output_path = project_root / args.output
-    
+    fsbl_output_path = project_root / args.fsbl_output
+
     version = parse_version_mk(str(version_mk_path))
     
     # Add WakeCore version from command line
-    if args.wakecore_version:
-        version['wakecore_version'] = args.wakecore_version
         
     if args.fsbl_version:
         version['fsbl_version'] = args.fsbl_version
+
+    generate_fsbl_version_header(str(fsbl_output_path), version['fsbl_version'])
+
     return generate_version_header(str(output_path), version, args.build)
 
 if __name__ == '__main__':

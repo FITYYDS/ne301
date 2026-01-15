@@ -16,6 +16,8 @@
 #include "mqtt_service.h"
 #include "device_service.h"
 #include "ota_service.h"
+#include "rtmp_service.h"
+#include "Services/Video/video_stream_hub.h"
 #include "cmsis_os2.h"
 
 // Get power mode from system_service.h
@@ -132,6 +134,21 @@ static const service_module_t g_service_registry[] = {
         .depends_count = 0
     },
     {
+        .name = "video_hub",
+        .state = SERVICE_STATE_UNINITIALIZED,
+        .init_func = (aicam_result_t (*)(void *))video_hub_init,
+        .start_func = NULL,
+        .stop_func = NULL,                       // no stop function
+        .deinit_func = video_hub_deinit,
+        .get_state_func = NULL,
+        .config = NULL,
+        .auto_start = AICAM_TRUE,                // auto start when initialized
+        .init_priority = 4,
+        .required_in_low_power = AICAM_FALSE,
+        .depends_on = {},
+        .depends_count = 0
+    },
+    {
         .name = "mqtt_service",
         .state = SERVICE_STATE_UNINITIALIZED,
         .init_func = mqtt_service_init,
@@ -190,6 +207,21 @@ static const service_module_t g_service_registry[] = {
         .required_in_low_power = AICAM_FALSE,  // OTA does not need to be in low power mode
         .depends_on = {"communication_service"},  // Depends on communication service
         .depends_count = 1
+    },
+    {
+        .name = "rtmp_service",
+        .state = SERVICE_STATE_UNINITIALIZED,
+        .init_func = rtmp_service_init,
+        .start_func = rtmp_service_start,
+        .stop_func = rtmp_service_stop,
+        .deinit_func = rtmp_service_deinit,
+        .get_state_func = rtmp_service_get_state,
+        .config = NULL,
+        .auto_start = AICAM_TRUE,             // Auto init, manual stream start
+        .init_priority = 8,
+        .required_in_low_power = AICAM_FALSE,  // RTMP streaming not needed in low power mode
+        .depends_on = {"communication_service"},
+        .depends_count = 1
     }
 };
 
@@ -222,8 +254,12 @@ static uint32_t get_service_ready_flag(const char *name)
         return SERVICE_READY_AP;
     } else if (strcmp(name, "sta_service") == 0) {
         return SERVICE_READY_STA;
+    } else if (strcmp(name, "rtmp_service") == 0) {
+        return SERVICE_READY_RTMP;
+    } else if (strcmp(name, "video_hub") == 0) {
+        return SERVICE_READY_VIDEO_HUB;
     }
-    
+
     return 0;
 }
 
@@ -553,7 +589,7 @@ aicam_result_t service_start(void)
         }
         
         // Low power mode + non-button and non-other wakeup source: only start required services
-        if (current_power_mode == POWER_MODE_LOW_POWER && (current_wakeup_source != WAKEUP_SOURCE_BUTTON && current_wakeup_source != WAKEUP_SOURCE_OTHER)) {
+        if (current_power_mode == POWER_MODE_LOW_POWER && (current_wakeup_source != WAKEUP_SOURCE_BUTTON_LONG && current_wakeup_source != WAKEUP_SOURCE_OTHER)) {
             if (!module->required_in_low_power) {
                 LOG_SVC_INFO("Skipping '%s' in low power mode", module->name);
                 continue;

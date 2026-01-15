@@ -116,12 +116,13 @@ static void netif_init_task(void *argument)
     LOG_DRV_INFO("Initializing interface: %s", if_name);
     int ret = netif_manager_ctrl(if_name, NETIF_CMD_INIT, NULL);
     if (ret != 0) {
-        LOG_DRV_ERROR("Failed to initialize interface %s: %d", if_name, ret);
         // Update state and timing on failure
         osMutexAcquire(g_netif_init_mgr.mutex, osWaitForever);
         entry->config.state = NETIF_INIT_STATE_FAILED;
         entry->config.init_time_ms = (uint32_t)(rtc_get_uptime_ms() - start_time_ms);
         osMutexRelease(g_netif_init_mgr.mutex);
+
+        LOG_DRV_INFO("Failed to initialize interface %s: %d", if_name, ret);
         
         // Release semaphore and call callback even on failure
         if (entry->ready_semaphore) {
@@ -152,7 +153,7 @@ static void netif_init_task(void *argument)
     
     // Reason: to accelerate the initialization process, we set the channel to 6
     // Only set channel for wireless interfaces
-    if (strcmp(if_name, NETIF_NAME_WIFI_STA) == 0 || strcmp(if_name, NETIF_NAME_WIFI_AP) == 0) {
+    if (strcmp(if_name, NETIF_NAME_WIFI_AP) == 0) {
         netif_cfg.wireless_cfg.channel = 6;
         
         // Set netif config (only for wireless interfaces that need channel setting)
@@ -204,7 +205,7 @@ end:
     if (entry->stack_mem) {
         hal_mem_free(entry->stack_mem);
     }
-    
+
     osThreadExit();
 }
 

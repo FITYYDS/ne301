@@ -151,10 +151,12 @@ aicam_result_t service_get_registered_modules(const char **names, uint32_t max_c
 #define SERVICE_READY_AP               (1UL << 7)   // AP service ready
 #define SERVICE_READY_STA              (1UL << 8)   // STA service ready
 #define MQTT_NET_CONNECTED             (1UL << 9)   // MQTT network connected
+#define SERVICE_READY_RTMP             (1UL << 10)  // RTMP service ready
+#define SERVICE_READY_VIDEO_HUB        (1UL << 11)  // Video Hub ready
 
 
 // Combined flags
-#define SERVICE_READY_ALL              (0x1FFUL)    // All services ready (9 services)
+#define SERVICE_READY_ALL              (0x3FFUL)    // All services ready (10 services)
 #define SERVICE_READY_NETWORK          (SERVICE_READY_COMMUNICATION | SERVICE_READY_WEB | SERVICE_READY_MQTT | SERVICE_READY_AP | SERVICE_READY_STA)
 #define SERVICE_READY_LOW_POWER        (SERVICE_READY_SYSTEM | SERVICE_READY_DEVICE | SERVICE_READY_COMMUNICATION | SERVICE_READY_MQTT | SERVICE_READY_STA)
 #define SERVICE_READY_WIFI             (SERVICE_READY_AP | SERVICE_READY_STA)  // WiFi service (AP + STA)

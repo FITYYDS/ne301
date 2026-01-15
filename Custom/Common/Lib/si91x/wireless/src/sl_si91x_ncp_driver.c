@@ -86,8 +86,8 @@ sl_status_t sli_si91x_bus_clear_interrupt(uint32_t interrupt_clear_value)
 sl_status_t sli_si91x_bus_enable_high_speed(void)
 {
   // It writes specific data to a register at address 0x08 with a size of 2 bytes
-  return sli_si91x_bus_write_register(0x08, 2, 0x3);        // For >25Mhz
-  // return sli_si91x_bus_write_register(0x08, 2, 0x7);     // For 100Mhz
+  // return sli_si91x_bus_write_register(0x08, 2, 0x3);        // For >25Mhz
+  return sli_si91x_bus_write_register(0x08, 2, 0x7);     // For 100Mhz
 }
 
 sl_status_t sli_si91x_req_wakeup(void)
@@ -96,7 +96,7 @@ sl_status_t sli_si91x_req_wakeup(void)
   sl_si91x_host_set_sleep_indicator();
   uint32_t timestamp = sl_si91x_host_get_timestamp();
   do {
-    osDelay(10);  // Prevent blocking other tasks when exception occurs
+    // osDelay(10);  // Prevent blocking other tasks when exception occurs
     if (sl_si91x_host_get_wake_indicator()) {
       sli_si91x_ulp_wakeup_init();
       break;

@@ -36,9 +36,9 @@ export default function DeviceInformation() {
     setFormatDeviceInfo({
       ...deviceInfo,
       storage_card_info: storageCardInfo,
-      power: deviceInfo.battery_percent === 0 ? '' : (deviceInfo.battery_percent ?? 0) >= 80
+      power: deviceInfo.battery_percent === 0 ? '' : (deviceInfo.battery_percent ?? 0) >= 70
         ? 'high'
-        : (deviceInfo.battery_percent ?? 0) >= 50
+        : (deviceInfo.battery_percent ?? 0) >= 30
           ? 'middle'
           : 'low',
     } as DeviceInfo);

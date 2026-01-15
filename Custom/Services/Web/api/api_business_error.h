@@ -67,6 +67,7 @@ typedef enum {
     API_BUSINESS_ERROR_OPERATION_TIMEOUT = 1701,      ///< Operation timeout
     API_BUSINESS_ERROR_OPERATION_FAILED = 1702,       ///< Operation failed
     API_BUSINESS_ERROR_OPERATION_IN_PROGRESS = 1705,  ///< Operation already in progress
+    API_BUSINESS_ERROR_AT_COMMAND_FAILED = 1706,      ///< AT command failed
     
     /* OTA & Firmware Errors (1801-1899) */
     API_BUSINESS_ERROR_FIRMWARE_INVALID = 1801,       ///< Invalid firmware

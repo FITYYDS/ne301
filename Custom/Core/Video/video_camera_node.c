@@ -469,16 +469,24 @@ static aicam_result_t video_camera_capture_frame_zero_copy(video_camera_node_dat
 
     //if ai enabled.draw ai result
     if (data->config.ai_enabled == AICAM_TRUE && data->ai_draw_callback) {
-        // Call AI drawing callback to draw results on frame buffer
-        aicam_result_t callback_ret = data->ai_draw_callback(data->current_buffer, 
-                                                           data->config.width,
-                                                           data->config.height, 
-                                                           data->frame_id,
-                                                           data->ai_callback_user_data);
-        if (callback_ret != AICAM_OK) {
-            LOG_CORE_WARN("AI drawing callback failed: %d", callback_ret);
+        result = device_ioctl(data->camera_dev, CAM_CMD_LOCK_PIPE1_BUFFER, 
+                            camera_buffer_with_frame_id.buffer, 0);
+        if (result == AICAM_OK) {
+            // Call AI drawing callback to draw results on frame buffer
+            aicam_result_t callback_ret = data->ai_draw_callback(data->current_buffer, 
+                                                            data->config.width,
+                                                            data->config.height, 
+                                                            data->frame_id,
+                                                            data->ai_callback_user_data);
+            if (callback_ret != AICAM_OK) {
+                LOG_CORE_WARN("AI drawing callback failed: %d", callback_ret);
+            }
+            // Unlock buffer after AI drawing
+            device_ioctl(data->camera_dev, CAM_CMD_UNLOCK_PIPE1_BUFFER, 
+                        camera_buffer_with_frame_id.buffer, 0);
+        } else {
+            LOG_CORE_WARN("Failed to lock camera buffer for AI drawing: %d", result);
         }
-
     }
     
     // Prepare frame information

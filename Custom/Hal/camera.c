@@ -7,11 +7,12 @@
 #include "stm32n6xx_hal.h"
 
 // Constant definitions
-#define CAMERA_TASK_DELAY_MS          100
-#define CAMERA_BUFFER_TIMEOUT_MS      1000
-#define CAMERA_MEMORY_ALIGNMENT       32
-#define CAMERA_DEINIT_DELAY_MS        20
-#define CAMERA_MAX_READY_BUFFERS      8
+#define CAMERA_TASK_DELAY_MS            1000
+#define CAMERA_BUFFER_TIMEOUT_MS        50
+#define CAMERA_MEMORY_ALIGNMENT         32
+#define CAMERA_DEINIT_DELAY_MS          20
+#define CAMERA_MAX_READY_BUFFERS        8
+#define CAMERA_DEFAULT_STARTUP_SKIP_FRAMES  10   // Default frames to skip on startup for stabilization
 
 static int pipe_buffer_acquire(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_param, camera_dq_t *dq);
 static int pipe_buffer_release(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_param, camera_dq_t *dq);
@@ -58,12 +59,14 @@ static uint8_t isp_is_init = 0, isp_is_start = 0;
 */
 ISP_StatusTypeDef GetSensorInfo(uint32_t camera_instance, ISP_SensorInfoTypeDef *info)
 {
-UNUSED(camera_instance);
+    UNUSED(camera_instance);
 
-if (CMW_CAMERA_GetSensorInfo(info) != CMW_ERROR_NONE)
-    return ISP_ERR_SENSORINFO;
+    if (CMW_CAMERA_GetSensorInfo(info) != CMW_ERROR_NONE)
+        return ISP_ERR_SENSORINFO;
 
-return ISP_OK;
+    info->width = g_camera.pipe1_param.width;
+    info->height = g_camera.pipe1_param.height;
+    return ISP_OK;
 }
 
 /**
@@ -74,12 +77,12 @@ return ISP_OK;
 */
 ISP_StatusTypeDef SetSensorGain(uint32_t camera_instance, int32_t gain)
 {
-UNUSED(camera_instance);
+    UNUSED(camera_instance);
 
-if (CMW_CAMERA_SetGain(gain) != CMW_ERROR_NONE)
-    return ISP_ERR_SENSORGAIN;
+    if (CMW_CAMERA_SetGain(gain) != CMW_ERROR_NONE)
+        return ISP_ERR_SENSORGAIN;
 
-return ISP_OK;
+    return ISP_OK;
 }
 
 /**
@@ -90,12 +93,12 @@ return ISP_OK;
 */
 ISP_StatusTypeDef GetSensorGain(uint32_t camera_instance, int32_t *gain)
 {
-UNUSED(camera_instance);
+    UNUSED(camera_instance);
 
-if (CMW_CAMERA_GetGain(gain) != CMW_ERROR_NONE)
-    return ISP_ERR_SENSORGAIN;
+    if (CMW_CAMERA_GetGain(gain) != CMW_ERROR_NONE)
+        return ISP_ERR_SENSORGAIN;
 
-return ISP_OK;
+    return ISP_OK;
 }
 
 /**
@@ -106,12 +109,12 @@ return ISP_OK;
 */
 ISP_StatusTypeDef SetSensorExposure(uint32_t camera_instance, int32_t exposure)
 {
-UNUSED(camera_instance);
+    UNUSED(camera_instance);
 
-if (CMW_CAMERA_SetExposure(exposure) != CMW_ERROR_NONE)
-    return ISP_ERR_SENSOREXPOSURE;
+    if (CMW_CAMERA_SetExposure(exposure) != CMW_ERROR_NONE)
+        return ISP_ERR_SENSOREXPOSURE;
 
-return ISP_OK;
+    return ISP_OK;
 }
 
 /**
@@ -122,12 +125,12 @@ return ISP_OK;
 */
 ISP_StatusTypeDef GetSensorExposure(uint32_t camera_instance, int32_t *exposure)
 {
-UNUSED(camera_instance);
+    UNUSED(camera_instance);
 
-if (CMW_CAMERA_GetExposure(exposure) != CMW_ERROR_NONE)
-    return ISP_ERR_SENSOREXPOSURE;
+    if (CMW_CAMERA_GetExposure(exposure) != CMW_ERROR_NONE)
+        return ISP_ERR_SENSOREXPOSURE;
 
-return ISP_OK;
+    return ISP_OK;
 }
 
 /**
@@ -138,12 +141,12 @@ return ISP_OK;
   */
 ISP_StatusTypeDef SetSensorTestPattern(uint32_t camera_instance, int32_t mode)
 {
-  UNUSED(camera_instance);
+    UNUSED(camera_instance);
 
-  if (CMW_CAMERA_SetTestPattern(mode) != CMW_ERROR_NONE)
-    return ISP_ERR_EINVAL;
+    if (CMW_CAMERA_SetTestPattern(mode) != CMW_ERROR_NONE)
+        return ISP_ERR_EINVAL;
 
-  return ISP_OK;
+    return ISP_OK;
 }
 
 /**
@@ -199,7 +202,7 @@ uint32_t **pBuffer, ISP_DumpFrameMetaTypeDef *pMeta)
     // printf("Config: %d\r\n", Config);
 
     if (isp_tool_buf == NULL) {
-        isp_tool_buf = hal_mem_alloc_aligned(PIPE1_DEFAULT_WIDTH * PIPE1_DEFAULT_HEIGHT * PIPE1_DEFAULT_BPP, CAMERA_MEMORY_ALIGNMENT, MEM_LARGE);
+        isp_tool_buf = hal_mem_alloc_aligned(PIPE1_DEFAULT_WIDTH * PIPE1_DEFAULT_HEIGHT * 3, CAMERA_MEMORY_ALIGNMENT, MEM_LARGE);
         if (isp_tool_buf == NULL) {
             return ISP_ERR_DCMIPP_NOMEM;
         }
@@ -226,7 +229,7 @@ uint32_t **pBuffer, ISP_DumpFrameMetaTypeDef *pMeta)
         }
     } while (ret <= 0);
 
-    // printf("ret: %d\r\n", ret);
+    printf("fb_buffer: %p\r\n", fb_buffer);
     if (ret > PIPE1_DEFAULT_WIDTH * PIPE1_DEFAULT_HEIGHT * PIPE1_DEFAULT_BPP) {
         device_ioctl(g_camera.dev, CAM_CMD_RETURN_PIPE1_BUFFER, fb_buffer, 0);
         return ISP_ERR_DCMIPP_FRAMESIZE;
@@ -238,6 +241,19 @@ uint32_t **pBuffer, ISP_DumpFrameMetaTypeDef *pMeta)
             isp_tool_buf[isp_tool_buf_index++] = fb_buffer[i];
             isp_tool_buf[isp_tool_buf_index++] = fb_buffer[i + 1];
             isp_tool_buf[isp_tool_buf_index++] = fb_buffer[i + 2];
+        }
+    } else if (PIPE1_DEFAULT_BPP == 2) {
+        // RGB565 to RGB888
+        uint16_t rgb565 = 0;
+        uint8_t r5 = 0, g6 = 0, b5 = 0;
+        for (int i = 0; i < ret; i += 2) {
+            rgb565 = (fb_buffer[i + 1] << 8) | fb_buffer[i];
+            b5 = (rgb565 >> 11) & 0x1f;
+            g6 = (rgb565 >> 5) & 0x3f;
+            r5 = (rgb565 >> 0) & 0x1f;
+            isp_tool_buf[isp_tool_buf_index++] = (r5 << 3) | (r5 >> 2);
+            isp_tool_buf[isp_tool_buf_index++] = (g6 << 2) | (g6 >> 4);
+            isp_tool_buf[isp_tool_buf_index++] = (b5 << 3) | (b5 >> 2);
         }
     } else {
         memcpy(isp_tool_buf, fb_buffer, ret);
@@ -270,36 +286,42 @@ ISP_AppliHelpersTypeDef appliHelpers = {
 
 void buffer_reset(pipe_buffer_t *bufs, int nb, camera_dq_t *dq)
 {
-    uint32_t idx;
     for (int i = 0; i < nb; ++i) {
-        bufs[i].state = BUFFER_IDLE;
+        for (int j = 0; j < CAMERA_BUF_MAX_OWNERS; ++j) bufs[i].owner_list[i] = NULL;
+        bufs[i].owner_count = 0;
+        bufs[i].return_count = 0;
+        bufs[i].is_locked = 0;
         bufs[i].frame_id = 0;
+        bufs[i].state = BUFFER_IDLE;
     }
-    while (osMessageQueueGet(dq->ready_queue, &idx, NULL, 0) == osOK);
-    if (dq->idle_sem) {
-        osSemaphoreDelete(dq->idle_sem);
-    }
-    dq->idle_sem = osSemaphoreNew(nb, nb, NULL);
 }
 
 pipe_buffer_t* buffer_acquire(pipe_buffer_t *bufs, int nb, camera_dq_t *dq)
 {
-    uint32_t idx = 0xFFFFFFFF;
-    if (osSemaphoreAcquire(dq->idle_sem, 0) == osOK) {
-        for (int i = 0; i < nb; i++) {
-            if (bufs[i].state == BUFFER_IDLE) {
-                bufs[i].state = BUFFER_PROCESSING;
-                return &bufs[i];
+    pipe_buffer_t* latest = NULL;
+    uint32_t min_frame_id = 0xFFFFFFFFU;
+
+    for (int i = 0; i < nb; ++i) {
+        if (bufs[i].state == BUFFER_IDLE) {
+            bufs[i].state = BUFFER_PROCESSING;
+            return &bufs[i];
+        }
+    }
+
+    if (g_camera.mtx_isr == 0) {
+        for (int i = 0; i < nb; ++i) {
+            if (bufs[i].state == BUFFER_READY) {
+                if (bufs[i].frame_id < min_frame_id) {
+                    latest = &bufs[i];
+                    min_frame_id = bufs[i].frame_id;
+                }
             }
         }
+
+        if (latest != NULL) latest->state = BUFFER_PROCESSING;
     }
-    if (osMessageQueueGet(dq->ready_queue, &idx, NULL, 0) == osOK) {
-        if (idx < nb && bufs[idx].state == BUFFER_READY) {
-            bufs[idx].state = BUFFER_PROCESSING;
-            return &bufs[idx];
-        }
-    }
-    return NULL;
+    
+    return latest;
 }
 
 pipe_buffer_t* find_processing_buffer(pipe_buffer_t *bufs, int nb)
@@ -314,46 +336,54 @@ pipe_buffer_t* find_processing_buffer(pipe_buffer_t *bufs, int nb)
 
 void buffer_set_ready_isr(pipe_buffer_t *bufs, camera_dq_t *dq, pipe_buffer_t* buf, uint32_t frame_id)
 {
-    buf->state = BUFFER_READY;
     buf->frame_id = frame_id;
-    uint32_t idx = buf - bufs;
-    osMessageQueuePut(dq->ready_queue, &idx, 0, 0);
+    buf->owner_count = 0;
+    buf->return_count = 0;
+    buf->is_locked = 0;
+    buf->state = BUFFER_READY;
 }
 
 void buffer_release_isr(pipe_buffer_t *buf, camera_dq_t *dq)
 {
+    // printf("release buffer(%p) frame_id=%ld\r\n", buf, buf->frame_id);
+    for (int i = 0; i < CAMERA_BUF_MAX_OWNERS; ++i) buf->owner_list[i] = NULL;
+    buf->owner_count = 0;
+    buf->return_count = 0;
+    buf->is_locked = 0;
     buf->state = BUFFER_IDLE;
-    osSemaphoreRelease(dq->idle_sem);
 }
 
 pipe_buffer_t* buffer_get_latest_ready(pipe_buffer_t *bufs, int nb, camera_dq_t *dq)
 {
-    uint32_t idxs[CAMERA_MAX_READY_BUFFERS];
-    uint32_t count = 0;
+    osThreadId_t requester = osThreadGetId();
     pipe_buffer_t* latest = NULL;
     uint32_t max_frame_id = 0;
 
-    while (osMessageQueueGet(dq->ready_queue, &idxs[count], NULL, 0) == osOK) {
-        uint32_t idx = idxs[count];
-        if (idx < nb && bufs[idx].state == BUFFER_READY) {
-            if (latest == NULL || bufs[idx].frame_id > max_frame_id) {
-                latest = &bufs[idx];
-                max_frame_id = bufs[idx].frame_id;
+    for (int i = 0; i < nb; ++i) {
+        if (bufs[i].state >= BUFFER_READY && !bufs[i].is_locked) {
+            if (latest == NULL || bufs[i].frame_id > max_frame_id) {
+                latest = &bufs[i];
+                max_frame_id = bufs[i].frame_id;
             }
         }
-        count++;
     }
-
-    for (uint32_t i = 0; i < count; i++) {
-        if (latest && (&bufs[idxs[i]] == latest))
-            continue;
-        // for old buffers, release them
-        buffer_release_isr(&bufs[idxs[i]], dq);
-    }
-
     if (latest) {
-        latest->state = BUFFER_IN_USE;
+        if (latest->state == BUFFER_READY) {
+            latest->state = BUFFER_IN_USE;
+            latest->owner_list[latest->owner_count] = requester;
+        } else if (latest->state == BUFFER_IN_USE && latest->owner_count < CAMERA_BUF_MAX_OWNERS) {
+            for (int j = 0; j < latest->owner_count; ++j) {
+                if (latest->owner_list[j] == requester) {   // already owned
+                    latest = NULL;
+                    break;
+                }
+            }
+        } else {
+            latest = NULL;
+        }
+        if (latest != NULL) latest->owner_count++;
     }
+    // printf("latest buffer(%p) frame_id=%ld, owner_count=%d, requester=%p\r\n", latest, latest ? latest->frame_id : -1, latest ? latest->owner_count : -1, requester);
     return latest;
 }
 
@@ -572,25 +602,45 @@ static void main_pipe_frame_event()
 {
     int ret;
     pipe_buffer_t *buffer,*buffer1;
+    bool frame_is_valid = (g_camera.skip_frame_counter == 0);
+    
+    // check pipe state and buffer validity
+    if(g_camera.pipe1_buffer == NULL || g_camera.state.pipe1_state != PIPE_START){
+        return;
+    }
+
+    if(g_camera.skip_frame_counter > 0){
+        g_camera.skip_frame_counter--;
+    }
+    
     buffer1 = find_processing_buffer(g_camera.pipe1_buffer, g_camera.pipe1_param.buffer_nb);
     if(buffer1 != NULL){
-        buffer_set_ready_isr(g_camera.pipe1_buffer, &g_camera.pipe1_dq, buffer1, g_camera.current_frame_id);
+        if(frame_is_valid){
+            buffer_set_ready_isr(g_camera.pipe1_buffer, &g_camera.pipe1_dq, buffer1, g_camera.current_frame_id);
+        }
+        else{
+            buffer_release_isr(buffer1, &g_camera.pipe1_dq);
+        }
     }
 
     buffer = buffer_acquire(g_camera.pipe1_buffer, g_camera.pipe1_param.buffer_nb, &g_camera.pipe1_dq);
-    if(buffer != NULL){
+    if(buffer != NULL && buffer->data != NULL){
         ret = HAL_DCMIPP_PIPE_SetMemoryAddress(CMW_CAMERA_GetDCMIPPHandle(), DCMIPP_PIPE1,
                                                 DCMIPP_MEMORY_ADDRESS_0, (uint32_t) buffer->data);
         if(ret == HAL_OK){
-            osSemaphoreRelease(g_camera.sem_pipe1);
+            if(frame_is_valid){
+                osSemaphoreRelease(g_camera.sem_pipe1);
+            }
         }else{
             buffer_release_isr(buffer, &g_camera.pipe1_dq);
         }
-    }else{
+    }else if(buffer1 != NULL && buffer1->data != NULL){
         ret = HAL_DCMIPP_PIPE_SetMemoryAddress(CMW_CAMERA_GetDCMIPPHandle(), DCMIPP_PIPE1,
                                                 DCMIPP_MEMORY_ADDRESS_0, (uint32_t) buffer1->data);
         if(ret == HAL_OK){
-            osSemaphoreRelease(g_camera.sem_pipe1);
+            if(frame_is_valid){
+                osSemaphoreRelease(g_camera.sem_pipe1);
+            }
         }
     }
 }
@@ -599,27 +649,42 @@ static void ancillary_pipe_frame_event()
 {
     pipe_buffer_t *buffer,*buffer1;
     int ret;
+    bool frame_is_valid = (g_camera.skip_frame_counter == 0);
+
+    // check pipe state and buffer validity
+    if(g_camera.pipe2_buffer == NULL || g_camera.state.pipe2_state != PIPE_START){
+        return;
+    }
 
     // Use the same frame_id as PIPE1 to keep synchronization
     buffer1 = find_processing_buffer(g_camera.pipe2_buffer, g_camera.pipe2_param.buffer_nb);
     if(buffer1 != NULL){
-        buffer_set_ready_isr(g_camera.pipe2_buffer, &g_camera.pipe2_dq, buffer1, g_camera.current_frame_id);
+        if(frame_is_valid){
+            buffer_set_ready_isr(g_camera.pipe2_buffer, &g_camera.pipe2_dq, buffer1, g_camera.current_frame_id);
+        }
+        else{
+            buffer_release_isr(buffer1, &g_camera.pipe2_dq);
+        }
     }
 
     buffer = buffer_acquire(g_camera.pipe2_buffer, g_camera.pipe2_param.buffer_nb, &g_camera.pipe2_dq);
-    if(buffer != NULL){
+    if(buffer != NULL && buffer->data != NULL){
         ret = HAL_DCMIPP_PIPE_SetMemoryAddress(CMW_CAMERA_GetDCMIPPHandle(), DCMIPP_PIPE2,
                                                 DCMIPP_MEMORY_ADDRESS_0, (uint32_t) buffer->data);
         if(ret == HAL_OK){
-            osSemaphoreRelease(g_camera.sem_pipe2);
+            if(frame_is_valid){
+                osSemaphoreRelease(g_camera.sem_pipe2);
+            }
         }else{
             buffer_release_isr(buffer, &g_camera.pipe2_dq);
         }
-    }else{
+    }else if(buffer1 != NULL && buffer1->data != NULL){
         ret = HAL_DCMIPP_PIPE_SetMemoryAddress(CMW_CAMERA_GetDCMIPPHandle(), DCMIPP_PIPE2,
                                                 DCMIPP_MEMORY_ADDRESS_0, (uint32_t) buffer1->data);
         if(ret == HAL_OK){
-            osSemaphoreRelease(g_camera.sem_pipe2);
+            if(frame_is_valid){
+                osSemaphoreRelease(g_camera.sem_pipe2);
+            }
         }
     }
 }
@@ -757,7 +822,29 @@ static int pipe_start_common(camera_t *camera, uint32_t pipe_id, pipe_buffer_t *
                 if (ret) LOG_DRV_ERROR("ISP start failed: %d\r\n", ret);
                 isp_is_start = 1;
             }
-#endif
+    #endif
+            camera->skip_frame_counter = camera->startup_skip_frames;
+            // clear possible residual hardware error flags before startup
+            DCMIPP_HandleTypeDef *hdcmipp = CMW_CAMERA_GetDCMIPPHandle();
+            if (hdcmipp != NULL) {
+                // clear Pipe Overrun flag
+                if (pipe_id == DCMIPP_PIPE1) {
+                    __HAL_DCMIPP_CLEAR_FLAG(hdcmipp, DCMIPP_FLAG_PIPE1_OVR);
+                } else if (pipe_id == DCMIPP_PIPE2) {
+                    __HAL_DCMIPP_CLEAR_FLAG(hdcmipp, DCMIPP_FLAG_PIPE2_OVR);
+                }
+                
+                // clear AXI Transfer Error flag
+                __HAL_DCMIPP_CLEAR_FLAG(hdcmipp, DCMIPP_FLAG_AXI_TRANSFER_ERROR);
+                
+                // clear CSI error flags (CRC, Sync, Watchdog, etc.)
+                // CSI is a CMSIS macro, pointing to the CSI register base address
+                __HAL_DCMIPP_CSI_CLEAR_FLAG(CSI_S, DCMIPP_CSI_FLAG_CRCERR | 
+                                                  DCMIPP_CSI_FLAG_SYNCERR | 
+                                                  DCMIPP_CSI_FLAG_WDERR | 
+                                                  DCMIPP_CSI_FLAG_SPKTERR | 
+                                                  DCMIPP_CSI_FLAG_IDERR);
+            }
             ret = CMW_CAMERA_Start(pipe_id, buffer->data, CMW_MODE_CONTINUOUS);
             if(ret == CMW_ERROR_NONE){
                 *pipe_state = PIPE_START;
@@ -795,13 +882,43 @@ static int pipe_stop_common(camera_t *camera, uint32_t pipe_id, pipe_buffer_t **
 {
     LOG_DRV_DEBUG("camera pipe%lu stop", pipe_id);
     int32_t ret = HAL_OK;
+    DCMIPP_HandleTypeDef *hdcmipp = CMW_CAMERA_GetDCMIPPHandle();
     
     if(!camera->is_init)
         return AICAM_ERROR_NOT_FOUND;
         
     if(*pipe_state == PIPE_START){
-        ret = HAL_DCMIPP_CSI_PIPE_Stop(CMW_CAMERA_GetDCMIPPHandle(), pipe_id, DCMIPP_VIRTUAL_CHANNEL0);
+        // disable frame interrupt
+        if (hdcmipp != NULL) {
+            if (pipe_id == DCMIPP_PIPE1) {
+                __HAL_DCMIPP_DISABLE_IT(hdcmipp, DCMIPP_IT_PIPE1_FRAME | DCMIPP_IT_PIPE1_VSYNC);
+            } else if (pipe_id == DCMIPP_PIPE2) {
+                __HAL_DCMIPP_DISABLE_IT(hdcmipp, DCMIPP_IT_PIPE2_FRAME | DCMIPP_IT_PIPE2_VSYNC);
+            }
+        }
+        
+        // stop pipe
+        ret = HAL_DCMIPP_CSI_PIPE_Stop(hdcmipp, pipe_id, DCMIPP_VIRTUAL_CHANNEL0);
         if(ret == HAL_OK){
+            // clear memory address register, prevent DCMIPP from accessing released memory
+            if (hdcmipp != NULL) {
+                if (pipe_id == DCMIPP_PIPE1) {
+                    WRITE_REG(hdcmipp->Instance->P1PPM0AR1, 0U);
+                    if ((hdcmipp->Instance->P1PPCR & DCMIPP_P1PPCR_DBM) == DCMIPP_P1PPCR_DBM) {
+                        WRITE_REG(hdcmipp->Instance->P1PPM0AR2, 0U);
+                    }
+                } else if (pipe_id == DCMIPP_PIPE2) {
+                    WRITE_REG(hdcmipp->Instance->P2PPM0AR1, 0U);
+                    if ((hdcmipp->Instance->P2PPCR & DCMIPP_P2PPCR_DBM) == DCMIPP_P2PPCR_DBM) {
+                        WRITE_REG(hdcmipp->Instance->P2PPM0AR2, 0U);
+                    }
+                }
+                
+                // clear AXI Transfer Error flag
+                __HAL_DCMIPP_CLEAR_FLAG(hdcmipp, DCMIPP_FLAG_AXI_TRANSFER_ERROR);
+            }
+            
+            // update state and release resources
             buffer_reset(*pipe_buffer, pipe_param->buffer_nb, dq);
             *pipe_state = PIPE_STOP;
             pipe_buffer_release(*pipe_buffer, pipe_param, dq);
@@ -847,8 +964,10 @@ static int camera_start(void *priv)
     }
 
     osMutexAcquire(camera->mtx_id, osWaitForever);
+    camera->mtx_isr = 1;
     if(camera->state.camera_state == CAMERA_START){
         LOG_DRV_DEBUG("camera already start \r\n");
+        camera->mtx_isr = 0;
         osMutexRelease(camera->mtx_id);
         return AICAM_OK;
     }
@@ -856,6 +975,7 @@ static int camera_start(void *priv)
     if((camera->device_ctrl_pipe & CAMERA_CTRL_PIPE1_BIT) != 0){
         ret = pipe1_start(camera);
         if(ret != AICAM_OK){
+            camera->mtx_isr = 0;
             osMutexRelease(camera->mtx_id);
             return ret;
         }
@@ -864,17 +984,20 @@ static int camera_start(void *priv)
     if((camera->device_ctrl_pipe & CAMERA_CTRL_PIPE2_BIT) != 0){
         ret = pipe2_start(camera);
         if(ret != AICAM_OK){
+            camera->mtx_isr = 0;
             osMutexRelease(camera->mtx_id);
             return ret;
         }
     }
 
     if(camera_sensor_set(&camera->sensor_param) != CMW_ERROR_NONE){
+        camera->mtx_isr = 0;
         osMutexRelease(camera->mtx_id);
         return AICAM_ERROR;
     }
 
     camera->state.camera_state = CAMERA_START;
+    camera->mtx_isr = 0;
     osMutexRelease(camera->mtx_id);
     return AICAM_OK;
 }
@@ -887,8 +1010,10 @@ static int camera_stop(void *priv)
         return AICAM_ERROR_NOT_FOUND;
 
     osMutexAcquire(camera->mtx_id, osWaitForever);
+    camera->mtx_isr = 1;
     if(camera->state.camera_state == CAMERA_STOP){
         LOG_DRV_DEBUG("camera already stop \r\n");
+        camera->mtx_isr = 0;
         osMutexRelease(camera->mtx_id);
         return AICAM_OK;
     }
@@ -902,11 +1027,13 @@ static int camera_stop(void *priv)
     }
 
     if(CMW_CAMERA_Stop() != CMW_ERROR_NONE){
+        camera->mtx_isr = 0;
         osMutexRelease(camera->mtx_id);
         LOG_DRV_DEBUG("camera stop failed \r\n");
         return AICAM_ERROR_BUSY;
     }
     camera->state.camera_state = CAMERA_STOP;
+    camera->mtx_isr = 0;
     osMutexRelease(camera->mtx_id);
     return AICAM_OK;
 }
@@ -936,11 +1063,14 @@ static void cameraProcess(void *argument)
                 }
             }
 #else
-            // osMutexAcquire(camera->mtx_id, osWaitForever);
+            //osMutexAcquire(camera->mtx_id, osWaitForever);
             CMW_CAMERA_Run();
-            // osMutexRelease(camera->mtx_id);
+            //osMutexRelease(camera->mtx_id);
 #endif
         }
+        // if (g_camera.current_frame_id % 30 == 0) {
+        //     printf("id: %ld\r\n", g_camera.current_frame_id);
+        // }
     }
     osThreadExit();
 }
@@ -951,6 +1081,7 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
     CAM_CMD_E cam_cmd = (CAM_CMD_E)cmd;
     pipe_buffer_t *buffer = NULL;
     int ret = AICAM_OK;
+    int i = 0;
 
     if(!camera->is_init){
         if (osSemaphoreAcquire(camera->sem_init, 2000) != osOK || !camera->is_init) {
@@ -958,6 +1089,7 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
         }
     }
     osMutexAcquire(camera->mtx_id, osWaitForever);
+    camera->mtx_isr = 1;
     switch (cam_cmd)
     {
         case CAM_CMD_SET_SENSOR_PARAM:
@@ -968,8 +1100,8 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
             }
             sensor_params_t temp_param;
             memcpy(&temp_param, ubuf, sizeof(sensor_params_t));
-            // printf("[CAM_CMD_SET_SENSOR_PARAM] brightness: %d, contrast: %d, mirror_flip: %d, aec: %d\r\n",
-            //         temp_param.brightness, temp_param.contrast, temp_param.mirror_flip, temp_param.aec);
+            //printf("[CAM_CMD_SET_SENSOR_PARAM] brightness: %d, contrast: %d, mirror_flip: %d, aec: %lu\r\n",
+            //        temp_param.brightness, temp_param.contrast, temp_param.mirror_flip, temp_param.aec);
             if(temp_param.mirror_flip != camera->sensor_param.mirror_flip){
                 if(CMW_CAMERA_SetMirrorFlip(temp_param.mirror_flip) != CMW_ERROR_NONE){
                     ret = AICAM_ERROR_INVALID_PARAM;
@@ -998,7 +1130,20 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                     if(camera_SetBrightness(temp_param.brightness) != CMW_ERROR_NONE){
                         ret = AICAM_ERROR_INVALID_PARAM;
                         break;
-                    }else{
+                    }
+                    else{
+                        camera->sensor_param.brightness = temp_param.brightness;
+                    }
+                }
+            }
+            else{
+                // AEC enabled, update brightness if it has changed
+                if(camera->sensor_param.brightness != temp_param.brightness){
+                    if(camera_SetBrightness(temp_param.brightness) != CMW_ERROR_NONE){
+                        ret = AICAM_ERROR_INVALID_PARAM;
+                        break;
+                    }
+                    else{
                         camera->sensor_param.brightness = temp_param.brightness;
                     }
                 }
@@ -1045,7 +1190,6 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
             }
             memcpy(&camera->pipe1_param, ubuf, sizeof(pipe_params_t));
             ret = DCMIPP_Pipe1Init(camera);
-            printf("[CAM_CMD_SET_PIPE1_PARAM] h: %d, w: %d, bpp: %d, type: %d\r\n", camera->pipe1_param.height, camera->pipe1_param.width, camera->pipe1_param.bpp, camera->pipe1_param.format);
             break;
 
         case CAM_CMD_SET_PIPE2_PARAM:
@@ -1116,19 +1260,21 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                 ret = AICAM_ERROR_NOT_SUPPORTED;
                 break;
             }
-            osMutexRelease(camera->mtx_id);
-            if (osSemaphoreAcquire(camera->sem_pipe1, CAMERA_BUFFER_TIMEOUT_MS) == osOK){
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                buffer = buffer_get_latest_ready(camera->pipe1_buffer, camera->pipe1_param.buffer_nb, &camera->pipe1_dq);
-                if(buffer != NULL){
-                    *((unsigned char **)ubuf) = buffer->data;
-                    ret = camera->pipe1_param.width * camera->pipe1_param.height * camera->pipe1_param.bpp;
-                }else{
-                    ret = AICAM_ERROR_NOT_FOUND;
+            buffer = buffer_get_latest_ready(camera->pipe1_buffer, camera->pipe1_param.buffer_nb, &camera->pipe1_dq);
+            if (buffer == NULL) {
+                // Wait for skip frames to complete plus normal buffer timeout
+                uint32_t timeout = CAMERA_BUFFER_TIMEOUT_MS;
+                if (camera->skip_frame_counter > 0) {
+                    timeout += (camera->skip_frame_counter * 1000 / camera->pipe1_param.fps) + CAMERA_BUFFER_TIMEOUT_MS;
                 }
-            }else{
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                ret = AICAM_ERROR_BUSY;
+                osSemaphoreAcquire(camera->sem_pipe1, timeout);
+                buffer = buffer_get_latest_ready(camera->pipe1_buffer, camera->pipe1_param.buffer_nb, &camera->pipe1_dq);
+            }
+            if (buffer != NULL) {
+                *((unsigned char **)ubuf) = buffer->data;
+                ret = camera->pipe1_param.width * camera->pipe1_param.height * camera->pipe1_param.bpp;
+            } else {
+                ret = AICAM_ERROR_NOT_FOUND;
             }
             break;
         
@@ -1137,28 +1283,30 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                 ret = AICAM_ERROR_NOT_SUPPORTED;
                 break;
             }
-            osMutexRelease(camera->mtx_id);
-            if (osSemaphoreAcquire(camera->sem_pipe2, CAMERA_BUFFER_TIMEOUT_MS) == osOK){
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                if(camera->pipe2_param.extbuffer_flag == 1){
-                    if(camera->pipe2_param.extbuffer != NULL){
-                        *((unsigned char **)ubuf) = camera->pipe2_param.extbuffer;
-                        ret = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
-                    }else{
-                        ret = AICAM_ERROR_NOT_FOUND;
-                    }
-                }else{
-                    buffer = buffer_get_latest_ready(camera->pipe2_buffer, camera->pipe2_param.buffer_nb, &camera->pipe2_dq);
-                    if(buffer != NULL){
-                        *((unsigned char **)ubuf) = buffer->data;
-                        ret = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
-                    }else{
-                        ret = AICAM_ERROR_NOT_FOUND;
-                    }
+            if (camera->pipe2_param.extbuffer_flag == 1) {
+                if(camera->pipe2_param.extbuffer != NULL) {
+                    *((unsigned char **)ubuf) = camera->pipe2_param.extbuffer;
+                    ret = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
+                } else {
+                    ret = AICAM_ERROR_NOT_FOUND;
                 }
-            }else{
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                ret = AICAM_ERROR_BUSY;
+            } else {
+                buffer = buffer_get_latest_ready(camera->pipe2_buffer, camera->pipe2_param.buffer_nb, &camera->pipe2_dq);
+                if (buffer == NULL) {
+                    // Wait for skip frames to complete plus normal buffer timeout
+                    uint32_t timeout = CAMERA_BUFFER_TIMEOUT_MS;
+                    if (camera->skip_frame_counter > 0) {
+                        timeout += (camera->skip_frame_counter * 1000 / camera->pipe2_param.fps) + CAMERA_BUFFER_TIMEOUT_MS;
+                    }
+                    osSemaphoreAcquire(camera->sem_pipe2, timeout);
+                    buffer = buffer_get_latest_ready(camera->pipe2_buffer, camera->pipe2_param.buffer_nb, &camera->pipe2_dq);
+                }
+                if (buffer != NULL) {
+                    *((unsigned char **)ubuf) = buffer->data;
+                    ret = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
+                } else {
+                    ret = AICAM_ERROR_NOT_FOUND;
+                }
             }
             break;
 
@@ -1167,22 +1315,24 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                 ret = AICAM_ERROR_NOT_SUPPORTED;
                 break;
             }
-            osMutexRelease(camera->mtx_id);
-            if (osSemaphoreAcquire(camera->sem_pipe1, CAMERA_BUFFER_TIMEOUT_MS) == osOK){
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                buffer = buffer_get_latest_ready(camera->pipe1_buffer, camera->pipe1_param.buffer_nb, &camera->pipe1_dq);
-                if(buffer != NULL){
-                    camera_buffer_with_frame_id_t *result = (camera_buffer_with_frame_id_t *)ubuf;
-                    result->buffer = buffer->data;
-                    result->frame_id = buffer->frame_id;
-                    result->size = camera->pipe1_param.width * camera->pipe1_param.height * camera->pipe1_param.bpp;
-                    ret = AICAM_OK;
-                }else{
-                    ret = AICAM_ERROR_NOT_FOUND;
+            buffer = buffer_get_latest_ready(camera->pipe1_buffer, camera->pipe1_param.buffer_nb, &camera->pipe1_dq);
+            if (buffer == NULL) {
+                // Wait for skip frames to complete plus normal buffer timeout
+                uint32_t timeout = CAMERA_BUFFER_TIMEOUT_MS;
+                if (camera->skip_frame_counter > 0) {
+                    timeout += (camera->skip_frame_counter * 1000 / camera->pipe1_param.fps) + CAMERA_BUFFER_TIMEOUT_MS;
                 }
-            }else{
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                ret = AICAM_ERROR_BUSY;
+                osSemaphoreAcquire(camera->sem_pipe1, timeout);
+                buffer = buffer_get_latest_ready(camera->pipe1_buffer, camera->pipe1_param.buffer_nb, &camera->pipe1_dq);
+            }
+            if (buffer != NULL) {
+                camera_buffer_with_frame_id_t *result = (camera_buffer_with_frame_id_t *)ubuf;
+                result->buffer = buffer->data;
+                result->frame_id = buffer->frame_id;
+                result->size = camera->pipe1_param.width * camera->pipe1_param.height * camera->pipe1_param.bpp;
+                ret = AICAM_OK;
+            } else {
+                ret = AICAM_ERROR_NOT_FOUND;
             }
             break;
 
@@ -1191,34 +1341,36 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                 ret = AICAM_ERROR_NOT_SUPPORTED;
                 break;
             }
-            osMutexRelease(camera->mtx_id);
-            if (osSemaphoreAcquire(camera->sem_pipe2, CAMERA_BUFFER_TIMEOUT_MS) == osOK){
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                if(camera->pipe2_param.extbuffer_flag == 1){
-                    if(camera->pipe2_param.extbuffer != NULL){
-                        camera_buffer_with_frame_id_t *result = (camera_buffer_with_frame_id_t *)ubuf;
-                        result->buffer = camera->pipe2_param.extbuffer;
-                        result->frame_id = camera->current_frame_id;  // Use current_frame_id for extbuffer
-                        result->size = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
-                        ret = AICAM_OK;
-                    }else{
-                        ret = AICAM_ERROR_NOT_FOUND;
-                    }
-                }else{
-                    buffer = buffer_get_latest_ready(camera->pipe2_buffer, camera->pipe2_param.buffer_nb, &camera->pipe2_dq);
-                    if(buffer != NULL){
-                        camera_buffer_with_frame_id_t *result = (camera_buffer_with_frame_id_t *)ubuf;
-                        result->buffer = buffer->data;
-                        result->frame_id = buffer->frame_id;
-                        result->size = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
-                        ret = AICAM_OK;
-                    }else{
-                        ret = AICAM_ERROR_NOT_FOUND;
-                    }
+            if (camera->pipe2_param.extbuffer_flag == 1) {
+                if(camera->pipe2_param.extbuffer != NULL) {
+                    camera_buffer_with_frame_id_t *result = (camera_buffer_with_frame_id_t *)ubuf;
+                    result->buffer = camera->pipe2_param.extbuffer;
+                    result->frame_id = camera->current_frame_id;  // Use current_frame_id for extbuffer
+                    result->size = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
+                    ret = AICAM_OK;
+                } else {
+                    ret = AICAM_ERROR_NOT_FOUND;
                 }
-            }else{
-                osMutexAcquire(camera->mtx_id, osWaitForever);
-                ret = AICAM_ERROR_BUSY;
+            } else {
+                buffer = buffer_get_latest_ready(camera->pipe2_buffer, camera->pipe2_param.buffer_nb, &camera->pipe2_dq);
+                if (buffer == NULL) {
+                    // Wait for skip frames to complete plus normal buffer timeout
+                    uint32_t timeout = CAMERA_BUFFER_TIMEOUT_MS;
+                    if (camera->skip_frame_counter > 0) {
+                        timeout += (camera->skip_frame_counter * 1000 / camera->pipe2_param.fps) + CAMERA_BUFFER_TIMEOUT_MS;
+                    }
+                    osSemaphoreAcquire(camera->sem_pipe2, timeout);
+                    buffer = buffer_get_latest_ready(camera->pipe2_buffer, camera->pipe2_param.buffer_nb, &camera->pipe2_dq);
+                }
+                if(buffer != NULL){
+                    camera_buffer_with_frame_id_t *result = (camera_buffer_with_frame_id_t *)ubuf;
+                    result->buffer = buffer->data;
+                    result->frame_id = buffer->frame_id;
+                    result->size = camera->pipe2_param.width * camera->pipe2_param.height * camera->pipe2_param.bpp;
+                    ret = AICAM_OK;
+                }else{
+                    ret = AICAM_ERROR_NOT_FOUND;
+                }
             }
             break;
 
@@ -1227,9 +1379,13 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                 ret = AICAM_ERROR_NOT_FOUND;
                 break;
             }
-            for (int i = 0; i < camera->pipe1_param.buffer_nb; ++i) {
+            // printf("Return PIPE1 buffer: 0x%p, osThreadGetId: 0x%p\r\n", ubuf, osThreadGetId());
+            for (i = 0; i < camera->pipe1_param.buffer_nb; ++i) {
                 if (camera->pipe1_buffer[i].data == ubuf) {
-                    buffer_release_isr(&camera->pipe1_buffer[i], &camera->pipe1_dq);
+                    camera->pipe1_buffer[i].return_count++;
+                    if (camera->pipe1_buffer[i].return_count >= camera->pipe1_buffer[i].owner_count) {
+                        buffer_release_isr(&camera->pipe1_buffer[i], &camera->pipe1_dq);
+                    }
                     ret = AICAM_OK;
                     break;
                 }
@@ -1241,12 +1397,94 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                 ret = AICAM_ERROR_NOT_FOUND;
                 break;
             }
-            for (int i = 0; i < camera->pipe2_param.buffer_nb; ++i) {
+            // printf("Return PIPE2 buffer: 0x%p, osThreadGetId: 0x%p\r\n", ubuf, osThreadGetId());
+            for (i = 0; i < camera->pipe2_param.buffer_nb; ++i) {
                 if (camera->pipe2_buffer[i].data == ubuf) {
-                    buffer_release_isr(&camera->pipe2_buffer[i], &camera->pipe2_dq);
+                    camera->pipe2_buffer[i].return_count++;
+                    if (camera->pipe2_buffer[i].return_count >= camera->pipe2_buffer[i].owner_count) {
+                        buffer_release_isr(&camera->pipe2_buffer[i], &camera->pipe2_dq);
+                    }
                     ret = AICAM_OK;
                     break;
                 }
+            }
+            break;
+            
+        case CAM_CMD_LOCK_PIPE1_BUFFER:
+            if(camera->state.pipe1_state != PIPE_START){
+                ret = AICAM_ERROR_NOT_SUPPORTED;
+                break;
+            }
+            ret = AICAM_ERROR_BUSY;
+            for (i = 0; i < camera->pipe1_param.buffer_nb; ++i) {
+                if (camera->pipe1_buffer[i].data == ubuf && camera->pipe1_buffer[i].owner_count == 1) {
+                    camera->pipe1_buffer[i].is_locked = 1;
+                    ret = AICAM_OK;
+                    break;
+                }
+            }
+            break;
+        
+        case CAM_CMD_LOCK_PIPE2_BUFFER:
+            if(camera->state.pipe2_state != PIPE_START){
+                ret = AICAM_ERROR_NOT_SUPPORTED;
+                break;
+            }
+            ret = AICAM_ERROR_BUSY;
+            for (i = 0; i < camera->pipe2_param.buffer_nb; ++i) {
+                if (camera->pipe2_buffer[i].data == ubuf && camera->pipe2_buffer[i].owner_count == 1) {
+                    camera->pipe2_buffer[i].is_locked = 1;
+                    ret = AICAM_OK;
+                    break;
+                }
+            }
+            break;
+        
+        case CAM_CMD_UNLOCK_PIPE1_BUFFER:
+            if(camera->state.pipe1_state != PIPE_START){
+                ret = AICAM_ERROR_NOT_SUPPORTED;
+                break;
+            }
+            ret = AICAM_ERROR_NOT_FOUND;
+            for (i = 0; i < camera->pipe1_param.buffer_nb; ++i) {
+                if (camera->pipe1_buffer[i].data == ubuf && camera->pipe1_buffer[i].is_locked == 1) {
+                    camera->pipe1_buffer[i].is_locked = 0;
+                    ret = AICAM_OK;
+                    break;
+                }
+            }
+            break;
+        
+        case CAM_CMD_UNLOCK_PIPE2_BUFFER:
+            if(camera->state.pipe2_state != PIPE_START){
+                ret = AICAM_ERROR_NOT_SUPPORTED;
+                break;
+            }
+            ret = AICAM_ERROR_NOT_FOUND;
+            for (i = 0; i < camera->pipe2_param.buffer_nb; ++i) {
+                if (camera->pipe2_buffer[i].data == ubuf && camera->pipe2_buffer[i].is_locked == 1) {
+                    camera->pipe2_buffer[i].is_locked = 0;
+                    ret = AICAM_OK;
+                    break;
+                }
+            }
+            break;
+
+        case CAM_CMD_SET_STARTUP_SKIP_FRAMES:
+            if (arg > 0 && arg <= 300) {  // Limit to reasonable range (max ~10s at 30fps)
+                camera->startup_skip_frames = (int)arg;
+                ret = AICAM_OK;
+            } else {
+                ret = AICAM_ERROR_INVALID_PARAM;
+            }
+            break;
+
+        case CAM_CMD_GET_STARTUP_SKIP_FRAMES:
+            if (ubuf != NULL) {
+                *((int *)ubuf) = camera->startup_skip_frames;
+                ret = AICAM_OK;
+            } else {
+                ret = AICAM_ERROR_INVALID_PARAM;
             }
             break;
 
@@ -1271,6 +1509,7 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
             ret = AICAM_ERROR_NOT_SUPPORTED;
             break;
     }
+    camera->mtx_isr = 0;
     osMutexRelease(camera->mtx_id);
     return ret;
 }
@@ -1290,8 +1529,8 @@ static int pipe_buffer_acquire(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_p
             return -1;
         }
     }
-    dq->ready_queue = osMessageQueueNew(pipe_param->buffer_nb, sizeof(uint32_t), NULL);
-    dq->idle_sem = osSemaphoreNew(pipe_param->buffer_nb, pipe_param->buffer_nb, NULL);
+    // dq->ready_queue = osMessageQueueNew(pipe_param->buffer_nb, sizeof(uint32_t), NULL);
+    // dq->idle_sem = osSemaphoreNew(pipe_param->buffer_nb, pipe_param->buffer_nb, NULL);
 
     return 0;
 }
@@ -1300,15 +1539,15 @@ static int pipe_buffer_acquire(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_p
 static int pipe_buffer_release(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_param, camera_dq_t *dq)
 {
     
-    if (dq->ready_queue != NULL) {
-        osMessageQueueDelete(dq->ready_queue);
-        dq->ready_queue = NULL;
-    }
+    // if (dq->ready_queue != NULL) {
+    //     osMessageQueueDelete(dq->ready_queue);
+    //     dq->ready_queue = NULL;
+    // }
 
-    if (dq->idle_sem != NULL) {
-        osSemaphoreDelete(dq->idle_sem);
-        dq->idle_sem = NULL;
-    }
+    // if (dq->idle_sem != NULL) {
+    //     osSemaphoreDelete(dq->idle_sem);
+    //     dq->idle_sem = NULL;
+    // }
 
     if(pipe_param->extbuffer_flag == 1){
         return 0;
@@ -1346,6 +1585,7 @@ static int camera_init(void *priv)
 
     camera->mtx_id = osMutexNew(NULL);
     camera->current_frame_id = 0;
+    camera->startup_skip_frames = CAMERA_DEFAULT_STARTUP_SKIP_FRAMES;
     camera->sem_init = osSemaphoreNew(1, 0, NULL);
     camera->sem_isp = osSemaphoreNew(1, 0, NULL);
     camera->sem_pipe1 = osSemaphoreNew(1, 0, NULL);
@@ -1404,15 +1644,13 @@ static int camera_deinit(void *priv)
         osMutexDelete(camera->mtx_id);
         camera->mtx_id = NULL;
     }
-
-    pipe_buffer_release(camera->pipe1_buffer, &camera->pipe1_param, &camera->pipe1_dq);
-    pipe_buffer_release(camera->pipe2_buffer, &camera->pipe2_param, &camera->pipe2_dq);
-
     if (camera->pipe1_buffer) {
+        pipe_buffer_release(camera->pipe1_buffer, &camera->pipe1_param, &camera->pipe1_dq);
         hal_mem_free(camera->pipe1_buffer);
         camera->pipe1_buffer = NULL;
     }
     if (camera->pipe2_buffer) {
+        pipe_buffer_release(camera->pipe2_buffer, &camera->pipe2_param, &camera->pipe2_dq);
         hal_mem_free(camera->pipe2_buffer);
         camera->pipe2_buffer = NULL;
     }

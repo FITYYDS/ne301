@@ -140,14 +140,14 @@
 /*=======================================================================*/
 //! Connection parameters
 /*=======================================================================*/
-#define LE_SCAN_INTERVAL 0x0100
-#define LE_SCAN_WINDOW   0x0050
+#define LE_SCAN_INTERVAL 0x0640         // 1600 * 0.625
+#define LE_SCAN_WINDOW   0x0028         //  40 * 0.625
 
-#define CONNECTION_INTERVAL_MIN 0x00A0
-#define CONNECTION_INTERVAL_MAX 0x00A0
+#define CONNECTION_INTERVAL_MIN 0x01E0  //  160 * 1.25
+#define CONNECTION_INTERVAL_MAX 0x0320  //  800 * 1.25
 
-#define CONNECTION_LATENCY  0x0000
-#define SUPERVISION_TIMEOUT 0x07D0 //2000
+#define CONNECTION_LATENCY  0x0000  //3
+#define SUPERVISION_TIMEOUT 0x012C //3000
 
 /*=======================================================================*/
 

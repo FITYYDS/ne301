@@ -2,6 +2,7 @@
 #include "lwip/tcpip.h"
 #include "lwip/init.h"
 #include "lwip/apps/sntp.h"
+#include "lwip/apps/mdns.h"
 #if IP_NAT
 #include "lwip/ip4_nat.h"
 #endif
@@ -52,9 +53,6 @@ static const if_name_type_t if_name_type_list[] = {
     {NETIF_NAME_LOCAL, NETIF_TYPE_LOCAL},
     {NETIF_NAME_WIFI_AP, NETIF_TYPE_WIRELESS},
     {NETIF_NAME_WIFI_STA, NETIF_TYPE_WIRELESS},
-#if NETIF_ETH_WAN_IS_ENABLE
-    {NETIF_NAME_ETH_WAN, NETIF_TYPE_ETH},
-#endif
 #if NETIF_4G_CAT1_IS_ENABLE
     {NETIF_NAME_4G_CAT1, NETIF_TYPE_4G},
 #endif
@@ -64,6 +62,9 @@ static const if_name_type_t if_name_type_list[] = {
 #else
     {NETIF_NAME_USB_ECM, NETIF_TYPE_ETH},
 #endif
+#endif
+#if NETIF_ETH_WAN_IS_ENABLE
+    {NETIF_NAME_ETH_WAN, NETIF_TYPE_ETH},
 #endif
 };
 
@@ -75,9 +76,7 @@ static const char *netif_encryption_str[] = {"default", "no_encryption", "wep", 
 
 void sntp_set_system_time(uint32_t sec)
 {
-    // TODO: Read current timezone
-    
-    rtc_setup_by_timestamp(sec, TIMEZONE);
+    rtc_set_timeStamp(sec);
     LOG_SIMPLE("NTP set system time: %d\r\n", sec);
 }
 
@@ -180,31 +179,49 @@ static int netif_manager_cmd(int argc, char* argv[])
         }
         // Enable configuration
         ret = nm_set_netif_cfg(if_name, &if_cfg);
+    } else if (strcmp(argv[2], "error_test") == 0) {
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
+            LOG_SIMPLE("Only wl/ap support error_test cmd\r\n");
+            return -1;
+        }
+        sli_firmware_error_callback(0x1234);
     } else if (strcmp(argv[2], "fbcast") == 0) {
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
+            LOG_SIMPLE("Only wl/ap support fbcast cmd\r\n");
+            return -1;
+        }
         if (argc > 3) enable = atoi(argv[3]);
         ret = sl_net_netif_filter_broadcast_ctrl(enable);
     } else if (strcmp(argv[2], "lpwr") == 0) {
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
+            LOG_SIMPLE("Only wl/ap support lpwr cmd\r\n");
+            return -1;
+        }
         if (argc > 3) enable = atoi(argv[3]);
         ret = sl_net_netif_low_power_mode_ctrl(enable);
     } else if (strcmp(argv[2], "rmode") == 0) {
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
+            LOG_SIMPLE("Only wl/ap support rmode cmd\r\n");
+            return -1;
+        }
         if (argc > 3) wakeup_mode = (sl_net_wakeup_mode_t)atoi(argv[3]);
         ret = sl_net_netif_romote_wakeup_mode_ctrl(wakeup_mode);
     } else if (strcmp(argv[2], "scan") == 0) {
-        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_STA)) {
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
             LOG_SIMPLE("Only wl/ap support scan cmd\r\n");
             return -1;
         }
         ret = nm_wireless_start_scan(wireless_scan_callback_func);
         return ret;
     } else if (strcmp(argv[2], "scan_result") == 0) {
-        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_STA)) {
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
             LOG_SIMPLE("Only wl/ap support scan_result cmd\r\n");
             return -1;
         }
         scan_result = nm_wireless_get_scan_result();
         nm_print_wireless_scan_result(scan_result);
     } else if (strcmp(argv[2], "scan_update") == 0) {
-        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_STA)) {
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
             LOG_SIMPLE("Only wl/ap support scan_update cmd\r\n");
             return -1;
         }
@@ -239,17 +256,20 @@ void netif_manager_change_default_if(void)
     }
     
     if (if_name != NULL) {
-        if (strcmp(if_name, NETIF_NAME_WIFI_STA) == 0) default_if = sl_net_client_netif_ptr();
-        else if (strcmp(if_name, NETIF_NAME_WIFI_AP) == 0) default_if = sl_net_ap_netif_ptr();
 #if NETIF_ETH_WAN_IS_ENABLE
-        else if (strcmp(if_name, NETIF_NAME_ETH_WAN) == 0) default_if = w5500_netif_ptr();
+        if (strcmp(if_name, NETIF_NAME_ETH_WAN) == 0) default_if = w5500_netif_ptr();
+        else
 #endif
 #if NETIF_4G_CAT1_IS_ENABLE
-        else if (strcmp(if_name, NETIF_NAME_4G_CAT1) == 0) default_if = eg912u_netif_ptr();
+        if (strcmp(if_name, NETIF_NAME_4G_CAT1) == 0) default_if = eg912u_netif_ptr();
+        else
 #endif
 #if NETIF_USB_ECM_IS_ENABLE
-        else if (strcmp(if_name, NETIF_NAME_USB_ECM) == 0) default_if = usb_ecm_netif_ptr();
+        if (strcmp(if_name, NETIF_NAME_USB_ECM) == 0) default_if = usb_ecm_netif_ptr();
+        else
 #endif
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) == 0) default_if = sl_net_client_netif_ptr();
+        else if (strcmp(if_name, NETIF_NAME_WIFI_AP) == 0) default_if = sl_net_ap_netif_ptr();
         if (default_if != NULL && default_if != netif_get_default()) {
             netif_set_default(default_if);
             LOG_DRV_INFO("Set default netif: %s\r\n", if_name);
@@ -421,12 +441,17 @@ void netif_manager_init(void)
     // 4. Initialize NAT if enabled
     ip4_nat_init();
 #endif
+
+#if LWIP_MDNS_RESPONDER
+    // 5. Initialize mDNS responder
+    mdns_resp_init();
+#endif
     
-    // 5. Set DNS servers
+    // 6. Set DNS servers
     dns_setserver(0, &default_dns_server[0]);
     dns_setserver(1, &default_dns_server[1]);
     
-    // 6. Set SNTP servers
+    // 7. Set SNTP servers
     sntp_setservername(0, default_sntp_server[0]);
     sntp_setservername(1, default_sntp_server[1]);
     sntp_setservername(2, default_sntp_server[2]);
@@ -451,7 +476,9 @@ void netif_manager_register_commands(void)
     ms_network_test_register();
     icmp_client_register();
     wifi_register();
+#ifdef SLI_SI91X_ENABLE_BLE
     driver_cmd_register_callback("ble", sl_ble_test_commands_register);
+#endif
     driver_cmd_register_callback("rtmp_test", rtmp_push_test_register_commands);
 }
 
@@ -579,6 +606,11 @@ void nm_print_netif_info(const char *if_name, netif_info_t *netif_info)
         printf("SIM PUK: %s\r\n", netif_info->cellular_cfg.puk);
         printf("CSQ: %d,%d\r\n", netif_info->cellular_info.csq_value, netif_info->cellular_info.ber_value);
         printf("CSQ LEVEL: %d\r\n", netif_info->cellular_info.csq_level);
+        printf("PLMN ID: %s\r\n", netif_info->cellular_info.plmn_id);
+        printf("CELL ID: %s\r\n", netif_info->cellular_info.cell_id);
+        printf("LAC: %s\r\n", netif_info->cellular_info.lac);
+        printf("NETWORK TYPE: %s\r\n", netif_info->cellular_info.network_type);
+        printf("REG STATUS: %s\r\n", netif_info->cellular_info.registration_status);
     }
     if (netif_info->type == NETIF_TYPE_WIRELESS || netif_info->type == NETIF_TYPE_4G) printf("RSSI: %ddBm\r\n", netif_info->rssi);
     if (netif_info->type != NETIF_TYPE_4G) {
@@ -631,7 +663,7 @@ int nm_get_netif_cfg(const char *if_name, netif_config_t *netif_cfg)
 int nm_set_netif_cfg(const char *if_name, netif_config_t *netif_cfg)
 {
     int ret = 0;
-    __attribute__((unused)) int is_need_up = 0;
+    // int is_need_up = 0;
     if (if_name == NULL || netif_cfg == NULL) return AICAM_ERROR_INVALID_PARAM;
 
     // if (nm_get_netif_state(if_name) == NETIF_STATE_UP) {

@@ -4,10 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define CMD_MAX_LEN        64
+#define CMD_MAX_LEN        256
 #define HISTORY_DEPTH      15
 #define MAX_CMDS           128
-#define MAX_ARGC           16
+#define MAX_ARGC           32
 #define KEY_ENTER          0x0D
 #define KEY_BACKSPACE      0x08
 #define KEY_ESC            0x1B

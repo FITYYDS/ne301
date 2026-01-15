@@ -29,12 +29,20 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-
+typedef struct
+{
+  uint32_t baudrate;
+  uint32_t wordlength;
+  uint32_t stopbits;
+  uint32_t parity;
+} Uart_Config_t;
 /* USER CODE END Includes */
 
 extern UART_HandleTypeDef huart7;
 
 extern UART_HandleTypeDef huart9;
+
+extern UART_HandleTypeDef huart3;
 
 extern UART_HandleTypeDef huart2;
 
@@ -48,6 +56,7 @@ void MX_UART7_Init(uint32_t baudrate);
 void MX_UART9_Init(void);
 void MX_USART1_UART_Init(void);
 void MX_USART2_UART_Init(void);
+void MX_USART3_UART_Init(Uart_Config_t *config);
 
 /* USER CODE BEGIN Prototypes */
 

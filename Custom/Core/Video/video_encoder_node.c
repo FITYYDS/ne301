@@ -1,7 +1,7 @@
 /**
  * @file video_encoder_node.c
  * @brief Video Encoder Node Implementation
- * @details Simple encoder node based on driver_test.c device interaction with zero-copy
+ * @details Encoder node with zero-copy frame processing and Video Hub integration
  */
 
 #include "video_encoder_node.h"
@@ -9,13 +9,14 @@
 #include "debug.h"
 #include "buffer_mgr.h"
 #include "enc.h"
-#include "pixel_format_map.h"  // For ENC_BYTES_PER_PIXEL
+#include "pixel_format_map.h"
 #include <string.h>
 #include <stdio.h>
 #include "uvc.h"
 #include "websocket_stream_server.h"
 #include "camera.h"
-#include "h264encapi.h"  // For H264ENC_INTRA_FRAME, H264ENC_PREDICTED_FRAME
+#include "h264encapi.h"
+#include "Services/Video/video_stream_hub.h"
 
 /* ==================== Internal Function Declarations ==================== */
 
@@ -38,7 +39,8 @@ static aicam_result_t video_encoder_encode_frame_zero_copy(video_encoder_node_da
 
 /* ==================== API Implementation ==================== */
 
-void video_encoder_get_default_config(video_encoder_config_t *config) {
+void video_encoder_get_default_config(video_encoder_config_t *config)
+{
     if (!config) return;
     
     memset(config, 0, sizeof(video_encoder_config_t));
@@ -47,23 +49,22 @@ void video_encoder_get_default_config(video_encoder_config_t *config) {
     config->fps = VENC_DEFAULT_FPS;
     config->input_type = VENC_DEFAULT_INPUT_TYPE;
     config->quality = 80;
-    config->bitrate = 2000; // 2Mbps
+    config->bitrate = 2000;
 }
 
-video_node_t* video_encoder_node_create(const char *name, const video_encoder_config_t *config) {
+video_node_t* video_encoder_node_create(const char *name, const video_encoder_config_t *config)
+{
     if (!name || !config) {
         LOG_CORE_ERROR("Invalid parameters for encoder node creation");
         return NULL;
     }
     
-    // Create node
     video_node_t *node = video_node_create(name, VIDEO_NODE_TYPE_ENCODER);
     if (!node) {
         LOG_CORE_ERROR("Failed to create encoder node");
         return NULL;
     }
     
-    // Allocate private data
     video_encoder_node_data_t *data = buffer_calloc(1, sizeof(video_encoder_node_data_t));
     if (!data) {
         LOG_CORE_ERROR("Failed to allocate encoder node data");
@@ -71,11 +72,9 @@ video_node_t* video_encoder_node_create(const char *name, const video_encoder_co
         return NULL;
     }
     
-    // Initialize private data
     memset(data, 0, sizeof(video_encoder_node_data_t));
     memcpy(&data->config, config, sizeof(video_encoder_config_t));
     
-    // Set node callbacks
     video_node_callbacks_t callbacks = {
         .init = video_encoder_node_init_callback,
         .deinit = video_encoder_node_deinit_callback,
@@ -91,38 +90,29 @@ video_node_t* video_encoder_node_create(const char *name, const video_encoder_co
         return NULL;
     }
     
-    // Set private data
     video_node_set_private_data(node, data);
-    
     LOG_CORE_INFO("Encoder node created: %s", name);
     return node;
 }
 
-
-
-aicam_result_t video_encoder_node_set_config(video_node_t *node, const video_encoder_config_t *config) {
+aicam_result_t video_encoder_node_set_config(video_node_t *node, const video_encoder_config_t *config)
+{
     if (!node || !config) return AICAM_ERROR_INVALID_PARAM;
     
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
     if (!data) return AICAM_ERROR_INVALID_PARAM;
     
-    // Stop encoder if running
-    if (data->is_running) {
-        video_encoder_stop_device(data);
-    }
+    if (data->is_running) video_encoder_stop_device(data);
     
-    // Update configuration
     memcpy(&data->config, config, sizeof(video_encoder_config_t));
     
-    // Restart encoder if it was running
-    if (data->is_running) {
-        return video_encoder_start_device(data);
-    }
+    if (data->is_running) return video_encoder_start_device(data);
     
     return AICAM_OK;
 }
 
-aicam_result_t video_encoder_node_get_config(video_node_t *node, video_encoder_config_t *config) {
+aicam_result_t video_encoder_node_get_config(video_node_t *node, video_encoder_config_t *config)
+{
     if (!node || !config) return AICAM_ERROR_INVALID_PARAM;
     
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
@@ -132,7 +122,8 @@ aicam_result_t video_encoder_node_get_config(video_node_t *node, video_encoder_c
     return AICAM_OK;
 }
 
-aicam_result_t video_encoder_node_get_stats(video_node_t *node, video_encoder_stats_t *stats) {
+aicam_result_t video_encoder_node_get_stats(video_node_t *node, video_encoder_stats_t *stats)
+{
     if (!node || !stats) return AICAM_ERROR_INVALID_PARAM;
     
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
@@ -142,7 +133,8 @@ aicam_result_t video_encoder_node_get_stats(video_node_t *node, video_encoder_st
     return AICAM_OK;
 }
 
-aicam_result_t video_encoder_node_reset_stats(video_node_t *node) {
+aicam_result_t video_encoder_node_reset_stats(video_node_t *node)
+{
     if (!node) return AICAM_ERROR_INVALID_PARAM;
     
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
@@ -152,89 +144,77 @@ aicam_result_t video_encoder_node_reset_stats(video_node_t *node) {
     return AICAM_OK;
 }
 
-aicam_result_t video_encoder_node_start(video_node_t *node) {
+aicam_result_t video_encoder_node_start(video_node_t *node)
+{
     if (!node) return AICAM_ERROR_INVALID_PARAM;
     
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
     if (!data) return AICAM_ERROR_INVALID_PARAM;
     
-    if (data->is_running) {
-        LOG_CORE_WARN("Encoder already running");
-        return AICAM_OK;
-    }
+    if (data->is_running) return AICAM_OK;
     
     return video_encoder_start_device(data);
 }
 
-aicam_result_t video_encoder_node_stop(video_node_t *node) {
+aicam_result_t video_encoder_node_stop(video_node_t *node)
+{
     if (!node) return AICAM_ERROR_INVALID_PARAM;
     
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
     if (!data) return AICAM_ERROR_INVALID_PARAM;
     
-    if (!data->is_running) {
-        LOG_CORE_WARN("Encoder not running");
-        return AICAM_OK;
-    }
+    if (!data->is_running) return AICAM_OK;
     
     return video_encoder_stop_device(data);
 }
 
-aicam_bool_t video_encoder_node_is_running(video_node_t *node) {
+aicam_bool_t video_encoder_node_is_running(video_node_t *node)
+{
     if (!node) return AICAM_FALSE;
     
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
-    if (!data) return AICAM_FALSE;
-    
-    return data->is_running;
+    return data ? data->is_running : AICAM_FALSE;
 }
 
 /* ==================== Callback Functions ==================== */
 
-static aicam_result_t video_encoder_node_init_callback(video_node_t *node) {
+static aicam_result_t video_encoder_node_init_callback(video_node_t *node)
+{
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
     if (!data) return AICAM_ERROR_INVALID_PARAM;
     
-    // Find encoder device (based on driver_test.c)
     data->encoder_dev = device_find_pattern(ENC_DEVICE_NAME, DEV_TYPE_VIDEO);
     if (!data->encoder_dev) {
         LOG_CORE_ERROR("Encoder device not found");
         return AICAM_ERROR;
     }
     
-    // Get encoder parameters (based on driver_test.c)
     device_ioctl(data->encoder_dev, ENC_CMD_GET_PARAM, 
                 (uint8_t *)&data->enc_param, sizeof(enc_param_t));
     
-    // Update encoder parameters with configuration
     data->enc_param.width = data->config.width;
     data->enc_param.height = data->config.height;
     data->enc_param.fps = data->config.fps;
     data->enc_param.bpp = ENC_BYTES_PER_PIXEL(data->config.input_type);
     data->enc_param.input_type = data->config.input_type;
     
-    // Set encoder parameters
     device_ioctl(data->encoder_dev, ENC_CMD_SET_PARAM, 
                 (uint8_t *)&data->enc_param, sizeof(enc_param_t));
     
-    LOG_CORE_INFO("Encoder node initialized: %dx%d@%dfps, input_type=%d", 
-                  data->config.width, data->config.height, data->config.fps, data->config.input_type);
+    LOG_CORE_INFO("Encoder node initialized: %dx%d@%dfps", 
+                  data->config.width, data->config.height, data->config.fps);
     
     data->is_initialized = AICAM_TRUE;
-
     video_encoder_start_device(data);
     return AICAM_OK;
 }
 
-static aicam_result_t video_encoder_node_deinit_callback(video_node_t *node) {
+static aicam_result_t video_encoder_node_deinit_callback(video_node_t *node)
+{
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
     if (!data) return AICAM_ERROR_INVALID_PARAM;
     
-    // Stop encoder if running
-    if (data->is_running) {
-        LOG_CORE_INFO("Encoder node deinit callback: stopping device");
-        video_encoder_stop_device(data);
-    }
+    if (data->is_running) video_encoder_stop_device(data);
     
     data->is_initialized = AICAM_FALSE;
     LOG_CORE_INFO("Encoder node deinitialized");
@@ -245,23 +225,18 @@ static aicam_result_t video_encoder_node_process_callback(video_node_t *node,
                                                         video_frame_t **input_frames,
                                                         uint32_t input_count,
                                                         video_frame_t **output_frames,
-                                                        uint32_t *output_count) {
+                                                        uint32_t *output_count)
+{
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
     if (!data || !input_frames || !output_frames || !output_count) return AICAM_ERROR_INVALID_PARAM;
     
-    if (!data->is_running) {
-        LOG_CORE_INFO("Encoder node process callback: not running");
-        *output_count = 0;
-        return AICAM_OK;
-    }
-    
-    // Process input frames
     *output_count = 0;
-    for (uint32_t i = 0; i < input_count && i < 1; i++) { // Process one frame at a time
+    if (!data->is_running) return AICAM_OK;
+    
+    for (uint32_t i = 0; i < input_count && i < 1; i++) {
         if (input_frames[i]) {
             video_frame_t *output_frame = NULL;
-            aicam_result_t result = video_encoder_encode_frame_zero_copy(data, input_frames[i], &output_frame);
-            if (result == AICAM_OK && output_frame) {
+            if (video_encoder_encode_frame_zero_copy(data, input_frames[i], &output_frame) == AICAM_OK && output_frame) {
                 output_frames[*output_count] = output_frame;
                 (*output_count)++;
             }
@@ -273,7 +248,8 @@ static aicam_result_t video_encoder_node_process_callback(video_node_t *node,
 
 static aicam_result_t video_encoder_node_control_callback(video_node_t *node,
                                                         uint32_t cmd,
-                                                        void *param) {
+                                                        void *param)
+{
     video_encoder_node_data_t *data = (video_encoder_node_data_t*)video_node_get_private_data(node);
     if (!data) return AICAM_ERROR_INVALID_PARAM;
     
@@ -306,7 +282,7 @@ static aicam_result_t video_encoder_node_control_callback(video_node_t *node,
             break;
             
         default:
-            LOG_CORE_WARN("Unknown encoder control command: 0x%x", cmd);
+            LOG_CORE_WARN("Unknown encoder command: 0x%x", cmd);
             break;
     }
     
@@ -315,101 +291,100 @@ static aicam_result_t video_encoder_node_control_callback(video_node_t *node,
 
 /* ==================== Internal Functions ==================== */
 
-static aicam_result_t video_encoder_start_device(video_encoder_node_data_t *data) {
+static aicam_result_t video_encoder_start_device(video_encoder_node_data_t *data)
+{
     if (!data || !data->is_initialized) return AICAM_ERROR_INVALID_PARAM;
+    if (data->is_running) return AICAM_OK;
     
-    if (data->is_running) {
-        LOG_CORE_WARN("Encoder already running");
-        return AICAM_OK;
-    }
-    
-    // Start encoder device (based on driver_test.c)
     aicam_result_t result = device_start(data->encoder_dev);
     if (result != AICAM_OK) {
-        LOG_CORE_ERROR("Failed to start encoder device: %d", result);
+        LOG_CORE_ERROR("Failed to start encoder: %d", result);
         return result;
     }
     
     data->is_running = AICAM_TRUE;
-    
     LOG_CORE_INFO("Encoder started: %dx%d@%dfps", 
                   data->config.width, data->config.height, data->config.fps);
-    
     return AICAM_OK;
 }
 
-static aicam_result_t video_encoder_stop_device(video_encoder_node_data_t *data) {
-    if (!data) return AICAM_ERROR_INVALID_PARAM;
+static aicam_result_t video_encoder_stop_device(video_encoder_node_data_t *data)
+{
+    if (!data || !data->is_running) return AICAM_OK;
     
-    if (!data->is_running) {
-        LOG_CORE_WARN("Encoder not running");
-        return AICAM_OK;
-    }
-    
-    // Stop encoder device (based on driver_test.c)
     aicam_result_t result = device_stop(data->encoder_dev);
     if (result != AICAM_OK) {
-        LOG_CORE_ERROR("Failed to stop encoder device: %d", result);
+        LOG_CORE_ERROR("Failed to stop encoder: %d", result);
         return result;
     }
     
     data->is_running = AICAM_FALSE;
-    
     LOG_CORE_INFO("Encoder stopped");
     return AICAM_OK;
 }
 
 static aicam_result_t video_encoder_encode_frame_zero_copy(video_encoder_node_data_t *data, 
                                                           video_frame_t *input_frame, 
-                                                          video_frame_t **output_frame) {
+                                                          video_frame_t **output_frame)
+{
     if (!data || !input_frame || !output_frame) return AICAM_ERROR_INVALID_PARAM;
     
-    // Input frame to encoder 
+    // Input frame to encoder
     aicam_result_t result = device_ioctl(data->encoder_dev, ENC_CMD_INPUT_BUFFER, 
                                         input_frame->data, input_frame->info.size);
     if (result != AICAM_OK) {
-        LOG_CORE_ERROR("Failed to input frame to encoder: %d", result);
         data->stats.encode_errors++;
         return result;
     }
     
-    // Get encoded output frame structure
+    // Get encoded output
     enc_out_frame_t enc_frame = {0};
-    result = device_ioctl(data->encoder_dev, ENC_CMD_OUTPUT_FRAME, 
-                         (uint8_t *)&enc_frame, 0);
+    result = device_ioctl(data->encoder_dev, ENC_CMD_OUTPUT_FRAME, (uint8_t *)&enc_frame, 0);
+    if (result != AICAM_OK || enc_frame.data_size == 0) {
+        data->stats.encode_errors++;
+        LOG_CORE_WARN("Encode failed: result=%d, data_size=%lu, errors=%lu", 
+                       result, (unsigned long)enc_frame.data_size, 
+                       (unsigned long)data->stats.encode_errors);
+        return AICAM_ERROR;
+    }
+
+    aicam_bool_t is_keyframe = (enc_frame.frame_info.codingType == H264ENC_INTRA_FRAME);
+    uint8_t *frame_data = enc_frame.frame_buffer + enc_frame.header_size;
+    uint32_t frame_size = enc_frame.data_size;
     
-    if (result != AICAM_OK) {
-        LOG_CORE_WARN("Failed to get encoded frame: %d", result);
-        data->stats.encode_errors++;
-        return AICAM_ERROR;
+    // Distribute via Video Hub (preferred mode)
+    if (video_hub_is_initialized() && video_hub_has_subscribers()) {
+        result = video_hub_inject_frame(
+            frame_data, frame_size,
+            input_frame->info.timestamp,
+            is_keyframe,
+            enc_frame.header_size,  // Reserved header space for zero-copy
+            input_frame->info.width,
+            input_frame->info.height
+        );
+        
+        if (result == AICAM_OK) {
+            data->stats.frames_encoded++;
+            data->stats.total_bytes_encoded += frame_size;
+        }
+    } else {
+        // Fallback: direct WebSocket send (legacy mode)
+        websocket_frame_type_t frame_type = is_keyframe ? 
+            WS_FRAME_TYPE_H264_KEY : WS_FRAME_TYPE_H264_DELTA;
+        
+        websocket_stream_server_send_frame_with_encoder_info(
+            enc_frame.frame_buffer, 
+            enc_frame.header_size + enc_frame.data_size, 
+            input_frame->info.timestamp, 
+            frame_type, 
+            input_frame->info.width, 
+            input_frame->info.height,
+            &enc_frame.frame_info);
+        
+        data->stats.frames_encoded++;
+        data->stats.total_bytes_encoded += frame_size;
     }
-
-    if (enc_frame.data_size == 0) {
-        LOG_CORE_WARN("Encoded frame data size is 0");
-        data->stats.encode_errors++;
-        return AICAM_ERROR;
-    }
-
-    // Determine frame type based on coding type
-    websocket_frame_type_t frame_type = WS_FRAME_TYPE_MJPEG; // Default for JPEG
-    if (enc_frame.frame_info.codingType == H264ENC_INTRA_FRAME) {
-        frame_type = WS_FRAME_TYPE_H264_KEY;
-    } else if (enc_frame.frame_info.codingType == H264ENC_PREDICTED_FRAME) {
-        frame_type = WS_FRAME_TYPE_H264_DELTA;
-    }  
-
-    // Send frame with encoder information
-    // Use the full frame buffer (including header space) for WebSocket header filling
-    websocket_stream_server_send_frame_with_encoder_info(
-        enc_frame.frame_buffer, 
-        enc_frame.header_size + enc_frame.data_size, 
-        input_frame->info.timestamp, 
-        frame_type, 
-        input_frame->info.width, 
-        input_frame->info.height,
-        &enc_frame.frame_info);
     
     *output_frame = NULL;
-
     return AICAM_OK;
 }

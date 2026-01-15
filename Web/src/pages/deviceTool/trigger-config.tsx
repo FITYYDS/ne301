@@ -22,7 +22,7 @@ import {
 import { type TriggerConfig } from './index';
 import { useLingui } from '@lingui/react';
 import SvgIcon from '@/components/svg-icon';
-import deviceTool, { type ImageTriggerReq }  from '@/services/api/deviceTool'
+import deviceTool, { type ImageTriggerReq } from '@/services/api/deviceTool'
 import { toast } from 'sonner';
 
 type TriggerConfigProps = {
@@ -47,13 +47,13 @@ export default function TriggerConfig({ triggerConfig, setTriggerConfig, childeR
   ])
   const initIntervalCaptureTime = () => {
     if (!triggerConfig.timer_trigger) return;
-    
-    if (triggerConfig.timer_trigger.interval_sec % 60 === 0) {
-      setIntervalCaptureTimeUnit('minute')
-      setIntervalCaptureTime(triggerConfig.timer_trigger.interval_sec / 60)
-    } else {
+
+    if ((triggerConfig.timer_trigger.interval_sec / 60) % 60 === 0 && triggerConfig.timer_trigger.interval_sec / 60 / 60 > 0) {
       setIntervalCaptureTimeUnit('hour')
       setIntervalCaptureTime(triggerConfig.timer_trigger.interval_sec / 60 / 60)
+    } else {
+      setIntervalCaptureTimeUnit('minute')
+      setIntervalCaptureTime(triggerConfig.timer_trigger.interval_sec / 60)
     }
 
     // Handle case where one second is the base point
@@ -112,9 +112,9 @@ export default function TriggerConfig({ triggerConfig, setTriggerConfig, childeR
     setTriggerConfig({ ...triggerConfig, timer_trigger: { ...triggerConfig.timer_trigger, time_node_count: newTimeNode.length, time_node: newTimeNode, weekdays: newWeekdays } })
   }
 
-  const handleIntervalCapture =  async () => {
+  const handleIntervalCapture = async () => {
     if (!triggerConfig.timer_trigger) return;
-    const formateTime  = intervalCaptureTimeUnit === 'hour' ? intervalCaptureTime * 60 * 60 : intervalCaptureTime * 60
+    const formateTime = intervalCaptureTimeUnit === 'hour' ? intervalCaptureTime * 60 * 60 : intervalCaptureTime * 60
     try {
       const newConfig = { ...triggerConfig, timer_trigger: { ...triggerConfig.timer_trigger, interval_sec: formateTime } }
       await setTriggerConfigApi(newConfig)
@@ -124,7 +124,7 @@ export default function TriggerConfig({ triggerConfig, setTriggerConfig, childeR
       throw error
     }
   }
-  const handleFixedCapture =  async () => {
+  const handleFixedCapture = async () => {
     if (!triggerConfig.timer_trigger) return;
     try {
       const newConfig = { ...triggerConfig, timer_trigger: { ...triggerConfig.timer_trigger, capture_mode: 'once' } }
@@ -137,8 +137,8 @@ export default function TriggerConfig({ triggerConfig, setTriggerConfig, childeR
   }
   const setTriggerConfigApi = async (config = triggerConfig) => {
     try {
-     await configTriggerConfigReq(config as unknown as ImageTriggerReq)
-     setTriggerConfig(config)
+      await configTriggerConfigReq(config as unknown as ImageTriggerReq)
+      setTriggerConfig(config)
     } catch (error) {
       console.error('setImageTrigger', error)
       throw error
@@ -166,12 +166,12 @@ export default function TriggerConfig({ triggerConfig, setTriggerConfig, childeR
       <div className="flex justify-between items-center gap-2">
         <Label className="text-sm text-text-primary">{i18n._('sys.device_tool.interval_capture')}</Label>
         <div className="flex items-center">
-          <Input 
-            type="number" 
+          <Input
+            type="number"
             min={1}
             max={999}
-            className="w-20" 
-            value={intervalCaptureTime} 
+            className="w-20"
+            value={intervalCaptureTime}
             onChange={handleIntervalCaptureTimeChange}
             onBlur={(e) => {
               const value = Number((e.target as HTMLInputElement).value);
@@ -222,7 +222,7 @@ export default function TriggerConfig({ triggerConfig, setTriggerConfig, childeR
         <div key={index}>
           <TimePicker
             showWeekSelect
-            customSlot={() => customSlot(() => handleDeleteFixedCapture(index))} 
+            customSlot={() => customSlot(() => handleDeleteFixedCapture(index))}
             value={`${WeekUnitMap.get(triggerConfig.timer_trigger?.weekdays?.[index] as unknown as number) || `${i18n._('common.everyday')}`} ${triggerConfig.timer_trigger?.time_node?.[index]}` || 'Everyday 00:00'}
             className="w-full mt-2"
             onChange={(value) => handleCaptureTimeChange(index, value)}
@@ -316,28 +316,28 @@ export default function TriggerConfig({ triggerConfig, setTriggerConfig, childeR
                 />
               </div>
             </div>
-              {triggerConfig.timer_trigger?.enable && (
-                <div className="border border-gray-200 border-solid p-2 rounded-md mt-2">
-                  <div className="flex items-center  justify-between">
-                    <Label className="text-sm text-text-primary">
-                      {i18n._('sys.device_tool.capture_mode')}
-                    </Label>
-                    <Select value={triggerConfig.timer_trigger?.capture_mode || 'interval'} onValueChange={(value) => setTriggerConfig({ ...triggerConfig, timer_trigger: { ...triggerConfig.timer_trigger, capture_mode: value } })}>
-                      <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent">
-                        <SelectValue placeholder={i18n._('sys.device_tool.trigger_in')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="interval">{i18n._('sys.device_tool.interval_capture')}</SelectItem>
-                        <SelectItem value="once">{i18n._('sys.device_tool.fixed_capture')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {/* Mode parameter options */}
-                  {triggerConfig.timer_trigger?.capture_mode === 'interval' && intervalCapture()}
-                  {triggerConfig.timer_trigger?.capture_mode === 'once' && fixedCapture()}
+            {triggerConfig.timer_trigger?.enable && (
+              <div className="border border-gray-200 border-solid p-4 rounded-md mt-2">
+                <div className="flex items-center  justify-between">
+                  <Label className="text-sm text-text-primary">
+                    {i18n._('sys.device_tool.capture_mode')}
+                  </Label>
+                  <Select value={triggerConfig.timer_trigger?.capture_mode || 'interval'} onValueChange={(value) => setTriggerConfig({ ...triggerConfig, timer_trigger: { ...triggerConfig.timer_trigger, capture_mode: value } })}>
+                    <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent">
+                      <SelectValue placeholder={i18n._('sys.device_tool.trigger_in')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="interval">{i18n._('sys.device_tool.interval_capture')}</SelectItem>
+                      <SelectItem value="once">{i18n._('sys.device_tool.fixed_capture')}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
-         
+                {/* Mode parameter options */}
+                {triggerConfig.timer_trigger?.capture_mode === 'interval' && intervalCapture()}
+                {triggerConfig.timer_trigger?.capture_mode === 'once' && fixedCapture()}
+              </div>
+            )}
+
           </div>
         </CardContent>
       </Card>

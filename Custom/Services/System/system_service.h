@@ -57,7 +57,9 @@ typedef enum {
     WAKEUP_SOURCE_IO = 0,                // IO trigger wakeup
     WAKEUP_SOURCE_RTC,                   // RTC timer wakeup
     WAKEUP_SOURCE_PIR,                   // PIR sensor wakeup
-    WAKEUP_SOURCE_BUTTON,                // Button press wakeup
+    WAKEUP_SOURCE_BUTTON,                // Button short press wakeup (take photo)
+    WAKEUP_SOURCE_BUTTON_LONG,           // Button long press wakeup 2s (enable AP)
+    WAKEUP_SOURCE_BUTTON_SUPER_LONG,     // Button super long press 10s (factory reset)
     WAKEUP_SOURCE_REMOTE,                // Remote wakeup (MQTT/Network)
     WAKEUP_SOURCE_WUFI,                  // WUFI wakeup
     WAKEUP_SOURCE_OTHER,                 // Other wakeup
@@ -606,6 +608,18 @@ aicam_result_t system_service_process_wakeup_event(void);
 
 /* ==================== Image Capture and Upload API ==================== */
 
+typedef struct {
+    aicam_bool_t enable_ai;
+    uint32_t chunk_size;
+    aicam_bool_t store_to_sd;
+    aicam_bool_t fast_fail_mqtt;  // AICAM_TRUE: quick fail if MQTT not connected
+} system_capture_request_t;
+
+typedef struct {
+    aicam_result_t result;
+    uint64_t duration_ms;
+} system_capture_response_t;
+
 /**
  * @brief Capture image with AI inference and upload to MQTT
  * @details This function performs the complete workflow:
@@ -623,6 +637,12 @@ aicam_result_t system_service_process_wakeup_event(void);
 aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai, 
                                                      uint32_t chunk_size,
                                                      aicam_bool_t store_to_sd);
+
+/**
+ * @brief Unified capture request entry with defaults and concurrency guard
+ */
+aicam_result_t system_service_capture_request(const system_capture_request_t *request,
+                                              system_capture_response_t *response);
 
 #ifdef __cplusplus
 }

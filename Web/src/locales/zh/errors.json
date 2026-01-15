@@ -38,7 +38,20 @@
       "NOT_IMPLEMENTED": "功能未实现",
       "SERVICE_UNAVAILABLE": "服务不可用",
       "GATEWAY_TIMEOUT": "网关超时",
-      "OTA_HEADER_VALIDATION_FAILED": "OTA 固件头验证失败"
+      "OTA_HEADER_VALIDATION_FAILED": "OTA 固件头验证失败",
+      "MQTT_NOT_CONNECTED": "MQTT 未连接",
+      "OPERATION_IN_PROGRESS": "操作正在进行中",
+      "OPERATION_FAILED": "操作失败",
+      "AT_COMMAND_FAILED":"AT指令执行失败",
+      "POE_STATUS_OFFLINE":"PoE 离线/未供电",
+      "POE_STATUS_LINK_DOWN":"网线未连接",
+      "POE_STATUS_CONNECTING":"正在连接（DHCP进行中）",
+      "POE_STATUS_DHCP_FAILED":"DHCP 获取IP失败",
+      "POE_STATUS_STATIC_CONFIG_ERROR":"静态IP配置错误",
+      "POE_STATUS_IP_CONFLICT":"IP地址冲突",
+      "POE_STATUS_GATEWAY_UNREACHABLE":"网关不可达",
+      "POE_STATUS_DNS_ERROR":"DNS解析错误",
+      "POE_STATUS_ERROR":"通用错误"
     },
     "basic": {
       "login_success": "登录成功！欢迎回来！"
@@ -48,6 +61,9 @@
       "file_is_larger_than": "文件大于",
       "file_is_smaller_than": "文件小于",
       "too_many_files": "文件过多"
+    },
+    "poe":{
+      "parameter_configuration_error":"参数配置错误"
     }
   }
 }

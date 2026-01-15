@@ -139,7 +139,6 @@ version-header:
 	@echo "Generating version header..."
 	@python $(VERSION_SCRIPT) -o $(VERSION_HEADER) \
 		$(if $(VERSION_BUILD),-b $(VERSION_BUILD)) \
-		--wakecore-version "$(WAKECORE_VERSION_STR)" \
 		--fsbl-version "$(FSBL_VERSION_STR)"
 
 ######################################

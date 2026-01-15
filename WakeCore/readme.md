@@ -1,3 +1,6 @@
+## V0.2.7.1
+* Add detection of wake-up events for long and long button presses
+
 ## V0.2.7
 * Improve and optimize the bridging module
 * Added firmware version information exchange instruction

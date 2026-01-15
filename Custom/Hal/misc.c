@@ -14,7 +14,7 @@ static int light_get_value(uint8_t *rate);
 static int battery_get_value(uint8_t *rate);
 
 static uint8_t led_tread_stack[1024 * 2] ALIGN_32 IN_PSRAM;
-static uint8_t key_tread_stack[1024 * 4] ALIGN_32 IN_PSRAM;
+static uint8_t key_tread_stack[1024 * 16] ALIGN_32 IN_PSRAM;
 const osThreadAttr_t ledTask_attributes = {
     .name = "ledTask",
     .priority = (osPriority_t) osPriorityNormal,
@@ -50,8 +50,8 @@ static key_instance_t f_key ={
         .read_key_state = key_read,
         .debounce_time = 20,
         .double_click_time = 300,
-        .long_press_time = 3000,
-        .super_long_press_time = 10000,
+        .long_press_time = 2000,       // 2s for AP enable
+        .super_long_press_time = 10000, // 10s for factory reset
         .short_press_cb = NULL,
         .double_click_cb = NULL,
         .long_press_cb = NULL,
@@ -685,10 +685,11 @@ static int battery_get_value(uint8_t *rate)
     ADC_get_value(&voltage, 2);
     pwr_manager_release(g_battery.pwr_handle);
 
+    voltage *= 4;
     LOG_SIMPLE("battery get voltage :%ld \r\n",voltage);
     if (voltage < BATTERY_MIN_VOLTAGE / 2) {
         // maybe typec inserted
-        *rate = 100;
+        *rate = 255;
     } else {
         voltage = MIN(MAX(voltage, BATTERY_MIN_VOLTAGE), BATTERY_MAX_VOLTAGE);
         *rate = (uint8_t)((voltage - BATTERY_MIN_VOLTAGE) * 100 / (BATTERY_MAX_VOLTAGE - BATTERY_MIN_VOLTAGE));

@@ -38,6 +38,7 @@ bool driver_core_init(void)
     sd_register();
     misc_register();
     rtc_register();
+#if !defined(POWER_MODULE_TEST) || !POWER_MODULE_TEST
     camera_register();
     // usbvideo_register();
     draw_register();
@@ -45,12 +46,14 @@ bool driver_core_init(void)
     enc_register();
     jpegc_register();
     // codec_register();
-    // netif_manager_register();
+    nn_register();
+#else
+    netif_manager_register();
+#endif
     netif_manager_register_commands();
     // wifi_register();
     // tls_test_register();
     // cat1_register();
-    nn_register();
 #if VIDEO_SEND_UVC
     uvc_register();
 #endif

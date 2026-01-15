@@ -234,6 +234,11 @@ void exti4_all_callback(void)
 void exti5_irq_register(void *f)
 {
     static uint8_t i = 0;
+    uint8_t j = 0;
+
+    for (j = 0; j < i; j++) {
+        if (exti5_callback[j] == (exit_callback)f) return;
+    }
     if (i < 5) {
         exti5_callback[i++] = (exit_callback)f;
     }
@@ -255,7 +260,7 @@ void exti8_irq_register(void *f)
     static uint8_t i = 0;
     uint8_t j = 0;
 
-    for (j = 0; j < 5; j++) {
+    for (j = 0; j < i; j++) {
         if (exti8_callback[j] == (exit_callback)f) return;
     }
     if (i < 5) {

@@ -52,5 +52,5 @@ static void icmp_client_cmd_register(void)
 
 void icmp_client_register(void)
 {
-    driver_cmd_register_callback("iperf", icmp_client_cmd_register);
+    driver_cmd_register_callback("icmp", icmp_client_cmd_register);
 }

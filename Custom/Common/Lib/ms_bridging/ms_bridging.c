@@ -604,6 +604,22 @@ int ms_bridging_request_version(ms_bridging_handler_t *handler, ms_bridging_vers
     return ret;
 }
 
+int ms_bridging_request_usbin_value(ms_bridging_handler_t *handler, uint32_t *usbin_value)
+{
+    void *data_out = NULL;
+    uint16_t len_out = 0;
+    int ret = ms_bridging_request(handler, MS_BR_FRAME_CMD_USB_VIN_VALUE, NULL, 0, &data_out, &len_out);
+    
+    if (ret == MS_BR_OK && data_out != NULL && len_out == sizeof(uint32_t)) {
+        memcpy(usbin_value, data_out, sizeof(uint32_t));
+        MS_BR_FREE(data_out);
+    } else if (data_out != NULL) {
+        MS_BR_FREE(data_out);
+    }
+    
+    return ret;
+}
+
 int ms_bridging_get_version_from_str(const char *version_str, ms_bridging_version_t *version)
 {
     if (version_str == NULL || version == NULL) return MS_BR_ERR_INVALID_ARG;

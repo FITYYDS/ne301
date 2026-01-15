@@ -35,6 +35,8 @@
 extern "C" {
 #endif
 
+#include <stdio.h>
+
 #if defined(DOXY_DOC_ONLY)
 /** Included for documentation purposes only. This define is not present by default.
  *  DEBUG_EFM should be defined from the compiler to enable the default internal
@@ -86,7 +88,12 @@ void assertEFM(const char *file, int line);
 #else
 
 /** Default assertion is not operational */
-#define EFM_ASSERT(expr)    ((void)(expr))
+#define EFM_ASSERT(expr)    {\
+    if (!(expr)) {\
+        printf("Assert failed: %s:%d\r\n", __FILE__, __LINE__);\
+        while (1);\
+    }\
+}
 
 #endif /* defined(DEBUG_EFM) || defined(DEBUG_EFM_USER) */
 

@@ -44,6 +44,18 @@ typedef struct {
 } led_config_t;
 
 /**
+ * @brief System indicator LED states
+ * @details Defines the visual indicator states for system status
+ */
+typedef enum {
+    SYSTEM_INDICATOR_SLEEP = 0,              // LED off - low power/power off mode
+    SYSTEM_INDICATOR_RUNNING_AP_OFF,         // Slow blink 1Hz - system running, AP closed
+    SYSTEM_INDICATOR_RUNNING_AP_ON,          // LED solid on - system running, AP open
+    SYSTEM_INDICATOR_FACTORY_RESET,          // Fast blink 5Hz - factory reset in progress
+    SYSTEM_INDICATOR_MAX
+} system_indicator_state_t;
+
+/**
  * @brief Camera configuration structure
  */
 typedef struct {
@@ -357,6 +369,24 @@ aicam_result_t device_service_led_off(void);
  * @return aicam_result_t Operation result
  */
 aicam_result_t device_service_led_blink(uint32_t blink_times, uint32_t interval_ms);
+
+/**
+ * @brief Set system indicator LED state
+ * @details Sets the LED according to system status:
+ *          - SYSTEM_INDICATOR_SLEEP: LED off
+ *          - SYSTEM_INDICATOR_RUNNING_AP_OFF: Slow blink 1Hz (500ms interval)
+ *          - SYSTEM_INDICATOR_RUNNING_AP_ON: LED solid on
+ *          - SYSTEM_INDICATOR_FACTORY_RESET: Fast blink 5Hz (100ms interval)
+ * @param state System indicator state
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t device_service_set_indicator_state(system_indicator_state_t state);
+
+/**
+ * @brief Get current system indicator LED state
+ * @return system_indicator_state_t Current indicator state
+ */
+system_indicator_state_t device_service_get_indicator_state(void);
 
 /* ==================== Sensor Interface ==================== */
 

@@ -85,6 +85,19 @@ aicam_result_t json_config_save_work_mode_config_to_nvs(const work_mode_config_t
     if (result != AICAM_OK)
         LOG_CORE_ERROR("Failed to save video stream mode enable to NVS");
 
+    // Save RTMP configuration (part of video_stream_mode)
+    result = json_config_nvs_write_bool(NVS_KEY_RTMP_ENABLE, config->video_stream_mode.rtmp_enable);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save RTMP enable to NVS");
+
+    result = json_config_nvs_write_string(NVS_KEY_RTMP_URL, config->video_stream_mode.rtmp_url);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save RTMP URL to NVS");
+
+    result = json_config_nvs_write_string(NVS_KEY_RTMP_STREAM_KEY, config->video_stream_mode.rtmp_stream_key);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save RTMP stream key to NVS");
+
     result = json_config_nvs_write_bool(NVS_KEY_PIR_ENABLE, config->pir_trigger.enable);
     if (result != AICAM_OK)
         LOG_CORE_ERROR("Failed to save pir trigger enable to NVS");
@@ -332,6 +345,10 @@ aicam_result_t json_config_save_device_service_image_config_to_nvs(const image_c
     if (result != AICAM_OK)
         LOG_CORE_ERROR("Failed to save image AEC to NVS");
 
+    result = json_config_nvs_write_uint32(NVS_KEY_IMAGE_SKIP_FRAMES, config->startup_skip_frames);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save image startup skip frames to NVS");
+
     LOG_CORE_INFO("Device service image configuration saved to NVS successfully");
     return result;
 }
@@ -444,9 +461,183 @@ aicam_result_t json_config_save_network_service_config_to_nvs(const network_serv
         snprintf(key_name, sizeof(key_name), "net_%u_time", i);
         result = json_config_nvs_write_uint32(key_name, config->known_networks[i].last_connected_time);
     }
+    
+    // Save communication type settings
+    result = json_config_nvs_write_uint32(NVS_KEY_COMM_PREFERRED_TYPE, config->preferred_comm_type);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save preferred comm type to NVS");
+    
+    result = json_config_nvs_write_bool(NVS_KEY_COMM_AUTO_PRIORITY, config->enable_auto_priority);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save auto priority to NVS");
+    
+    // Save cellular configuration
+    result = json_config_nvs_write_string(NVS_KEY_CELLULAR_APN, config->cellular.apn);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save cellular APN to NVS");
+    
+    result = json_config_nvs_write_string(NVS_KEY_CELLULAR_USERNAME, config->cellular.username);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save cellular username to NVS");
+    
+    result = json_config_nvs_write_string(NVS_KEY_CELLULAR_PASSWORD, config->cellular.password);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save cellular password to NVS");
+    
+    result = json_config_nvs_write_string(NVS_KEY_CELLULAR_PIN, config->cellular.pin_code);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save cellular PIN to NVS");
+    
+    result = json_config_nvs_write_uint8(NVS_KEY_CELLULAR_AUTH, config->cellular.authentication);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save cellular authentication to NVS");
+    
+    result = json_config_nvs_write_bool(NVS_KEY_CELLULAR_ROAMING, config->cellular.enable_roaming);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save cellular roaming to NVS");
+
+    // Save PoE configuration
+    aicam_result_t poe_result = json_config_save_poe_config_to_nvs(&config->poe);
+    if (poe_result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save PoE configuration to NVS");
 
     LOG_CORE_INFO("Network service configuration saved to NVS successfully");
     return result;
+}
+
+// Save PoE configuration to NVS
+aicam_result_t json_config_save_poe_config_to_nvs(const poe_config_persist_t *config)
+{
+    if (!config)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    aicam_result_t result = AICAM_OK;
+
+    // IP Mode
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_IP_MODE, (uint32_t)config->ip_mode);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save PoE IP mode to NVS");
+
+    // Static IP configuration (stored as 4-byte arrays converted to uint32)
+    uint32_t ip_val = ((uint32_t)config->ip_addr[0] << 24) | ((uint32_t)config->ip_addr[1] << 16) |
+                      ((uint32_t)config->ip_addr[2] << 8) | config->ip_addr[3];
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_IP_ADDR, ip_val);
+    
+    uint32_t mask_val = ((uint32_t)config->netmask[0] << 24) | ((uint32_t)config->netmask[1] << 16) |
+                        ((uint32_t)config->netmask[2] << 8) | config->netmask[3];
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_NETMASK, mask_val);
+    
+    uint32_t gw_val = ((uint32_t)config->gateway[0] << 24) | ((uint32_t)config->gateway[1] << 16) |
+                      ((uint32_t)config->gateway[2] << 8) | config->gateway[3];
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_GATEWAY, gw_val);
+    
+    uint32_t dns1_val = ((uint32_t)config->dns_primary[0] << 24) | ((uint32_t)config->dns_primary[1] << 16) |
+                        ((uint32_t)config->dns_primary[2] << 8) | config->dns_primary[3];
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_DNS_PRIMARY, dns1_val);
+    
+    uint32_t dns2_val = ((uint32_t)config->dns_secondary[0] << 24) | ((uint32_t)config->dns_secondary[1] << 16) |
+                        ((uint32_t)config->dns_secondary[2] << 8) | config->dns_secondary[3];
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_DNS_SECONDARY, dns2_val);
+    
+    result = json_config_nvs_write_string(NVS_KEY_POE_HOSTNAME, config->hostname);
+
+    // DHCP settings
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_DHCP_TIMEOUT, config->dhcp_timeout_ms);
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_DHCP_RETRY_COUNT, config->dhcp_retry_count);
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_DHCP_RETRY_INTERVAL, config->dhcp_retry_interval_ms);
+
+    // Recovery settings
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_RECOVERY_DELAY, config->power_recovery_delay_ms);
+    result = json_config_nvs_write_bool(NVS_KEY_POE_AUTO_RECONNECT, config->auto_reconnect);
+    result = json_config_nvs_write_bool(NVS_KEY_POE_PERSIST_LAST_IP, config->persist_last_ip);
+    
+    uint32_t last_ip_val = ((uint32_t)config->last_dhcp_ip[0] << 24) | ((uint32_t)config->last_dhcp_ip[1] << 16) |
+                           ((uint32_t)config->last_dhcp_ip[2] << 8) | config->last_dhcp_ip[3];
+    result = json_config_nvs_write_uint32(NVS_KEY_POE_LAST_DHCP_IP, last_ip_val);
+
+    // Validation settings
+    result = json_config_nvs_write_bool(NVS_KEY_POE_VALIDATE_GATEWAY, config->validate_gateway);
+    result = json_config_nvs_write_bool(NVS_KEY_POE_DETECT_CONFLICT, config->detect_ip_conflict);
+
+    LOG_CORE_INFO("PoE configuration saved to NVS successfully");
+    return AICAM_OK;
+}
+
+// Load PoE configuration from NVS
+aicam_result_t json_config_load_poe_config_from_nvs(poe_config_persist_t *config)
+{
+    if (!config)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    uint32_t temp_val = 0;
+
+    // IP Mode
+    if (json_config_nvs_read_uint32(NVS_KEY_POE_IP_MODE, &temp_val) == AICAM_OK)
+        config->ip_mode = (poe_ip_mode_t)temp_val;
+
+    // Static IP configuration
+    if (json_config_nvs_read_uint32(NVS_KEY_POE_IP_ADDR, &temp_val) == AICAM_OK) {
+        config->ip_addr[0] = (temp_val >> 24) & 0xFF;
+        config->ip_addr[1] = (temp_val >> 16) & 0xFF;
+        config->ip_addr[2] = (temp_val >> 8) & 0xFF;
+        config->ip_addr[3] = temp_val & 0xFF;
+    }
+    
+    if (json_config_nvs_read_uint32(NVS_KEY_POE_NETMASK, &temp_val) == AICAM_OK) {
+        config->netmask[0] = (temp_val >> 24) & 0xFF;
+        config->netmask[1] = (temp_val >> 16) & 0xFF;
+        config->netmask[2] = (temp_val >> 8) & 0xFF;
+        config->netmask[3] = temp_val & 0xFF;
+    }
+    
+    if (json_config_nvs_read_uint32(NVS_KEY_POE_GATEWAY, &temp_val) == AICAM_OK) {
+        config->gateway[0] = (temp_val >> 24) & 0xFF;
+        config->gateway[1] = (temp_val >> 16) & 0xFF;
+        config->gateway[2] = (temp_val >> 8) & 0xFF;
+        config->gateway[3] = temp_val & 0xFF;
+    }
+    
+    if (json_config_nvs_read_uint32(NVS_KEY_POE_DNS_PRIMARY, &temp_val) == AICAM_OK) {
+        config->dns_primary[0] = (temp_val >> 24) & 0xFF;
+        config->dns_primary[1] = (temp_val >> 16) & 0xFF;
+        config->dns_primary[2] = (temp_val >> 8) & 0xFF;
+        config->dns_primary[3] = temp_val & 0xFF;
+    }
+    
+    if (json_config_nvs_read_uint32(NVS_KEY_POE_DNS_SECONDARY, &temp_val) == AICAM_OK) {
+        config->dns_secondary[0] = (temp_val >> 24) & 0xFF;
+        config->dns_secondary[1] = (temp_val >> 16) & 0xFF;
+        config->dns_secondary[2] = (temp_val >> 8) & 0xFF;
+        config->dns_secondary[3] = temp_val & 0xFF;
+    }
+    
+    json_config_nvs_read_string(NVS_KEY_POE_HOSTNAME, config->hostname, sizeof(config->hostname));
+
+    // DHCP settings
+    json_config_nvs_read_uint32(NVS_KEY_POE_DHCP_TIMEOUT, &config->dhcp_timeout_ms);
+    json_config_nvs_read_uint32(NVS_KEY_POE_DHCP_RETRY_COUNT, &config->dhcp_retry_count);
+    json_config_nvs_read_uint32(NVS_KEY_POE_DHCP_RETRY_INTERVAL, &config->dhcp_retry_interval_ms);
+
+    // Recovery settings
+    json_config_nvs_read_uint32(NVS_KEY_POE_RECOVERY_DELAY, &config->power_recovery_delay_ms);
+    json_config_nvs_read_bool(NVS_KEY_POE_AUTO_RECONNECT, &config->auto_reconnect);
+    json_config_nvs_read_bool(NVS_KEY_POE_PERSIST_LAST_IP, &config->persist_last_ip);
+    
+    if (json_config_nvs_read_uint32(NVS_KEY_POE_LAST_DHCP_IP, &temp_val) == AICAM_OK) {
+        config->last_dhcp_ip[0] = (temp_val >> 24) & 0xFF;
+        config->last_dhcp_ip[1] = (temp_val >> 16) & 0xFF;
+        config->last_dhcp_ip[2] = (temp_val >> 8) & 0xFF;
+        config->last_dhcp_ip[3] = temp_val & 0xFF;
+    }
+
+    // Validation settings
+    json_config_nvs_read_bool(NVS_KEY_POE_VALIDATE_GATEWAY, &config->validate_gateway);
+    json_config_nvs_read_bool(NVS_KEY_POE_DETECT_CONFLICT, &config->detect_ip_conflict);
+
+    return AICAM_OK;
 }
 
 static aicam_result_t save_mqtt_base_config_to_nvs(const mqtt_base_config_t *config)
@@ -671,6 +862,58 @@ aicam_result_t json_config_save_mqtt_service_config_to_nvs(const mqtt_service_co
     return result;
 }
 
+/*=================== Video Stream Mode Configuration NVS Implementation ====================*/
+
+aicam_result_t json_config_get_video_stream_mode(video_stream_mode_config_t *config)
+{
+    if (!config) return AICAM_ERROR_INVALID_PARAM;
+    
+    aicam_result_t result;
+    aicam_bool_t temp_bool;
+    
+    result = json_config_nvs_read_bool(NVS_KEY_VIDEO_STREAM_MODE_ENABLE, &temp_bool);
+    if (result == AICAM_OK) config->enable = temp_bool;
+    
+    result = json_config_nvs_read_string(NVS_KEY_RTSP_URL, config->rtsp_server_url, sizeof(config->rtsp_server_url));
+    if (result != AICAM_OK) config->rtsp_server_url[0] = '\0';
+    
+    result = json_config_nvs_read_bool(NVS_KEY_RTMP_ENABLE, &temp_bool);
+    if (result == AICAM_OK) config->rtmp_enable = temp_bool;
+    
+    result = json_config_nvs_read_string(NVS_KEY_RTMP_URL, config->rtmp_url, sizeof(config->rtmp_url));
+    if (result != AICAM_OK) config->rtmp_url[0] = '\0';
+    
+    result = json_config_nvs_read_string(NVS_KEY_RTMP_STREAM_KEY, config->rtmp_stream_key, sizeof(config->rtmp_stream_key));
+    if (result != AICAM_OK) config->rtmp_stream_key[0] = '\0';
+    
+    return AICAM_OK;
+}
+
+aicam_result_t json_config_set_video_stream_mode(const video_stream_mode_config_t *config)
+{
+    if (!config) return AICAM_ERROR_INVALID_PARAM;
+    
+    aicam_result_t result = AICAM_OK;
+    
+    result = json_config_nvs_write_bool(NVS_KEY_VIDEO_STREAM_MODE_ENABLE, config->enable);
+    if (result != AICAM_OK) LOG_CORE_ERROR("Failed to save video stream mode enable");
+    
+    result = json_config_nvs_write_string(NVS_KEY_RTSP_URL, config->rtsp_server_url);
+    if (result != AICAM_OK) LOG_CORE_ERROR("Failed to save RTSP URL");
+    
+    result = json_config_nvs_write_bool(NVS_KEY_RTMP_ENABLE, config->rtmp_enable);
+    if (result != AICAM_OK) LOG_CORE_ERROR("Failed to save RTMP enable");
+    
+    result = json_config_nvs_write_string(NVS_KEY_RTMP_URL, config->rtmp_url);
+    if (result != AICAM_OK) LOG_CORE_ERROR("Failed to save RTMP URL");
+    
+    result = json_config_nvs_write_string(NVS_KEY_RTMP_STREAM_KEY, config->rtmp_stream_key);
+    if (result != AICAM_OK) LOG_CORE_ERROR("Failed to save RTMP stream key");
+    
+    LOG_CORE_INFO("Video stream mode configuration saved");
+    return AICAM_OK;
+}
+
 aicam_result_t json_config_save_to_nvs(const aicam_global_config_t *config)
 {
     if (!config)
@@ -741,6 +984,8 @@ aicam_result_t json_config_save_to_nvs(const aicam_global_config_t *config)
     result = json_config_save_mqtt_service_config_to_nvs(&config->mqtt_service);
     if (result != AICAM_OK)
         LOG_CORE_ERROR("Failed to save MQTT service configuration to NVS");
+
+    // Note: RTMP config is now part of video_stream_mode, saved via work_mode_config
 
     // Save auth manager configuration
     result = json_config_save_auth_mgr_config_to_nvs(&config->auth_mgr);
@@ -988,6 +1233,12 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
     else
         json_config_nvs_write_uint32(NVS_KEY_IMAGE_AEC, config->device_service.image_config.aec);
 
+    result = json_config_nvs_read_uint32(NVS_KEY_IMAGE_SKIP_FRAMES, &temp_uint32);
+    if (result == AICAM_OK)
+        config->device_service.image_config.startup_skip_frames = temp_uint32;
+    else
+        json_config_nvs_write_uint32(NVS_KEY_IMAGE_SKIP_FRAMES, config->device_service.image_config.startup_skip_frames);
+
     // Load device service configuration - light config
     result = json_config_nvs_read_bool(NVS_KEY_LIGHT_CONNECTED, &temp_bool);
     if (result == AICAM_OK)
@@ -1105,6 +1356,53 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
         snprintf(key_name, sizeof(key_name), "net_%u_time", i);
         result = json_config_nvs_read_uint32(key_name, &config->network_service.known_networks[i].last_connected_time);
     }
+    
+    // Load communication type settings
+    result = json_config_nvs_read_uint32(NVS_KEY_COMM_PREFERRED_TYPE, &temp_uint32);
+    if (result == AICAM_OK)
+        config->network_service.preferred_comm_type = temp_uint32;
+    else
+        json_config_nvs_write_uint32(NVS_KEY_COMM_PREFERRED_TYPE, config->network_service.preferred_comm_type);
+    
+    result = json_config_nvs_read_bool(NVS_KEY_COMM_AUTO_PRIORITY, &config->network_service.enable_auto_priority);
+    if (result != AICAM_OK)
+        json_config_nvs_write_bool(NVS_KEY_COMM_AUTO_PRIORITY, config->network_service.enable_auto_priority);
+    
+    // Load cellular configuration
+    result = json_config_nvs_read_string(NVS_KEY_CELLULAR_APN, config->network_service.cellular.apn, 
+                                        sizeof(config->network_service.cellular.apn));
+    if (result != AICAM_OK)
+        json_config_nvs_write_string(NVS_KEY_CELLULAR_APN, config->network_service.cellular.apn);
+    
+    result = json_config_nvs_read_string(NVS_KEY_CELLULAR_USERNAME, config->network_service.cellular.username, 
+                                        sizeof(config->network_service.cellular.username));
+    if (result != AICAM_OK)
+        json_config_nvs_write_string(NVS_KEY_CELLULAR_USERNAME, config->network_service.cellular.username);
+    
+    result = json_config_nvs_read_string(NVS_KEY_CELLULAR_PASSWORD, config->network_service.cellular.password, 
+                                        sizeof(config->network_service.cellular.password));
+    if (result != AICAM_OK)
+        json_config_nvs_write_string(NVS_KEY_CELLULAR_PASSWORD, config->network_service.cellular.password);
+    
+    result = json_config_nvs_read_string(NVS_KEY_CELLULAR_PIN, config->network_service.cellular.pin_code, 
+                                        sizeof(config->network_service.cellular.pin_code));
+    if (result != AICAM_OK)
+        json_config_nvs_write_string(NVS_KEY_CELLULAR_PIN, config->network_service.cellular.pin_code);
+    
+    result = json_config_nvs_read_uint8(NVS_KEY_CELLULAR_AUTH, &temp_uint8);
+    if (result == AICAM_OK)
+        config->network_service.cellular.authentication = temp_uint8;
+    else
+        json_config_nvs_write_uint8(NVS_KEY_CELLULAR_AUTH, config->network_service.cellular.authentication);
+    
+    result = json_config_nvs_read_bool(NVS_KEY_CELLULAR_ROAMING, &config->network_service.cellular.enable_roaming);
+    if (result != AICAM_OK)
+        json_config_nvs_write_bool(NVS_KEY_CELLULAR_ROAMING, config->network_service.cellular.enable_roaming);
+
+    // Load PoE configuration
+    result = json_config_load_poe_config_from_nvs(&config->network_service.poe);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to load PoE configuration from NVS");
 
     // Load MQTT service configuration - base config (persistable, no pointers)
     // Basic connection
@@ -1373,6 +1671,8 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
     else
         json_config_nvs_write_uint32(NVS_KEY_MQTT_HEARTBEAT_INTERVAL, (uint32_t)config->mqtt_service.heartbeat_interval_ms);
 
+    // Note: RTMP config is now part of video_stream_mode, loaded below
+
     // Load work mode configuration
     result = json_config_nvs_read_uint32(NVS_KEY_WORK_MODE, &temp_uint32);
     if (result == AICAM_OK)
@@ -1387,12 +1687,29 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
     else
         json_config_nvs_write_bool(NVS_KEY_IMAGE_MODE_ENABLE, config->work_mode_config.image_mode.enable);
 
-    // Load video stream mode enable
+    // Load video stream mode configuration (includes RTMP)
     result = json_config_nvs_read_bool(NVS_KEY_VIDEO_STREAM_MODE_ENABLE, &temp_bool);
     if (result == AICAM_OK)
         config->work_mode_config.video_stream_mode.enable = temp_bool;
     else
         json_config_nvs_write_bool(NVS_KEY_VIDEO_STREAM_MODE_ENABLE, config->work_mode_config.video_stream_mode.enable);
+
+    // Load RTMP enable
+    result = json_config_nvs_read_bool(NVS_KEY_RTMP_ENABLE, &temp_bool);
+    if (result == AICAM_OK)
+        config->work_mode_config.video_stream_mode.rtmp_enable = temp_bool;
+    else
+        json_config_nvs_write_bool(NVS_KEY_RTMP_ENABLE, config->work_mode_config.video_stream_mode.rtmp_enable);
+
+    // Load RTMP URL
+    result = json_config_nvs_read_string(NVS_KEY_RTMP_URL, config->work_mode_config.video_stream_mode.rtmp_url, sizeof(config->work_mode_config.video_stream_mode.rtmp_url));
+    if (result != AICAM_OK)
+        json_config_nvs_write_string(NVS_KEY_RTMP_URL, config->work_mode_config.video_stream_mode.rtmp_url);
+
+    // Load RTMP stream key
+    result = json_config_nvs_read_string(NVS_KEY_RTMP_STREAM_KEY, config->work_mode_config.video_stream_mode.rtmp_stream_key, sizeof(config->work_mode_config.video_stream_mode.rtmp_stream_key));
+    if (result != AICAM_OK)
+        json_config_nvs_write_string(NVS_KEY_RTMP_STREAM_KEY, config->work_mode_config.video_stream_mode.rtmp_stream_key);
 
     result = json_config_nvs_read_bool(NVS_KEY_PIR_ENABLE, &temp_bool);
     if (result == AICAM_OK)

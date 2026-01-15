@@ -8,6 +8,7 @@
 
 #define START_YEARS	1960
 #define TIMEZONE 8
+#define TIMEZONE_NVS_KEY "timezone"
 
 typedef struct {
     uint8_t year;
@@ -65,7 +66,10 @@ uint64_t rtc_get_timestamp_ms(void);
 uint64_t rtc_get_uptime_ms(void);
 void timeStamp_to_time(uint64_t timestamp, RTC_TIME_S *rtc_time);
 void rtc_setup(int year, int month, int day, int hour, int minute, int second, int weekday);
-void rtc_setup_by_timestamp(time_t timestamp, int timezone_offset_hours);
+void rtc_setup_by_timestamp(uint64_t timestamp, int timezone_offset_hours);
+void rtc_set_timeStamp(uint64_t timestamp);
+void rtc_set_timezone(int timezone_offset_hours);
+int rtc_get_timezone(void);
 int8_t usr_set_rtc_alarm(uint64_t wake_time);
 int rtc_register_wakeup_ex(rtc_wakeup_t *rtc_wakeup);
 int rtc_register_schedule_ex(rtc_schedule_t *rtc_schedule);

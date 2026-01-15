@@ -18,6 +18,8 @@
 #include "api_network_module.h"
 #include "api_device_module.h"
 #include "api_ota_module.h"
+#include "api_rtmp_module.h"
+#include "api_preview_module.h"
 #include <string.h>
 
 /* ==================== Web Service Context ==================== */
@@ -79,6 +81,8 @@ aicam_result_t web_service_init(void *config)
     web_api_register_network_module();
     web_api_register_device_module();
     web_api_register_ota_module();
+    web_api_register_rtmp_module();
+    web_api_register_preview_module();
 
     // Initialize static resources
     result = web_asset_adapter_init((const uint8_t*)WEB_ASSETS_FLASH_ADDRESS);
@@ -130,12 +134,12 @@ aicam_result_t web_service_start(void)
     }
     
     // Start video stream
-    result = websocket_stream_server_start_stream(1);
-    if (result != AICAM_OK) {
-        LOG_CORE_ERROR("Failed to start video stream: %d", result);
-        websocket_stream_server_stop();
-        return result;
-    }
+    // result = websocket_stream_server_start_stream(1);
+    // if (result != AICAM_OK) {
+    //     LOG_CORE_ERROR("Failed to start video stream: %d", result);
+    //     websocket_stream_server_stop();
+    //     return result;
+    // }
     
     g_web_service.running = AICAM_TRUE;
     g_web_service.state = SERVICE_STATE_RUNNING;

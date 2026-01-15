@@ -467,9 +467,9 @@ int32_t CMW_CAMERA_DeInit(void)
   CMW_CAMERA_PwrDown();
 
   /* Update DCMIPPInit counter */
-  is_camera_init--;
-  is_camera_started--;
-  is_pipe1_2_shared--;
+  is_camera_init = 0;
+  is_camera_started = 0;
+  is_pipe1_2_shared = 0;
 
   /* Return CMW status */
   ret = CMW_ERROR_NONE;
@@ -902,8 +902,8 @@ static void CMW_CAMERA_EnableGPIOs(void)
   /* Enable GPIO clocks */
   EN_CAM_GPIO_ENABLE_VDDIO();
   EN_CAM_GPIO_CLK_ENABLE();
-  NRST_CAM_GPIO_ENABLE_VDDIO();
-  NRST_CAM_GPIO_CLK_ENABLE();
+  // NRST_CAM_GPIO_ENABLE_VDDIO();
+  // NRST_CAM_GPIO_CLK_ENABLE();
 
   gpio_init_structure.Pin       = EN_CAM_PIN;
   gpio_init_structure.Pull      = GPIO_NOPULL;

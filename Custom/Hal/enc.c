@@ -940,6 +940,8 @@ static int enc_deinit(void *priv)
         enc->state_mtx = NULL;
     }
 
+    LL_VENC_DeInit();
+    
     return AICAM_OK;
 }
 

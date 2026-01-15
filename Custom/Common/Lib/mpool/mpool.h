@@ -101,7 +101,7 @@ void *ngx_slab_calloc(ngx_slab_pool_t *pool, size_t size);
 void *ngx_slab_calloc_locked(ngx_slab_pool_t *pool, size_t size);
 ngx_int_t ngx_slab_free(ngx_slab_pool_t *pool, void *p);
 ngx_int_t ngx_slab_free_locked(ngx_slab_pool_t *pool, void *p);
-void ngx_slab_stat(ngx_slab_pool_t *pool);
+void ngx_slab_stat(ngx_slab_pool_t *pool, ngx_slab_info_t *stat_info);
 bool ngx_slab_contains(ngx_slab_pool_t *pool, void *ptr);
 bool ngx_slab_validate(ngx_slab_pool_t *pool);
 

@@ -3,6 +3,8 @@ import H264Player from '@/lib/MSE/h264Player';
 import Loading from '@/components/loading';
 import PlayerPanel from './player-panel';
 import deviceTool from '@/services/api/deviceTool';
+import { toast } from 'sonner';
+import { useLingui } from '@lingui/react';
 
 type PlayerProps = {
   videoUrl: string;
@@ -12,6 +14,7 @@ type PlayerProps = {
 export default function Player({ videoUrl, videoRendererInstance }: PlayerProps) {
   const [loading, setLoading] = useState(false);
   const [isPlay, setIsPlay] = useState(false);
+  const { i18n } = useLingui();
   // isloading and isReload are mutually exclusive
   // const [isReload, setIsReload] = useState(false);
   const [isShowPanel, setIsShowPanel] = useState(false);
@@ -81,18 +84,14 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
     setIsPlay(true);
     setLoading(false);
   };
-  // const handleShowFps = () => {
-  //   setIsShowFps(!isShowFps);
-  //   if (isShowFps) {
-  //     // videoRendererInstance?.showFps();
-  //   } else {
-  //     // videoRendererInstance?.cleanFps();
-  //   }
-  // };
   useEffect(() => {
-    const handlWvClose = () => {
+    const handlWvClose = (e: Event) => {
+      const event = e as CustomEvent<{ code?: number; reason?: string }>;
+      if (event.detail.reason === 'Connection replaced') {
+        toast.error(i18n._('sys.device_tool.preview_disconnected'));
+      }
       setIsControlPanel(false);
-      setLoading(true);
+      setLoading(false);
     };
 
     const handleWvWork = (e: Event) => {
@@ -133,12 +132,6 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
     const onFsChange = () => {
       const isFs = Boolean(document.fullscreenElement);
       setIsFullscreen(isFs);
-      // Recalculate video size when fullscreen state changes, delay longer to avoid conflicts
-      // if (isFs) {
-      //   setTimeout(() => resizeVideo(), 200);
-      // } else {
-      //   setTimeout(() => resizeVideo(), 100);
-      // }
     };
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
@@ -197,51 +190,6 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
       clearIdle();
     };
   }, []);
-
-  // const resizeVideo = () => {
-  //   const container = containerRef.current;
-  //   const videoEl = videoRef.current;
-  //   if (!container || !videoEl) return;
-  //   const containerWidth = container.clientWidth;
-  //   const containerHeight = container.clientHeight;
-
-  //   // Calculate maximum size at 16:9 aspect ratio, ensure it does not exceed container
-  //   const aspectRatio = 16 / 9;
-  //   let videoWidth = containerWidth;
-  //   let videoHeight = containerWidth / aspectRatio;
-
-  //   // When fullscreen, prioritize filling height
-  //   if (document.fullscreenElement) {
-  //     videoHeight = containerHeight;
-  //     videoWidth = containerHeight * aspectRatio;
-  //     // If width exceeds, change to fill width
-  //     if (videoWidth > containerWidth) {
-  //       videoWidth = containerWidth;
-  //       videoHeight = containerWidth / aspectRatio;
-  //     }
-  //   } else if (isMobile) {
-  //     videoWidth = containerWidth;
-  //     videoHeight = containerWidth / aspectRatio;
-  //   } else if (videoHeight > containerHeight) {
-  //     // If height exceeds container, recalculate width based on height
-  //     videoHeight = containerHeight;
-  //     videoWidth = containerHeight * aspectRatio;
-  //   }
-
-  //   videoEl.style.width = `${videoWidth}px`;
-  //   videoEl.style.height = `${videoHeight}px`;
-  // };
-  // useEffect(() => {
-  //   const ro = new ResizeObserver(() => resizeVideo());
-  //   if (containerRef.current) ro.observe(containerRef.current);
-  //   const onWin = () => resizeVideo();
-  //   window.addEventListener('resize', onWin);
-  //   resizeVideo();
-  //   return () => {
-  //     ro.disconnect();
-  //     window.removeEventListener('resize', onWin);
-  //   };
-  // }, []);
 
   return (
     <div className="w-full h-full">

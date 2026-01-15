@@ -19,6 +19,7 @@
 // Include FreeRTOS headers
 #include "cmsis_os2.h"
 #include "drtc.h"
+#include "Services/Video/video_stream_hub.h"
 
 #define MAX_CLIENTS 2
 #define MAX_FRAME_SIZE (1024 * 512)
@@ -67,6 +68,10 @@ static struct {
     osThreadId_t server_task_id;
     volatile aicam_bool_t is_running;
     aicam_bool_t is_initialized;
+    
+    // Video Hub subscription 
+    video_hub_subscriber_id_t hub_subscriber_id;
+    aicam_bool_t hub_mode_enabled;  // whether Hub mode is enabled
 } g_websocket_server = {0};
 
 #define WS_BROADCAST_ID  ((unsigned long)-1)
@@ -91,6 +96,33 @@ static void ws_stream_send_ping_to_clients(void);
 static void ws_stream_check_pong_timeout(void);
 static aicam_bool_t ws_stream_is_client_alive(websocket_client_t *client);
 static uint8_t websocket_stack[1024 * 4] ALIGN_32 IN_PSRAM;
+
+// Video Hub callback functions
+static aicam_result_t ws_stream_on_hub_frame(const video_hub_frame_t *frame, void *user_data);
+static void ws_stream_on_hub_sps_pps(const video_hub_sps_pps_t *sps_pps, void *user_data);
+
+/**
+ * @brief Send close frame with status code and reason to a client
+ */
+static void ws_stream_send_close(struct mg_connection *conn, uint16_t code, const char *reason)
+{
+    if (!conn) return;
+
+    char payload[64] = {0};
+    size_t reason_len = reason ? strlen(reason) : 0;
+    if (reason_len > sizeof(payload) - 2) {
+        reason_len = sizeof(payload) - 2;
+    }
+
+    payload[0] = (uint8_t)(code >> 8);
+    payload[1] = (uint8_t)(code & 0xFF);
+    if (reason_len > 0) {
+        memcpy(&payload[2], reason, reason_len);
+    }
+
+    mg_ws_send(conn, payload, 2 + reason_len, WEBSOCKET_OP_CLOSE);
+    conn->is_draining = 1; // allow graceful close so client receives reason
+}
 
 /**
  * @brief Get relative timestamp
@@ -132,8 +164,8 @@ void websocket_stream_get_default_config(websocket_stream_config_t *config) {
     
     config->task_priority = (uint32_t)osPriorityRealtime;
     config->task_stack_size = 4096;
-    config->ping_interval_ms = 5000;      // 5 seconds default ping interval
-    config->pong_timeout_ms = 2000;       // 2 seconds default pong timeout
+    config->ping_interval_ms = 30000;     // 30 seconds ping interval (less aggressive)
+    config->pong_timeout_ms = 10000;      // 10 seconds pong timeout (more tolerant)
 }
 
 aicam_result_t websocket_stream_server_init(const websocket_stream_config_t *config) {
@@ -146,6 +178,7 @@ aicam_result_t websocket_stream_server_init(const websocket_stream_config_t *con
     
     // Clear global structure
     memset(&g_websocket_server, 0, sizeof(g_websocket_server));
+    g_websocket_server.hub_subscriber_id = VIDEO_HUB_INVALID_SUBSCRIBER_ID;
     
     // Copy configuration
     memcpy(&g_websocket_server.config, config, sizeof(websocket_stream_config_t));
@@ -182,6 +215,9 @@ aicam_result_t websocket_stream_server_deinit(void) {
     if (!g_websocket_server.is_initialized) {
         return AICAM_OK;
     }
+    
+    // 取消Hub订阅
+    websocket_stream_server_unsubscribe_hub();
     
     // Ensure server is stopped
     websocket_stream_server_stop();
@@ -272,6 +308,13 @@ aicam_result_t websocket_stream_server_start_stream(uint32_t stream_id) {
         return AICAM_ERROR_NOT_INITIALIZED;
     }
     
+    // Subscribe to Video Hub (receive encoded frames via Hub)
+    aicam_result_t result = websocket_stream_server_subscribe_hub();
+    if (result != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to subscribe to Video Hub");
+        return result;
+    }
+    
     osMutexAcquire(g_websocket_server.mutex, osWaitForever);
     
     g_websocket_server.stream_active = AICAM_TRUE;
@@ -284,7 +327,7 @@ aicam_result_t websocket_stream_server_start_stream(uint32_t stream_id) {
     
     osMutexRelease(g_websocket_server.mutex);
     
-    LOG_SVC_INFO("WebSocket stream started - ID: %u", stream_id);
+    LOG_SVC_INFO("WebSocket stream started (Hub mode) - ID: %u", stream_id);
     return AICAM_OK;
 }
 
@@ -292,6 +335,9 @@ aicam_result_t websocket_stream_server_stop_stream(void) {
     if (!g_websocket_server.is_initialized) {
         return AICAM_ERROR_NOT_INITIALIZED;
     }
+    
+    // Unsubscribe from Video Hub
+    websocket_stream_server_unsubscribe_hub();
     
     osMutexAcquire(g_websocket_server.mutex, osWaitForever);
     
@@ -301,18 +347,23 @@ aicam_result_t websocket_stream_server_stop_stream(void) {
     
     osMutexRelease(g_websocket_server.mutex);
     
-    LOG_SVC_INFO("WebSocket stream stopped");
+    LOG_SVC_INFO("WebSocket stream stopped (Hub unsubscribed)");
     return AICAM_OK;
 }
 
+/**
+ * @deprecated After using Hub mode, this function is deprecated. Frames are automatically distributed to WebSocket via video_hub.
+ */
 aicam_result_t websocket_stream_server_send_frame(const void *frame_data, size_t frame_size, 
                                                 uint64_t timestamp, websocket_frame_type_t frame_type,
                                                 uint32_t width, uint32_t height) {
-    // Call the extended function with NULL encoder info
     return websocket_stream_server_send_frame_with_encoder_info(frame_data, frame_size, timestamp, 
                                                               frame_type, width, height, NULL);
 }
 
+/**
+ * @deprecated After using Hub mode, this function is deprecated. Frames are automatically distributed to WebSocket via video_hub.
+ */
 aicam_result_t websocket_stream_server_send_frame_with_encoder_info(const void *frame_data, size_t frame_size, 
                                                                    uint64_t timestamp, websocket_frame_type_t frame_type,
                                                                    uint32_t width, uint32_t height,
@@ -591,14 +642,7 @@ static void ws_stream_add_client(struct mg_connection *conn) {
     
     if (g_websocket_server.client_count >= g_websocket_server.config.max_clients) {
         // Send close frame and close connection
-        struct MessageData message_data = {
-            .buf = "Too many clients",
-            .size = 16,
-            .ws_op = WEBSOCKET_OP_CLOSE,
-            .target_id = conn->id
-        };
-        mg_wakeup(&g_websocket_server.mgr, 1, &message_data, sizeof(message_data));
-        conn->is_closing = 1;
+        ws_stream_send_close(conn, 1000, "Too many clients");
         osMutexRelease(g_websocket_server.mutex);
         LOG_SVC_WARN("Rejected connection from %s: too many clients", client_ip);
         return;
@@ -712,14 +756,7 @@ static void ws_stream_cleanup_old_connections(const char *client_ip) {
         // Find the connection by ID and close it
         for (struct mg_connection *conn = g_websocket_server.mgr.conns; conn != NULL; conn = conn->next) {
             if (conn->id == conn_ids_to_close[j] && conn->data[0] == 'W') {
-                struct MessageData message_data = {
-                    .buf = "Connection replaced",
-                    .size = 18,
-                    .ws_op = WEBSOCKET_OP_CLOSE,
-                    .target_id = conn->id
-                };
-                mg_wakeup(&g_websocket_server.mgr, 1, &message_data, sizeof(message_data));
-                conn->is_closing = 1;
+                ws_stream_send_close(conn, 1000, "Connection replaced");
                 break;
             }
         }
@@ -836,14 +873,7 @@ static void ws_stream_check_pong_timeout(void) {
                             g_websocket_server.clients[i].client_ip);
                 
                 // Close connection
-                struct MessageData message_data = {
-                    .buf = "Pong timeout",
-                    .size = 12,
-                    .ws_op = WEBSOCKET_OP_CLOSE,
-                    .target_id = g_websocket_server.clients[i].conn->id
-                };
-                mg_wakeup(&g_websocket_server.mgr, 1, &message_data, sizeof(message_data));
-                g_websocket_server.clients[i].conn->is_closing = 1;
+                ws_stream_send_close(g_websocket_server.clients[i].conn, 1000, "Pong timeout");
                 
                 // Mark as inactive
                 g_websocket_server.clients[i].is_active = AICAM_FALSE;
@@ -855,6 +885,166 @@ static void ws_stream_check_pong_timeout(void) {
     }
     
     osMutexRelease(g_websocket_server.mutex);
+}
+
+/* ==================== Video Hub Callbacks ==================== */
+
+/**
+ * @brief Hub frame callback - broadcast encoded frame to all WebSocket clients
+ */
+static aicam_result_t ws_stream_on_hub_frame(const video_hub_frame_t *frame, void *user_data)
+{
+    (void)user_data;
+    
+    if (!g_websocket_server.is_initialized || !g_websocket_server.stream_active) {
+        return AICAM_ERROR_UNAVAILABLE;
+    }
+    
+    if (!frame || frame->size == 0) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    
+    if (g_websocket_server.client_count == 0) {
+        return AICAM_OK;
+    }
+    
+    osMutexAcquire(g_websocket_server.mutex, osWaitForever);
+    
+    uint8_t *send_data;
+    size_t send_size;
+    
+    // Check if reserved space is sufficient for WebSocket header
+    if (frame->header_offset >= sizeof(websocket_frame_header_t)) {
+        // Zero-copy: fill header in reserved space
+        send_data = frame->data - sizeof(websocket_frame_header_t);
+        websocket_frame_header_t *header = (websocket_frame_header_t*)send_data;
+        
+        header->magic = WS_TO_NETWORK_32(WS_FRAME_MAGIC);
+        header->version = WS_FRAME_VERSION;
+        header->frame_type = frame->is_keyframe ? WS_FRAME_TYPE_H264_KEY : WS_FRAME_TYPE_H264_DELTA;
+        header->reserved = 0;
+        header->timestamp = WS_TO_NETWORK_64(frame->timestamp);
+        header->frame_size = WS_TO_NETWORK_32(frame->size);
+        header->stream_id = WS_TO_NETWORK_32(g_websocket_server.current_stream_id);
+        header->sequence = WS_TO_NETWORK_32(g_websocket_server.frame_sequence);
+        header->width = WS_TO_NETWORK_32(frame->width);
+        header->height = WS_TO_NETWORK_32(frame->height);
+        header->format = 0;
+        header->flags = 0;
+        header->coding_type = 0;
+        header->stream_size = 0;
+        header->num_nalus = 0;
+        header->mse_mul256 = 0;
+        header->header_size = WS_TO_NETWORK_32(sizeof(websocket_frame_header_t));
+        
+        send_size = sizeof(websocket_frame_header_t) + frame->size;
+    } else {
+        // Fallback: send raw H.264 data without header
+        send_data = frame->data;
+        send_size = frame->size;
+    }
+    
+    // Debug: check H.264 data validity
+    uint8_t *h264_data = send_data + sizeof(websocket_frame_header_t);
+    if (send_size > sizeof(websocket_frame_header_t) + 4) {
+        // Check NAL type (first byte after start code)
+        if (h264_data[0] == 0 && h264_data[1] == 0 && h264_data[2] == 0 && h264_data[3] == 1) {
+            uint8_t nal_type = h264_data[4] & 0x1F;
+            if (nal_type == 0 || nal_type > 23) {
+                LOG_SVC_WARN("WS: Invalid NAL type=%d, frame_size=%lu, keyframe=%d",
+                             nal_type, (unsigned long)frame->size, frame->is_keyframe);
+            }
+        }
+    }
+    
+    ws_stream_broadcast_packet(send_data, send_size);
+    
+    // Update statistics
+    g_websocket_server.stats.total_frames_sent++;
+    g_websocket_server.stats.total_bytes_sent += send_size;
+    g_websocket_server.stream_frame_counter++;
+    g_websocket_server.frame_sequence++;
+    
+    uint64_t current_time_ms = get_relative_timestamp();
+    uint64_t stream_duration_ms = current_time_ms - g_websocket_server.stream_start_time_ms;
+    if (stream_duration_ms > 1000) {
+        g_websocket_server.stats.stream_fps = 
+            (uint32_t)(g_websocket_server.stream_frame_counter * 1000 / stream_duration_ms);
+    }
+    
+    osMutexRelease(g_websocket_server.mutex);
+    
+    return AICAM_OK;
+}
+
+/**
+ * @brief Hub SPS/PPS callback
+ */
+static void ws_stream_on_hub_sps_pps(const video_hub_sps_pps_t *sps_pps, void *user_data)
+{
+    (void)user_data;
+    
+    if (!sps_pps || !sps_pps->sps_data || !sps_pps->pps_data) {
+        return;
+    }
+    
+    LOG_SVC_INFO("WebSocket: SPS/PPS received (SPS=%u, PPS=%u bytes)",
+                 sps_pps->sps_size, sps_pps->pps_size);
+}
+
+/**
+ * @brief Subscribe to Video Hub to receive encoded frames
+ */
+aicam_result_t websocket_stream_server_subscribe_hub(void)
+{
+    if (!g_websocket_server.is_initialized) {
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+    
+    if (g_websocket_server.hub_subscriber_id != VIDEO_HUB_INVALID_SUBSCRIBER_ID) {
+        LOG_SVC_WARN("Already subscribed to Video Hub");
+        return AICAM_OK;
+    }
+    
+    if (!video_hub_is_initialized()) {
+        LOG_SVC_ERROR("Video Hub not initialized");
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+    
+    g_websocket_server.hub_subscriber_id = video_hub_subscribe(
+        VIDEO_HUB_SUBSCRIBER_WEBSOCKET,
+        ws_stream_on_hub_frame,
+        ws_stream_on_hub_sps_pps,
+        NULL
+    );
+    
+    if (g_websocket_server.hub_subscriber_id == VIDEO_HUB_INVALID_SUBSCRIBER_ID) {
+        LOG_SVC_ERROR("Failed to subscribe to Video Hub");
+        return AICAM_ERROR;
+    }
+    
+    g_websocket_server.hub_mode_enabled = AICAM_TRUE;
+    LOG_SVC_INFO("WebSocket subscribed to Video Hub, subscriber_id=%ld",
+                 (long)g_websocket_server.hub_subscriber_id);
+    
+    return AICAM_OK;
+}
+
+/**
+ * @brief unsubscribe from Video Hub (Video Hub mode)
+ */
+aicam_result_t websocket_stream_server_unsubscribe_hub(void)
+{
+    if (g_websocket_server.hub_subscriber_id == VIDEO_HUB_INVALID_SUBSCRIBER_ID) {
+        return AICAM_OK;
+    }
+    
+    video_hub_unsubscribe(g_websocket_server.hub_subscriber_id);
+    g_websocket_server.hub_subscriber_id = VIDEO_HUB_INVALID_SUBSCRIBER_ID;
+    g_websocket_server.hub_mode_enabled = AICAM_FALSE;
+    
+    LOG_SVC_INFO("WebSocket unsubscribed from Video Hub");
+    return AICAM_OK;
 }
 
 /* ==================== WebSocket Status Command ==================== */
@@ -888,8 +1078,8 @@ static void websocket_stream_display_status(void)
     printf("\r\n");
     
     printf("--- Statistics ---\r\n");
-    printf("  Uptime: %llu ms (%.2f hours)\r\n", 
-           (unsigned long long)stats.uptime_ms,
+    printf("  Uptime: %lu ms (%.2f hours)\r\n", 
+           (unsigned long)stats.uptime_ms,
            stats.uptime_ms / 3600000.0f);
     printf("  Total Connections: %lu\r\n", (unsigned long)stats.total_connections);
     printf("  Total Disconnections: %lu\r\n", (unsigned long)stats.total_disconnections);

@@ -440,7 +440,7 @@ int iperf_test_cmd_deal(int argc, char* argv[])
                 return -2;
             } else {
                 iperf_status[1] = 1;
-                sys_thread_new("iperf_server", iperf_server, iperf_arg, DEFAULT_THREAD_STACKSIZE, 62);
+                sys_thread_new("iperf_server", iperf_server, iperf_arg, 1024, 62);
             }
         }
     } else {
@@ -461,7 +461,7 @@ int iperf_test_cmd_deal(int argc, char* argv[])
                 return -2;
             } else {
                 iperf_status[0] = 1;
-                sys_thread_new("iperf_client", iperf_client, iperf_arg, DEFAULT_THREAD_STACKSIZE, 50);
+                sys_thread_new("iperf_client", iperf_client, iperf_arg, 1024, 50);
             }
         }
     }

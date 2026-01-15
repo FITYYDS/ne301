@@ -53,11 +53,11 @@ extern "C" {
   #define NRST_CAM_GPIO_ENABLE_VDDIO()    HAL_PWREx_EnableVddIO4();
   #define NRST_CAM_GPIO_CLK_ENABLE()      __HAL_RCC_GPIOC_CLK_ENABLE();
 
-  #define EN_CAM_PIN                      GPIO_PIN_2
-  #define EN_CAM_PORT                     GPIOD
+  #define EN_CAM_PIN                      GPIO_PIN_0
+  #define EN_CAM_PORT                     GPIOG
   /* PD2 on VDD Core */
   #define EN_CAM_GPIO_ENABLE_VDDIO()
-  #define EN_CAM_GPIO_CLK_ENABLE()          __HAL_RCC_GPIOD_CLK_ENABLE()
+  #define EN_CAM_GPIO_CLK_ENABLE()          __HAL_RCC_GPIOG_CLK_ENABLE()
 #endif /* STM32N6570_NUCLEO_REV */
 
 #ifdef STM32N6570_NUCLEO_REV

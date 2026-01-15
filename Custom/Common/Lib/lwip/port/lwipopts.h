@@ -70,7 +70,7 @@
 #endif
 
 #define LWIP_DNS                          LWIP_UDP
-#define LWIP_MDNS_RESPONDER               LWIP_UDP
+#define LWIP_MDNS_RESPONDER               0
 
 #define LWIP_NUM_NETIF_CLIENT_DATA        (LWIP_MDNS_RESPONDER)
 
@@ -218,7 +218,7 @@ a lot of data that needs to be copied, this should be set high. */
 /* TCP writable space (bytes). This must be less than or equal
    to TCP_SND_BUF. It is the amount of space which must be
    available in the tcp snd_buf for select to return writable */
-#define TCP_SNDLOWAT           (TCP_SND_BUF / 2)
+#define TCP_SNDLOWAT           (TCP_SND_BUF / 16)
 
 /* TCP receive window. */
 #define TCP_WND                (TCP_MSS * 8)
@@ -280,21 +280,21 @@ a lot of data that needs to be copied, this should be set high. */
 
 /* ---------- Statistics options ---------- */
 
-#define LWIP_STATS              0
+#define LWIP_STATS              1
 #define LWIP_STATS_DISPLAY      0
 
 #if LWIP_STATS
-#define LINK_STATS              1
-#define IP_STATS                1
-#define ICMP_STATS              1
-#define IGMP_STATS              1
-#define IPFRAG_STATS            1
-#define UDP_STATS               1
-#define TCP_STATS               1
+#define LINK_STATS              0
+#define IP_STATS                0
+#define ICMP_STATS              0
+#define IGMP_STATS              0
+#define IPFRAG_STATS            0
+#define UDP_STATS               0
+#define TCP_STATS               0
 #define MEM_STATS               1
-#define MEMP_STATS              1
-#define PBUF_STATS              1
-#define SYS_STATS               1
+#define MEMP_STATS              0
+#define PBUF_STATS              0
+#define SYS_STATS               0
 #endif /* LWIP_STATS */
 
 /* ---------- NETBIOS options ---------- */

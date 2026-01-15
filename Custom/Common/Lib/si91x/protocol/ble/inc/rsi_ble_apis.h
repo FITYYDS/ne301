@@ -948,7 +948,7 @@ typedef struct rsi_ble_resp_inc_serv {
  */
 typedef struct rsi_ble_resp_att_value_s {
   /** Length of attribute value */
-  uint8_t len;
+  uint16_t len;
   /** Attribute values list. 
 - 
       Each attribute value is maximum of size 240, refer to RSI_DEV_ATT_LEN Macro */

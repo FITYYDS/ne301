@@ -376,7 +376,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     handle_HPDMA1_Channel3.Init.DestInc = DMA_DINC_INCREMENTED;
     handle_HPDMA1_Channel3.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
     handle_HPDMA1_Channel3.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    handle_HPDMA1_Channel3.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_HPDMA1_Channel3.Init.Priority = DMA_HIGH_PRIORITY;
     handle_HPDMA1_Channel3.Init.SrcBurstLength = 1;
     handle_HPDMA1_Channel3.Init.DestBurstLength = 1;
     handle_HPDMA1_Channel3.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;

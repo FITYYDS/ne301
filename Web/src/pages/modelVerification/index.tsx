@@ -75,14 +75,14 @@ export default function ModelVerification() {
       const proportionScaledFile = await proportionScaleImg({
         file,
         maxSize: 720,
-        quality: 0.9,
+        quality: 0.85,
       });
 
       const fixedScaledFile = await fixedScaleImg({
         file,
         aiImgHeight: aiImgSize.height,
         aiImgWidth: aiImgSize.width,
-        quality: 0.9,
+        quality: 0.85,
       });
 
       const formData = new FormData();
@@ -90,7 +90,7 @@ export default function ModelVerification() {
       formData.append('draw_image', proportionScaledFile.scaledFile);
       formData.append('ai_image_width', aiImgSize.width.toString());
       formData.append('ai_image_height', aiImgSize.height.toString());
-      formData.append('ai_image_quality', '90%');
+      formData.append('ai_image_quality', '85%');
       formData.append(
         'draw_image_width',
         proportionScaledFile.width.toString()
@@ -99,7 +99,7 @@ export default function ModelVerification() {
         'draw_image_height',
         proportionScaledFile.height.toString()
       );
-      formData.append('draw_image_quality', '90%');
+      formData.append('draw_image_quality', '85%');
 
       const inferenceImageRes = await inferenceImageReq(
         formData as unknown as InferenceImageReq

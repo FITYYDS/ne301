@@ -105,10 +105,20 @@ _tx_initialize_low_level:
     STR     r1, [r0, #0xD08]                        // Set vector table address
 
     /* Enable the cycle count register.  */
-    LDR     r0, =0xE0001000                         // Build address of DWT register
+#if (defined(TX_ENABLE_EXECUTION_CHANGE_NOTIFY) || defined(TX_EXECUTION_PROFILE_ENABLE))
+    /* First, enable TRCENA bit in DEMCR register (required for DWT to work) */
+    LDR     r0, =0xE000EDFC                         // Build address of DEMCR register
+    LDR     r1, [r0]                                // Pickup the current value
+    ORR     r1, r1, #0x01000000                     // Set the TRCENA bit (bit 24)
+    STR     r1, [r0]                                // Enable trace and debug
+    /* Now enable DWT Cycle Counter */
+    LDR     r0, =0xE0001000                         // Build address of DWT CTRL register
     LDR     r1, [r0]                                // Pickup the current value
     ORR     r1, r1, #1                              // Set the CYCCNTENA bit
     STR     r1, [r0]                                // Enable the cycle count register
+#else
+    LDR     r0, =0xE0001000                         // Build address of DWT CTRL register
+#endif
 
     /* Set system stack pointer from vector value.  */
     LDR     r0, =_tx_thread_system_stack_ptr        // Build address of system stack pointer

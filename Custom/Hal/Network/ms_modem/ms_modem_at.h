@@ -33,7 +33,7 @@ extern "C" {
 #define MODEM_AT_TX_TIMEOUT_DEFAULT		        (500)   /* UART default send timeout */
 #define MODEM_AT_TX_MUTEX_TAKE_TIMEOUT          (15000) /* AT command send mutex acquisition timeout */
 
-#define MODEM_AT_RSP_DATA_QUEUE_DEPTH           (8)     /* Response/report data queue depth */
+#define MODEM_AT_RSP_DATA_QUEUE_DEPTH           (MODEM_AT_RSP_MAX_LINE_NUM * 2)     /* Response/report data queue depth */
 
 #define MODEM_AT_CMD_RETRY_TIME			        (2)	    /* Maximum retry times for AT command sending */
 #define MODEM_AT_CMD_INTERVAL_DELAY             (0)     /* Wait time between AT command sending (unit: milliseconds) */
@@ -53,6 +53,7 @@ typedef enum
     MODEM_ERR_FMT,
     MODEM_ERR_MEM,
     MODEM_ERR_TIMEOUT,
+    MODEM_ERR_HW_NOT_CNT,
     MODEM_ERR_UNKNOW,
 } modem_err_t;
 
@@ -108,6 +109,7 @@ typedef enum {
  * @brief MODEM component context data structure
  */
 typedef struct {
+    uint8_t is_filter_echo;                     // Filter echo flag
 	modem_at_state_t state;                     // Component state
     at_rx_parser_t rx_parser;                   // Receive data parser
     QueueHandle_t rsp_queue;                    // AT response queue
@@ -124,6 +126,7 @@ int modem_at_cmd_list_exec(modem_at_handle_t *handle, const at_cmd_item_t *cmd_l
 
 int modem_at_rx_deal_handler(modem_at_handle_t *handle, const uint8_t *p_data, uint16_t len, uint32_t timeout_ms);
 int modem_at_test(modem_at_handle_t *handle, uint8_t *is_ate1, uint32_t timeout_ms);
+int modem_at_set_echo_filter(modem_at_handle_t *handle, uint8_t is_filter);
 
 int modem_at_cmd_wait_ok(modem_at_handle_t *handle, const char *cmd, uint32_t timeout_ms);
 int modem_at_cmd_wait_str(modem_at_handle_t *handle, const char *cmd, const char *rsp_str, uint32_t timeout_ms);

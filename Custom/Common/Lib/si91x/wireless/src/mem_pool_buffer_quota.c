@@ -52,7 +52,7 @@ static uint8_t quota[SLI_BUFFER_TYPE];
 /*---------------Static Function Declaration---------------------------------------*/
 static void sl_si91x_convert_config_structure_to_array(const sl_wifi_buffer_configuration_t *config);
 static sl_status_t sl_si91x_check_for_valid_config(const sl_wifi_buffer_configuration_t *config);
-static void sl_si91x_buffer_type_deallocation(sl_wifi_buffer_type_t type);
+void sl_si91x_buffer_type_deallocation(sl_wifi_buffer_type_t type);
 static void sl_si91x_buffer_type_allocation(sl_wifi_buffer_type_t type);
 static sl_status_t sl_si91x_check_for_buffer_availability(sl_wifi_buffer_type_t type);
 static bool sl_si91x_check_for_buffer_empty(void);
@@ -127,7 +127,8 @@ sl_status_t sli_si91x_host_allocate_buffer(sl_wifi_buffer_t **buffer,
 
   uint32_t start_time = osKernelGetTickCount(); // Capture the current system tick count to measure elapsed time
   uint32_t delay      = 2;                      // Initial delay duration in milliseconds
-  sl_status_t result;
+  sl_status_t result = SL_STATUS_OK;
+  *buffer = NULL;
 
   do {
     // Check if buffer quota is available for the given type
@@ -169,6 +170,14 @@ void *sl_si91x_host_get_buffer_data(sl_wifi_buffer_t *buffer, uint16_t offset, u
     *data_length = (uint16_t)(buffer->length) - offset;
   }
   return (void *)&buffer->data[offset];
+}
+
+int sli_si91x_host_check_buffer(sl_wifi_buffer_t *buffer)
+{
+  if ((uint32_t)buffer < (uint32_t)mem_pool.data || (uint32_t)buffer > ((uint32_t)mem_pool.data + (mem_pool.block_size * mem_pool.block_count))) {
+    return 0;
+  }
+  return 1;
 }
 
 void sli_si91x_host_free_buffer(sl_wifi_buffer_t *buffer)
@@ -227,7 +236,7 @@ static void sl_si91x_buffer_type_allocation(sl_wifi_buffer_type_t type)
   return;
 }
 
-static void sl_si91x_buffer_type_deallocation(sl_wifi_buffer_type_t type)
+void sl_si91x_buffer_type_deallocation(sl_wifi_buffer_type_t type)
 {
   CORE_DECLARE_IRQ_STATE;
   CORE_ENTER_CRITICAL();
@@ -251,3 +260,9 @@ static bool sl_si91x_check_for_buffer_empty(void)
   CORE_EXIT_CRITICAL();
   return true;
 }
+
+uint8_t sl_si91x_get_buffer_allocation(sl_wifi_buffer_type_t type)
+{
+  return buffer_allocation[type];
+}
+

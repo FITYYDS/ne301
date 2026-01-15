@@ -19,6 +19,8 @@ extern "C" {
 #define PWR_WAKEUP_FLAG_PIR_FALLING     (1 << 9)
 #define PWR_WAKEUP_FLAG_SI91X           (1 << 10)
 #define PWR_WAKEUP_FLAG_NET             (1 << 11)
+#define PWR_WAKEUP_FLAG_KEY_LONG_PRESS  (1 << 12)
+#define PWR_WAKEUP_FLAG_KEY_MAX_PRESS   (1 << 13)
 #define PWR_WAKEUP_FLAG_WUFI            (1 << 27)
 #define PWR_WAKEUP_FLAG_IWDG            (1 << 30)
 #define PWR_WAKEUP_FLAG_VALID           (1 << 31)
@@ -33,6 +35,8 @@ extern "C" {
 
 #define PWR_RTC_WAKEUP_MAX_TIME_S       (0xFFFFU)
 #define PWR_RTC_WAKEUP_ADV_OFFSET_S     (1)
+#define PWR_WAKEUP_KEY_LONG_PRESS_MS    (2000)
+#define PWR_WAKEUP_KEY_MAX_PRESS_MS     (10000)
 
 #define PWR_ALL_NAME                    "all"
 #define PWR_WIFI_NAME                   "wifi"
@@ -76,6 +80,8 @@ void pwr_enter_stop2(uint32_t wakeup_flags, uint32_t switch_bits, pwr_rtc_wakeup
 
 void pwr_n6_restart(uint32_t low_ms, uint32_t high_ms);
 uint32_t pwr_usb_is_active(void);
+
+void pwr_wait_for_key_release(void);
 
 #ifdef __cplusplus
 }

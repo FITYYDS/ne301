@@ -19,6 +19,8 @@
 #define PWR_WAKEUP_FLAG_PIR_FALLING     (1 << 9)        // pir falling wakeup
 #define PWR_WAKEUP_FLAG_SI91X           (1 << 10)       // wifi wakeup
 #define PWR_WAKEUP_FLAG_NET             (1 << 11)       // net wakeup
+#define PWR_WAKEUP_FLAG_KEY_LONG_PRESS  (1 << 12)       // key long press
+#define PWR_WAKEUP_FLAG_KEY_MAX_PRESS   (1 << 13)       // key long long press
 #define PWR_WAKEUP_FLAG_WUFI            (1 << 27)       // wufi wakeup
 #define PWR_WAKEUP_FLAG_VALID           (1 << 31)       // wakeup flag valid
 
@@ -83,6 +85,11 @@ int u0_module_get_pir_value(uint32_t *pir_value);
 
 /// @brief get u0 chip pir value from store
 uint32_t u0_module_get_pir_value_ex(void);
+
+/// @brief get u0 chip usbin value
+/// @param usbin_value usbin value
+/// @return 0 on success, other on error
+int u0_module_get_usbin_value(uint32_t *usbin_value);
 
 /// @brief get u0 chip version
 /// @param version version info

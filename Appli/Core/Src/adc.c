@@ -329,7 +329,7 @@ int ADC_get_value(uint32_t *value, uint8_t adc_num)
         return -1;
     }
 
-    *value = (adc_raw * 3300) / 4095;
+    *value = (adc_raw * 1800) / 4095;
 
     return 0;
 ADCEXIT:

@@ -29,18 +29,26 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-
+// #define UX_HCD_ECM_USE_USB_OTG_HS1  1
 /* USER CODE END Includes */
 
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
 extern HCD_HandleTypeDef hhcd_USB_OTG_HS1;
+#else
+extern PCD_HandleTypeDef hpcd_USB_OTG_HS1;
+#endif
 
-extern PCD_HandleTypeDef hpcd_USB_OTG_HS2;
+extern HCD_HandleTypeDef hhcd_USB_OTG_HS2;
 
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
 
+#ifdef UX_HCD_ECM_USE_USB_OTG_HS1
+void MX_USB1_OTG_HS_HCD_Init(void);
+#else
 void MX_USB1_OTG_HS_PCD_Init(void);
+#endif
 void MX_USB2_OTG_HS_HCD_Init(void);
 
 /* USER CODE BEGIN Prototypes */

@@ -22,7 +22,7 @@ export default function Login() {
   const { i18n } = useLingui();
   const navigate = useNavigate();
   const { setToken } = useAuthStore();
-  const { setCommunicationData } = useCommunicationData();
+  const { getAPConfig } = useCommunicationData();
   const { getDeviceInfo } = useSystemInfo();
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const usernameRef = useRef<HTMLInputElement>(null);
@@ -81,7 +81,7 @@ export default function Login() {
         if (token) {
           setToken(token);
         }
-        await setCommunicationData();
+        await getAPConfig();
         await getDeviceInfo();
       }
     } catch (error) {

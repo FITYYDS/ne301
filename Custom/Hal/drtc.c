@@ -3,6 +3,7 @@
 #include "rtc.h"
 #include "main.h"
 #include "debug.h"
+#include "storage.h"
 #include "common_utils.h"
 #include <sys/time.h>
 #include <reent.h> // For reentrant functions, need to include this header
@@ -48,7 +49,7 @@ const osThreadAttr_t rtcTask_attributes = {
     .stack_size = sizeof(rtc_tread_stack),
 };
 
-uint8_t aShowTime[32] = "yyyy-mm-dd hh:mm:ss"; 
+uint8_t aShowTime[32] = "yyyy-mm-dd hh:mm:ss weekday"; 
 /**
   * @brief RTC Initialization Function
   * @param None
@@ -142,33 +143,65 @@ static void RTC_init(void)
 uint64_t time_to_timeStamp(unsigned int year, unsigned int mon, unsigned int day,
                            unsigned int hour, unsigned int min, unsigned int sec)
 {
-    if ((int)(mon -= 2) <= 0) {
-        mon += 12;
-        year -= 1;
+    /* Parameter validation */
+    if (mon < 1 || mon > 12 || day < 1 || day > 31 || 
+        hour > 23 || min > 59 || sec > 59) {
+        return 0;
     }
 
-    uint64_t days = (uint64_t)(year / 4 - year / 100 + year / 400 + 367 * mon / 12 + day)
-                    + year * 365 - 719499;
+    /* Adjust month to March-based year (March = month 1, February = month 12 of previous year) */
+    unsigned int adjusted_mon = mon;
+    unsigned int adjusted_year = year;
+    if (adjusted_mon <= 2) {
+        adjusted_mon += 10;
+        adjusted_year -= 1;
+    }
 
-    // Get local timestamp first
-    uint64_t timestamp = ((days * 24 + hour) * 60 + min) * 60 + sec;
-    // Convert to UTC timestamp
-    timestamp -= g_rtc.timezone * 3600;
+    /* Calculate days since epoch (1970-01-01) using formula:
+     * days = (year/4 - year/100 + year/400 + 367*month/12 + day) + year*365 - 719499
+     * where 719499 is the number of days from epoch to 1970-01-01
+     */
+    uint64_t days = (uint64_t)(adjusted_year / 4U - adjusted_year / 100U + adjusted_year / 400U + 
+                                367U * adjusted_mon / 12U + day)
+                    + (uint64_t)adjusted_year * 365U - 719499U;
 
-    return timestamp;
+    /* Calculate local timestamp in seconds */
+    uint64_t timestamp = ((days * 24U + hour) * 60U + min) * 60U + sec;
+
+    /* Convert local timestamp to UTC timestamp, guard against underflow */
+    int64_t timezone_offset = (int64_t)g_rtc.timezone * 3600LL;
+    int64_t utc_timestamp = (int64_t)timestamp - timezone_offset;
+    
+    /* Clamp to 0 if result would be negative */
+    if (utc_timestamp < 0) {
+        utc_timestamp = 0;
+    }
+
+    return (uint64_t)utc_timestamp;
 }
 
 void timeStamp_to_time(uint64_t timestamp, RTC_TIME_S *rtc_time)
 {
     const uint16_t days_in_month[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
-    uint64_t seconds = timestamp + g_rtc.timezone * 3600; // Convert to local timestamp
-    uint32_t days = seconds / 86400;
-    uint32_t rem = seconds % 86400;
 
-    rtc_time->hour = rem / 3600;
-    rem = rem % 3600;
-    rtc_time->minute = rem / 60;
-    rtc_time->second = rem % 60;
+    if (rtc_time == NULL) {
+        return;
+    }
+
+    /* Convert UTC timestamp to local seconds, guard against underflow */
+    int64_t local_seconds = (int64_t)timestamp + (int64_t)g_rtc.timezone * 3600;
+    if (local_seconds < 0) {
+        local_seconds = 0;
+    }
+
+    uint64_t seconds = (uint64_t)local_seconds;
+    uint32_t days = seconds / 86400U;
+    uint32_t rem  = seconds % 86400U;
+
+    rtc_time->hour   = (uint8_t)(rem / 3600U);
+    rem              = rem % 3600U;
+    rtc_time->minute = (uint8_t)(rem / 60U);
+    rtc_time->second = (uint8_t)(rem % 60U);
 
     uint16_t year = 1970;
     while (1) {
@@ -183,7 +216,8 @@ void timeStamp_to_time(uint64_t timestamp, RTC_TIME_S *rtc_time)
             break;
         }
     }
-    rtc_time->year = year - 1970; 
+    /* rtc_time->year is stored as offset from 1970 here */
+    rtc_time->year = (uint8_t)(year - 1970);
 
     uint8_t month = 0;
     while (1) {
@@ -198,11 +232,14 @@ void timeStamp_to_time(uint64_t timestamp, RTC_TIME_S *rtc_time)
             break;
         }
     }
-    rtc_time->month = month + 1; 
-    rtc_time->date = days + 1;   
+    rtc_time->month = (uint8_t)(month + 1U);
+    rtc_time->date  = (uint8_t)(days + 1U);
 
-    rtc_time->dayOfWeek = (4 + (timestamp / 86400)) % 7;
-    if (rtc_time->dayOfWeek == 0) rtc_time->dayOfWeek = 7; 
+    /* Day of week: 1970-01-01 is Thursday (4). Use LOCAL days, not UTC days. */
+    rtc_time->dayOfWeek = (uint8_t)((4 + (seconds / 86400U)) % 7U);
+    if (rtc_time->dayOfWeek == 0U) {
+        rtc_time->dayOfWeek = 7U;
+    }
 
     rtc_time->subSecond = 0;
     rtc_time->timeStamp = timestamp;
@@ -383,14 +420,15 @@ static void RTC_TimeShow(uint8_t *showtime)
     HAL_RTC_GetTime(&hrtc, &stimestructureget, RTC_FORMAT_BIN);
     /* Get the RTC current Date */
     HAL_RTC_GetDate(&hrtc, &sdatestructureget, RTC_FORMAT_BIN);
-    /* Display date and time Format : yyyy-mm-dd hh:mm:ss */
-    sprintf((char *)showtime, "%02d-%02d-%02d %02d:%02d:%02d", 
+    /* Display date and time Format : yyyy-mm-dd hh:mm:ss weekday*/
+    sprintf((char *)showtime, "%02d-%02d-%02d %02d:%02d:%02d %d", 
         sdatestructureget.Year + START_YEARS, 
         sdatestructureget.Month, 
-        sdatestructureget.Date, 
+        sdatestructureget.Date,
         stimestructureget.Hours, 
         stimestructureget.Minutes, 
-        stimestructureget.Seconds);
+        stimestructureget.Seconds,
+        sdatestructureget.WeekDay);
     LOG_SIMPLE("%s \r\n", showtime);
 }
 
@@ -455,6 +493,8 @@ uint64_t rtc_get_uptime_ms(void)
 
 static int rtc_init(void *priv)
 {
+    int ret = 0;
+    char tmp[16] = {0};
     LOG_DRV_DEBUG("rtc_init \r\n");
     rtc_t *rtc = (rtc_t *)priv;
     rtc->mtx_id = osMutexNew(NULL);
@@ -465,8 +505,15 @@ static int rtc_init(void *priv)
     rtc->rtc_processId = osThreadNew(rtcProcess, rtc, &rtcTask_attributes);
     RTC_init();
     // rtc_setup(0x65, 0x6, 0x19, 0x8, 0x0, 0x0, 0x4);
-    rtc->timezone = TIMEZONE;
-    rtc->sched_manager.timezone = rtc->timezone;
+    ret = storage_nvs_read(NVS_USER, TIMEZONE_NVS_KEY, tmp, sizeof(tmp));
+    if (ret > 0) {
+        rtc->timezone = atoi(tmp);
+        rtc->sched_manager.timezone = rtc->timezone;
+    } else {
+        rtc->timezone = TIMEZONE;
+        rtc->sched_manager.timezone = rtc->timezone;
+    }
+    printf("timezone: %d\r\n", rtc->timezone);
     rtc->is_init = true;
     LOG_DRV_DEBUG("rtc_init end\r\n");
     return 0;
@@ -513,14 +560,25 @@ static int settimestamp_cmd(int argc, char* argv[])
         LOG_SIMPLE("Usage: settimestamp timestamp\r\n");
         return -1;
     }
-    rtc_setup_by_timestamp(atoi(argv[1]), g_rtc.timezone);
+    rtc_set_timeStamp(atoi(argv[1]));
+    return 0;
+}
+
+static int settimezone_cmd(int argc, char* argv[]) 
+{
+    if(argc != 2){
+        LOG_SIMPLE("Usage: settimezone timezone\r\n");
+        return -1;
+    }
+    rtc_set_timezone(atoi(argv[1]));
     return 0;
 }
 
 debug_cmd_reg_t rtc_cmd_table[] = {
     {"date",      "The current time",      date_cmd},
     {"setdate",   "Set RTC time",          setdate_cmd},
-    {"settimestamp", "Set RTC times",      settimestamp_cmd},
+    {"settimestamp", "Set timestamp",      settimestamp_cmd},
+    {"settimezone", "Set timezone",      settimezone_cmd},
 };
 
 
@@ -559,10 +617,17 @@ void rtc_setup(int year, int month, int day, int hour, int minute, int second, i
 #endif
 }
 
-void rtc_setup_by_timestamp(time_t timestamp, int timezone_offset_hours) 
+void rtc_setup_by_timestamp(uint64_t timestamp, int timezone_offset_hours) 
 {
+    char tmp[16] = {0};
     RTC_TIME_S rtc_time;
-    g_rtc.timezone = timezone_offset_hours;
+
+    if (timezone_offset_hours != g_rtc.timezone) {
+        g_rtc.timezone = timezone_offset_hours;
+        g_rtc.sched_manager.timezone = g_rtc.timezone;
+        snprintf(tmp, sizeof(tmp), "%d", g_rtc.timezone);
+        storage_nvs_write(NVS_USER, TIMEZONE_NVS_KEY, tmp, strlen(tmp) + 1);
+    }
     timeStamp_to_time(timestamp, &rtc_time); 
 
     int year, month, day, hour,minute, second, weekday;
@@ -576,6 +641,23 @@ void rtc_setup_by_timestamp(time_t timestamp, int timezone_offset_hours)
     weekday = DEC_TO_BCD(rtc_time.dayOfWeek);
 
     rtc_setup(year, month, day, hour, minute, second, weekday);
+}
+
+void rtc_set_timeStamp(uint64_t timestamp) 
+{
+    rtc_setup_by_timestamp(timestamp, g_rtc.timezone);
+}
+
+void rtc_set_timezone(int timezone_offset_hours) 
+{
+    uint64_t timestamp = rtc_get_timeStamp();
+    
+    rtc_setup_by_timestamp(timestamp, timezone_offset_hours);
+}
+
+int rtc_get_timezone(void) 
+{
+    return g_rtc.timezone;
 }
 
 int rtc_get_next_wakeup_time(int sched_id, uint64_t *next_wakeup)

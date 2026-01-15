@@ -252,8 +252,8 @@ int eg912u_netif_init(void)
             osDelay(NETIF_4G_CAT1_PPP_INTERVAL_MS);
         }
         ret = modem_device_init();
-    } while (ret != 0 && ++try_count < NETIF_4G_CAT1_TRY_CNT);
-    if (ret != 0) return ret;
+    } while (ret != MODEM_OK && ret != MODEM_ERR_HW_NOT_CNT && ++try_count < NETIF_4G_CAT1_TRY_CNT);
+    if (ret != MODEM_OK) return ret;
 
     ret = eg912u_update_info(1);
     if (ret != 0) goto eg912u_netif_init_exit;
@@ -334,6 +334,8 @@ int eg912u_netif_up(void)
         return ret;
     }
 #else
+    if (eg912u_netif_state() != NETIF_STATE_DOWN) return AICAM_ERROR_BUSY;
+
     ret = modem_device_wait_sim_ready(NETIF_4G_CAT1_INIT_TIMEOUT_MS);
     if (ret != MODEM_OK) {
         LOG_DRV_ERROR("modem wait sim ready failed(ret = %d)!", ret);
@@ -406,6 +408,7 @@ int eg912u_netif_down(void)
 #else
     uint32_t event = 0;
 #endif
+    if (eg912u_netif_state() != NETIF_STATE_UP) return AICAM_ERROR_BUSY;
 
     osMutexAcquire(eg912u_ppp_mutex, osWaitForever);
     if (eg912u_ppp_pcb) {
@@ -415,7 +418,8 @@ int eg912u_netif_down(void)
 #if USE_OLD_CAT1
         device_ioctl(cat1_dev, CAT1_CMD_EXIT_PPP, NULL, 0);
 #else
-        modem_device_exit_ppp(event & osFlagsError ? 1 : 0);
+        if (!(event & osFlagsError)) osDelay(NETIF_4G_CAT1_EXIT_DELAY_MS);
+        modem_device_exit_ppp((event & osFlagsError) ? 1 : 0);
 #endif
         osMutexAcquire(eg912u_ppp_mutex, osWaitForever);
         if (eg912u_ppp_pcb->phase != PPP_PHASE_DEAD) eg912u_ppp_pcb->phase = PPP_PHASE_DEAD;

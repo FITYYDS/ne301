@@ -76,8 +76,15 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : WIFI_STA_Pin WIFI_RESET_N_Pin PIR_INT_OUT_Pin */
-  GPIO_InitStruct.Pin = WIFI_ULP_WAKEUP_Pin|WIFI_RESET_N_Pin|PIR_INT_OUT_Pin;
+  /*Configure GPIO pins : WIFI_RESET_N_Pin */
+  GPIO_InitStruct.Pin = WIFI_RESET_N_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(WIFI_RESET_N_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : WIFI_ULP_WAKEUP_Pin PIR_INT_OUT_Pin */
+  GPIO_InitStruct.Pin = WIFI_ULP_WAKEUP_Pin|PIR_INT_OUT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
@@ -89,8 +96,15 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(WIFI_IRQ_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : WIFI_POC_IN_Pin PWR_WIFI_ON_Pin */
-  GPIO_InitStruct.Pin = WIFI_POC_IN_Pin|PWR_WIFI_ON_Pin|PWR_USB_Pin;
+  /*Configure GPIO pins : WIFI_POC_IN_Pin */
+  GPIO_InitStruct.Pin = WIFI_POC_IN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(WIFI_POC_IN_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PWR_WIFI_ON_Pin */
+  GPIO_InitStruct.Pin = PWR_WIFI_ON_Pin|PWR_USB_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -98,7 +112,7 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : WIFI_STA_Pin */
   GPIO_InitStruct.Pin = WIFI_STA_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(WIFI_STA_GPIO_Port, &GPIO_InitStruct);
 
