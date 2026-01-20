@@ -1,8 +1,14 @@
 #include "sd_file.h"
 #include "debug.h"
+#include "mem.h"
 #include "sdmmc.h"
 #include "exti.h"
 #include "common_utils.h"
+#include "drtc.h"
+
+#define SD_CHUNK_SIZE           4096
+#define SD_CHUNK_ALIGN          32
+#define SD_CHUNK_TYPE           MEM_FAST
 
 extern SD_HandleTypeDef hsd1;
 static sd_t g_sd = {0};
@@ -173,6 +179,17 @@ void HAL_SD_RxCpltCallback(SD_HandleTypeDef *hsd)
     osSemaphoreRelease(sd_sem_rx);
 }
 
+/**
+* @brief SD error callbacks
+* @param hsd: Pointer to SD handle
+* @retval None
+*/
+void HAL_SD_ErrorCallback(SD_HandleTypeDef *hsd)
+{
+    uint32_t error_code = HAL_SD_GetError(hsd);
+    printf("HAL_SD_ErrorCallback: ErrorCode=0x%08lX\r\n", error_code);
+}
+
 void sd_lock(void)
 {
     osMutexAcquire(g_sd.mtx_id, osWaitForever);
@@ -282,7 +299,16 @@ void* sd_filex_fopen(void *context, const char *path, const char *mode)
 int sd_filex_fclose(void *context, void *fd) 
 {
     FX_FILE *file = (FX_FILE*)fd;
-    fx_file_close(file);
+    UINT status;
+    
+    status = fx_file_close(file);
+    if (status != FX_SUCCESS) {
+        LOG_DRV_ERROR("fx_file_close failed: 0x%02X\r\n", status);
+        hal_mem_free(file);
+        // FileX returns UINT (unsigned int), so status is always >= 0
+        return -(int)status;
+    }
+    
     hal_mem_free(file);
     return 0;
 }
@@ -292,8 +318,47 @@ int sd_filex_fwrite(void *context, void *fd, const void *buf, size_t size)
 {
     FX_MEDIA *media = (FX_MEDIA*)context;
     FX_FILE *file = (FX_FILE*)fd;
-    fx_file_write(file, (void*)buf, size);
-    fx_media_flush(media);
+    void *buf_aligned = NULL;
+    UINT status;
+    
+    if (!hal_mem_is_internal((void *)buf)) {
+        buf_aligned = hal_mem_alloc_aligned(SD_CHUNK_SIZE, SD_CHUNK_ALIGN, SD_CHUNK_TYPE);
+        if (buf_aligned == NULL) {
+            LOG_DRV_ERROR("sd_filex_fwrite: cannot malloc buf_aligned\r\n");
+            return -1;
+        }
+        // cycle write
+        for (size_t i = 0; i < size; i += SD_CHUNK_SIZE) {
+            size_t chunk_size = SD_CHUNK_SIZE;
+            if (size - i < SD_CHUNK_SIZE) {
+                chunk_size = size - i;
+            }
+            memcpy(buf_aligned, (void *)buf + i, chunk_size);
+            status = fx_file_write(file, (void *)buf_aligned, chunk_size);
+            if (status != FX_SUCCESS) {
+                hal_mem_free(buf_aligned);
+                LOG_DRV_ERROR("fx_file_write failed: 0x%02X\r\n", status);
+                // FileX returns UINT (unsigned int), so status is always >= 0
+                return -(int)status;
+            }
+        }
+        hal_mem_free(buf_aligned);
+    } else {
+        status = fx_file_write(file, (void*)buf, size);
+        if (status != FX_SUCCESS) {
+            LOG_DRV_ERROR("fx_file_write failed: 0x%02X\r\n", status);
+            // FileX returns UINT (unsigned int), so status is always >= 0
+            // Error codes range from 0x00 to 0x97, safe to convert to negative
+            return -(int)status;
+        }
+    }
+    
+    status = fx_media_flush(media);
+    if (status != FX_SUCCESS) {
+        LOG_DRV_ERROR("fx_media_flush failed: 0x%02X\r\n", status);
+        return -(int)status;
+    }
+    
     return size;
 }
 
@@ -301,16 +366,61 @@ int sd_filex_fwrite(void *context, void *fd, const void *buf, size_t size)
 int sd_filex_fread(void *context, void *fd, void *buf, size_t size) 
 {
     FX_FILE *file = (FX_FILE*)fd;
-    unsigned long actual;
-    fx_file_read(file, buf, size, &actual);
-    return actual;
+    unsigned long actual = 0;
+    void *buf_aligned = NULL;
+    int actual_total = 0;
+    UINT status;
+
+    if (!hal_mem_is_internal(buf)) {
+        buf_aligned = hal_mem_alloc_aligned(SD_CHUNK_SIZE, SD_CHUNK_ALIGN, SD_CHUNK_TYPE);
+        if (buf_aligned == NULL) {
+            LOG_DRV_ERROR("sd_filex_fread: cannot malloc buf_aligned\r\n");
+            return -1;
+        }
+        // cycle read
+        while (actual_total < size) {
+            size_t chunk_size = SD_CHUNK_SIZE;
+            if (size - actual < SD_CHUNK_SIZE) {
+                chunk_size = size - actual;
+            }
+            status = fx_file_read(file, buf_aligned, chunk_size, &actual);
+            if (status != FX_SUCCESS) {
+                hal_mem_free(buf_aligned);
+                LOG_DRV_ERROR("fx_file_read failed: 0x%02X\r\n", status);
+                // FileX returns UINT (unsigned int), so status is always >= 0
+                return -(int)status;
+            }
+            memcpy((void *)buf + actual_total, buf_aligned, actual);
+            actual_total += actual;
+            if (actual != chunk_size) break;
+        }
+        hal_mem_free(buf_aligned);
+        actual = actual_total;
+    } else {
+        status = fx_file_read(file, buf, size, &actual);
+        if (status != FX_SUCCESS) {
+            LOG_DRV_ERROR("fx_file_read failed: 0x%02X\r\n", status);
+            // FileX returns UINT (unsigned int), so status is always >= 0
+            return -(int)status;
+        }
+    }
+    
+    return (int)actual;
 }
 
 // Delete file
 int sd_filex_remove(void *context, const char *path) 
 {
     FX_MEDIA *media = (FX_MEDIA*)context;
-    fx_file_delete(media, (char*)path);
+    UINT status;
+    
+    status = fx_file_delete(media, (char*)path);
+    if (status != FX_SUCCESS) {
+        LOG_DRV_ERROR("fx_file_delete failed: 0x%02X, path=%s\r\n", status, path);
+        // FileX returns UINT (unsigned int), so status is always >= 0
+        return -(int)status;
+    }
+    
     return 0;
 }
 
@@ -318,7 +428,15 @@ int sd_filex_remove(void *context, const char *path)
 int sd_filex_rename(void *context, const char *oldpath, const char *newpath) 
 {
     FX_MEDIA *media = (FX_MEDIA*)context;
-    fx_file_rename(media, (char*)oldpath, (char*)newpath);
+    UINT status;
+    
+    status = fx_file_rename(media, (char*)oldpath, (char*)newpath);
+    if (status != FX_SUCCESS) {
+        LOG_DRV_ERROR("fx_file_rename failed: 0x%02X, old=%s, new=%s\r\n", status, oldpath, newpath);
+        // FileX returns UINT (unsigned int), so status is always >= 0
+        return -(int)status;
+    }
+    
     return 0;
 }
 
@@ -334,6 +452,7 @@ int sd_filex_fseek(void *context, void *fd, long offset, int whence)
 {
     FX_FILE *file = (FX_FILE*)fd;
     unsigned long new_offset = 0;
+    UINT status;
 
     if (whence == SEEK_SET) {
         new_offset = offset;
@@ -342,7 +461,14 @@ int sd_filex_fseek(void *context, void *fd, long offset, int whence)
     } else if (whence == SEEK_END) {
         new_offset = file->fx_file_current_file_size + offset;
     }
-    fx_file_seek(file, new_offset);
+    
+    status = fx_file_seek(file, new_offset);
+    if (status != FX_SUCCESS) {
+        LOG_DRV_ERROR("fx_file_seek failed: 0x%02X, offset=%ld, whence=%d\r\n", status, offset, whence);
+        // FileX returns UINT (unsigned int), so status is always >= 0
+        return -(int)status;
+    }
+    
     return 0;
 }
 
@@ -350,7 +476,15 @@ int sd_filex_fseek(void *context, void *fd, long offset, int whence)
 int sd_filex_fflush(void *context, void *fd) 
 {
     FX_MEDIA *media = (FX_MEDIA*)context;
-    fx_media_flush(media);
+    UINT status;
+    
+    status = fx_media_flush(media);
+    if (status != FX_SUCCESS) {
+        LOG_DRV_ERROR("fx_media_flush failed: 0x%02X\r\n", status);
+        // FileX returns UINT (unsigned int), so status is always >= 0
+        return -(int)status;
+    }
+    
     return 0;
 }
 
@@ -505,6 +639,25 @@ static void sdProcess(void *argument)
     pwr_manager_acquire(sd->pwr_handle);
     osDelay(1000);
     fx_system_initialize();
+    
+    // Set FileX system time and date from RTC
+    RTC_TIME_S rtc_time = rtc_get_time();
+    if (rtc_time.year > 0) {  // Check if RTC is initialized
+        UINT year = rtc_time.year + 1960;  // RTC year is offset from 1960
+        UINT month = rtc_time.month;
+        UINT day = rtc_time.date;
+        UINT hour = rtc_time.hour;
+        UINT minute = rtc_time.minute;
+        UINT second = rtc_time.second;
+        
+        fx_system_date_set(year, month, day);
+        fx_system_time_set(hour, minute, second);
+        LOG_DRV_DEBUG("FileX time set from RTC: %04d-%02d-%02d %02d:%02d:%02d\r\n", 
+                      year, month, day, hour, minute, second);
+    } else {
+        LOG_DRV_DEBUG("RTC not initialized, using default FileX time\r\n");
+    }
+    
     sd->mode = SD_MODE_UNPLUG;
     if(SD_IsDetected()){
 

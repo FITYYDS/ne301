@@ -267,9 +267,7 @@ static uint32_t JPEG_Decode_DMA(JPEG_HandleTypeDef *hjpeg, jpegc_t *jpegc)
   */
 static uint32_t JPEG_DecodeOutputHandler(JPEG_HandleTypeDef *hjpeg)
 {
-
-    uint32_t ConvertedDataCount;
-    
+   
     if(DE_OUT_BufferTab.State == JPEG_BUFFER_FULL)
     {  
         // MCU_BlockIndex += pYCbCrToRGB_pConvert_Function(DE_OUT_BufferTab.DataBuffer, (uint8_t *)FrameBufferAddress, MCU_BlockIndex, DE_OUT_BufferTab.DataBufferSize, &ConvertedDataCount); 
@@ -515,7 +513,7 @@ static void jpegcProcess(void *argument)
                 jpegc->mode = JPEG_MODE_ENC_COMPLETE;
                 osSemaphoreRelease(jpegc->sem_enc);
             }
-            osDelay(10);
+            osDelay(1);
         }else if(jpegc->mode == JPEG_MODE_DEC){
 #if JPEG_USE_SOFT_CONV
             JPEG_DecodeInputHandler(&hjpeg);

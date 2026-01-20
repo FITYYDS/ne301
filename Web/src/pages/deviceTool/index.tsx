@@ -43,24 +43,7 @@ export interface ToolGuideProps {
   isLoading: boolean;
   onClose?: () => void;
 }
-export type TriggerConfig = {
-  pir_trigger: {
-    enable: boolean;
-    pin_number: number;
-    trigger_type: number;
-  };
-  timer_trigger: {
-    enable: boolean;
-    capture_mode: string;
-    interval_sec: number;
-    time_node_count: number;
-    time_node: string[];
-    weekdays: number[];
-  };
-  remote_trigger: {
-    enable: boolean;
-  };
-};
+
 export default function DeviceTool() {
   const { i18n } = useLingui();
 
@@ -73,7 +56,6 @@ export default function DeviceTool() {
     switchWorkModeReq,
     switchPowerModeReq,
     configVideoStreamPushReq,
-    getTriggerConfigReq,
     getAiParamsReq,
     setAiParamsReq,
     startVideoStreamReq,
@@ -131,31 +113,14 @@ export default function DeviceTool() {
     confidence_threshold: 0,
   });
   // Trigger method
-  const [triggerConfig, setTriggerConfig] = useState<TriggerConfig>({
-    pir_trigger: {
-      enable: true,
-      pin_number: 2,
-      trigger_type: 1,
-    },
-    timer_trigger: {
-      enable: false,
-      capture_mode: 'interval',
-      interval_sec: 60,
-      time_node_count: 0,
-      time_node: [],
-      weekdays: [],
-    },
-    remote_trigger: {
-      enable: false,
-    },
-  });
+
   const acceptFileType = {
     // Only accept .bin firmware files
     'application/octet-stream': ['.bin'],
   };
-  const onTriggerConfigChange = async (config: TriggerConfig) => {
-    setTriggerConfig(config);
-  };
+  // const onTriggerConfigChange = async (config: TriggerConfig) => {
+  //   setTriggerConfig(config);
+  // };
 
   const [isLoading, setIsLoading] = useState(true);
   const getAiStatus = async () => {
@@ -177,15 +142,15 @@ export default function DeviceTool() {
       throw error;
     }
   };
-  const initTriggerConfig = async () => {
-    try {
-      const res = await getTriggerConfigReq();
-      setTriggerConfig(res.data);
-    } catch (error) {
-      console.error('initTriggerConfig', error);
-      throw error;
-    }
-  };
+  // const initTriggerConfig = async () => {
+  //   try {
+  //     const res = await getTriggerConfigReq();
+  //     setTriggerConfig(res.data);
+  //   } catch (error) {
+  //     console.error('initTriggerConfig', error);
+  //     throw error;
+  //   }
+  // };
   const initPowerMode = async () => {
     try {
       const res = await getPowerModeReq();
@@ -213,7 +178,7 @@ export default function DeviceTool() {
       await Promise.allSettled([
         getAiStatus(),
         getWorkModeStatus(),
-        initTriggerConfig(),
+        // initTriggerConfig(),
         initPowerMode(),
         getAiParams(),
       ])
@@ -516,8 +481,6 @@ export default function DeviceTool() {
                     </Card>
                     <TriggerConfig
                       childeRef={triggerRef}
-                      triggerConfig={triggerConfig}
-                      setTriggerConfig={onTriggerConfigChange}
                     />
                   </div>
                 )}

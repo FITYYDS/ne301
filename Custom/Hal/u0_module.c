@@ -11,6 +11,16 @@
 
 static uint32_t g_key_value = 1, g_pir_value = 0, g_power_status = PWR_DEFAULT_SWITCH_BITS, g_wakeup_flag = 0;
 static uint8_t pir_is_inited = 0;
+typedef struct {
+    uint32_t type;
+    uint32_t value;
+    uint32_t timestamp;
+} value_change_event_t;
+#define VALUE_CHANGE_TYPE_KEY 0
+#define VALUE_CHANGE_TYPE_PIR 1
+#define VALUE_CHANGE_QUEUE_SIZE 10
+static osMessageQueueId_t value_change_event_queue = NULL;
+
 #define U9_MAX_RECV_LEN    256
 // static uint8_t u9_rx_res = 0;
 static uint8_t u9_rx_buf[U9_MAX_RECV_LEN] = {0};
@@ -78,6 +88,7 @@ int u0_module_send_func(uint8_t *buf, uint16_t len, uint32_t timeout_ms)
 void u0_module_notify_cb(void *handler, ms_bridging_frame_t *frame)
 {
     ms_bridging_version_t version = {0};
+    value_change_event_t value_change_event = {0};
     LOG_SIMPLE("u0 module notify: %d", frame->header.cmd);
 
     if (frame->header.type == MS_BR_FRAME_TYPE_REQUEST) {
@@ -96,13 +107,25 @@ void u0_module_notify_cb(void *handler, ms_bridging_frame_t *frame)
         switch (frame->header.cmd) {
             case MS_BR_FRAME_CMD_KEY_VALUE:
                 g_key_value = *(uint32_t *)frame->data;
-                LOG_SIMPLE("key value: %d", g_key_value);
+                if (value_change_event_queue != NULL) {
+                    value_change_event.type = VALUE_CHANGE_TYPE_KEY;
+                    value_change_event.value = g_key_value;
+                    value_change_event.timestamp = osKernelGetTickCount();
+                    osMessageQueuePut(value_change_event_queue, &value_change_event, 0, 0);
+                }
                 ms_bridging_event_ack(handler, frame);
+                LOG_SIMPLE("key value: %d", g_key_value);
                 break;
             case MS_BR_FRAME_CMD_PIR_VALUE:
                 g_pir_value = *(uint32_t *)frame->data;
-                LOG_SIMPLE("pir value: %d", g_pir_value);
+                if (value_change_event_queue != NULL) {
+                    value_change_event.type = VALUE_CHANGE_TYPE_PIR;
+                    value_change_event.value = g_pir_value;
+                    value_change_event.timestamp = osKernelGetTickCount();
+                    osMessageQueuePut(value_change_event_queue, &value_change_event, 0, 0);
+                }
                 ms_bridging_event_ack(handler, frame);
+                LOG_SIMPLE("pir value: %d", g_pir_value);
                 break;
             default:
                 break;
@@ -359,6 +382,61 @@ int u0_module_enter_sleep_mode_ex(uint32_t wakeup_flag, uint32_t switch_bits, ui
     return ret;
 }
 
+static u0_module_value_change_cb_t g_pir_value_change_cb = NULL;
+static u0_module_value_change_cb_t g_key_value_change_cb = NULL;
+
+int u0_module_pir_value_change_cb_register(u0_module_value_change_cb_t pir_value_change_cb)
+{
+    g_pir_value_change_cb = pir_value_change_cb;
+    return 0;
+}
+
+int u0_module_pir_value_change_cb_unregister(void)
+{
+    g_pir_value_change_cb = NULL;
+    return 0;
+}
+
+int u0_module_key_value_change_cb_register(u0_module_value_change_cb_t key_value_change_cb)
+{
+    g_key_value_change_cb = key_value_change_cb;
+    return 0;
+}
+
+int u0_module_key_value_change_cb_unregister(void)
+{
+    g_key_value_change_cb = NULL;
+    return 0;
+}
+
+void u0_module_callback_process(void)
+{
+    uint32_t current_timestamp = 0, diff_timestamp = 0;
+    value_change_event_t value_change_event = {0};
+
+    while (osMessageQueueGet(value_change_event_queue, &value_change_event, NULL, 0) == osOK) {
+        current_timestamp = osKernelGetTickCount();
+        if (current_timestamp < value_change_event.timestamp) diff_timestamp = UINT32_MAX - value_change_event.timestamp + current_timestamp;
+        else diff_timestamp = current_timestamp - value_change_event.timestamp;
+        if (diff_timestamp > 1000) continue; // 1s timeout
+        if (value_change_event.type == VALUE_CHANGE_TYPE_PIR) {
+            if (g_pir_value_change_cb != NULL) g_pir_value_change_cb(value_change_event.value);
+        } else if (value_change_event.type == VALUE_CHANGE_TYPE_KEY) {
+            if (g_key_value_change_cb != NULL) g_key_value_change_cb(value_change_event.value);
+        }
+    }
+}
+
+void u0_module_test_pir_value_change_cb(uint32_t pir_value)
+{
+    LOG_SIMPLE("pir value change: %d", pir_value);
+}
+
+void u0_module_test_key_value_change_cb(uint32_t key_value)
+{
+    LOG_SIMPLE("key value change: %d", key_value);
+}
+
 int u0_module_cmd_deal(int argc, char* argv[])
 {
     int ret = 0;
@@ -389,6 +467,7 @@ int u0_module_cmd_deal(int argc, char* argv[])
         return -1;
     }
 
+    if (g_key_value_change_cb == NULL) u0_module_key_value_change_cb_register(u0_module_test_key_value_change_cb);
     if (strcmp(argv[1], "key") == 0) {
         ret = u0_module_get_key_value(&value);
         if (ret != 0) {
@@ -614,6 +693,7 @@ int u0_module_cmd_deal(int argc, char* argv[])
             return ret;
         }
         pir_is_inited = 1;
+        u0_module_pir_value_change_cb_register(u0_module_test_pir_value_change_cb);
         LOG_SIMPLE("configure pir success");
     } else if (strcmp(argv[1], "sleep_pir") == 0) {
         if (!pir_is_inited) {
@@ -649,8 +729,16 @@ void u0_module_register(void)
     if (u0_tx_mutex != NULL) return;
     u0_tx_mutex = osMutexNew(NULL);
     if (u0_tx_mutex == NULL) return;
+    value_change_event_queue = osMessageQueueNew(VALUE_CHANGE_QUEUE_SIZE, sizeof(value_change_event_t), NULL);
+    if (value_change_event_queue == NULL) {
+        osMutexDelete(u0_tx_mutex);
+        u0_tx_mutex = NULL;
+        return;
+    }
     u0_handler = ms_bridging_init(u0_module_send_func, u0_module_notify_cb);
     if (u0_handler == NULL) {
+        osMessageQueueDelete(value_change_event_queue);
+        value_change_event_queue = NULL;
         osMutexDelete(u0_tx_mutex);
         u0_tx_mutex = NULL;
         return;
@@ -661,3 +749,4 @@ void u0_module_register(void)
     osThreadNew(ms_bridging_polling_task, NULL, &ms_bd_task_attributes);
     driver_cmd_register_callback("u0_tool", u0_module_cmd_register);
 }
+

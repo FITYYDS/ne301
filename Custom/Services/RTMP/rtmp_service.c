@@ -18,6 +18,7 @@
 #include "Core/Data/buffer_mgr.h"
 #include "service_init.h"
 #include "json_config_mgr.h"  // configuration persistence
+#include "Services/Device/device_service.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -824,6 +825,19 @@ aicam_result_t rtmp_service_start_stream(void)
     rtmp_pub_config_t pub_config = {0};
     rtmp_publisher_get_default_config(&pub_config);
     strncpy(pub_config.url, full_url, sizeof(pub_config.url) - 1);
+    
+    // Get actual camera configuration
+    camera_config_t camera_config;
+    aicam_result_t camera_result = device_service_camera_get_config(&camera_config);
+    if (camera_result == AICAM_OK) {
+        pub_config.width = camera_config.width;
+        pub_config.height = camera_config.height;
+        pub_config.fps = camera_config.fps;
+        LOG_SVC_INFO("Using camera config: %dx%d@%dfps", 
+                     pub_config.width, pub_config.height, pub_config.fps);
+    } else {
+        LOG_SVC_WARN("Failed to get camera config, using default: %d", camera_result);
+    }
 
     g_rtmp_ctx.publisher = rtmp_publisher_create(&pub_config);
     if (!g_rtmp_ctx.publisher) {

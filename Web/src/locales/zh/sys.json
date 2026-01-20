@@ -118,7 +118,17 @@
       "url_illegal": "URL格式错误",
       "url_length_error": "URL长度不能超过256个字符",
       "stream_key_illegal": "密钥格式错误",
-      "stream_key_length_error": "密钥长度不能超过128个字符"
+      "stream_key_length_error": "密钥长度不能超过128个字符",
+      "trigger_type": "触发方式",
+      "sensitivity_level": "灵敏度",
+      "ignore_time": "忽略时间",
+      "pulse_count": "脉冲计数",
+      "window_time": "窗口时间",
+      "rising_edge": "上升沿",
+      "falling_edge": "下降沿",
+      "both_edges": "双边沿",
+      "high_level": "高电平",
+      "low_level": "低电平"
     },
     "model_verification": {
       "model_verification_title": "模型验证",

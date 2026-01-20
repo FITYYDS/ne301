@@ -549,13 +549,10 @@ static void mqtt_client_event_handler(ms_mqtt_event_data_t *event_data, void *us
             // Set MQTT network connected flag
             service_set_mqtt_net_connected(AICAM_TRUE);
             
-            // Auto subscribe to configured topics
-            uint32_t wakeup_flag = u0_module_get_wakeup_flag_ex();
-            aicam_bool_t is_rtc_wakeup = (wakeup_flag & (PWR_WAKEUP_FLAG_RTC_TIMING | 
-                                                        PWR_WAKEUP_FLAG_RTC_ALARM_A | 
-                                                        PWR_WAKEUP_FLAG_RTC_ALARM_B)) != 0;
-            aicam_bool_t is_button_wakeup = (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) != 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_LONG_PRESS) == 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_MAX_PRESS) == 0;
-            if(!is_rtc_wakeup && !is_button_wakeup) {
+            // Auto subscribe to configured topics (skip in time-optimized mode to save time)
+            wakeup_source_type_t wakeup_source = system_service_get_wakeup_source_type();
+            aicam_bool_t requires_time_optimized = system_service_requires_time_optimized_mode(wakeup_source);
+            if (!requires_time_optimized) {
                 auto_subscribe_topics();
             }
             

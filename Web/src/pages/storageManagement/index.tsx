@@ -52,10 +52,8 @@ export default function StorageManagement() {
       const res = await getStorage()
       const data = (res && 'data' in res) ? (res as any).data as StorageInfo : (res as any as StorageInfo)
       setStorageInfo(data)
-      const rawPercent = data.usage_percent
-      const percent = rawPercent <= 1 ? rawPercent * 100 : rawPercent
-      const color = percent > 95 ? colorList[2] : percent > 80 ? colorList[1] : colorList[0]
-      setStorageUsed({ used: Number(percent.toFixed(2)), total: 100, color })
+      const color = data.usage_percent > 95 ? colorList[2] : data.usage_percent > 80 ? colorList[1] : colorList[0]
+      setStorageUsed({ used: data.usage_percent, total: 100, color })
     } catch (error) {
       console.error(error)
     } finally {

@@ -294,6 +294,9 @@ static void keyProcess(void *argument)
     misc_t *key = (misc_t *)argument;
     while (key->is_init) {
         key_process((key_instance_t *)key->handle, HAL_GetTick() - last_time);
+#if ENABLE_U0_MODULE
+        u0_module_callback_process();
+#endif
         last_time = HAL_GetTick();
         osDelay(10);
     }

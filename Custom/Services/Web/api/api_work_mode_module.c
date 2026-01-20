@@ -112,29 +112,31 @@ static power_mode_t parse_power_mode(const char* mode_str) {
  */
 //static const char* get_trigger_type_string(aicam_trigger_type_t trigger_type) {
 //    switch (trigger_type) {
-//        case AICAM_TRIGGER_TYPE_RISING: return "rising_edge";
-//        case AICAM_TRIGGER_TYPE_FALLING: return "falling_edge";
-//        case AICAM_TRIGGER_TYPE_BOTH_EDGES: return "both_edges";
-//        case AICAM_TRIGGER_TYPE_HIGH: return "high_level";
-//        case AICAM_TRIGGER_TYPE_LOW: return "low_level";
-//        default: return "unknown";
-//    }
-//}
+static const char* get_trigger_type_string(aicam_trigger_type_t type) {
+    switch (type) {
+        case AICAM_TRIGGER_TYPE_RISING: return "rising_edge";
+        case AICAM_TRIGGER_TYPE_FALLING: return "falling_edge";
+        case AICAM_TRIGGER_TYPE_BOTH_EDGES: return "both_edges";
+        case AICAM_TRIGGER_TYPE_HIGH: return "high_level";
+        case AICAM_TRIGGER_TYPE_LOW: return "low_level";
+        default: return "rising_edge";
+    }
+}
 
 /**
  * @brief Parse trigger type from string
  */
-//static aicam_trigger_type_t parse_trigger_type(const char* type_str) {
-//    if (!type_str) return AICAM_TRIGGER_TYPE_RISING;
-//
-//    if (strcmp(type_str, "rising_edge") == 0) return AICAM_TRIGGER_TYPE_RISING;
-//    if (strcmp(type_str, "falling_edge") == 0) return AICAM_TRIGGER_TYPE_FALLING;
-//    if (strcmp(type_str, "both_edges") == 0) return AICAM_TRIGGER_TYPE_BOTH_EDGES;
-//    if (strcmp(type_str, "high_level") == 0) return AICAM_TRIGGER_TYPE_HIGH;
-//    if (strcmp(type_str, "low_level") == 0) return AICAM_TRIGGER_TYPE_LOW;
-//
-//    return AICAM_TRIGGER_TYPE_RISING; // Default to rising_edge
-//}
+static aicam_trigger_type_t parse_trigger_type(const char* type_str) {
+    if (!type_str) return AICAM_TRIGGER_TYPE_RISING;
+
+    if (strcmp(type_str, "rising_edge") == 0) return AICAM_TRIGGER_TYPE_RISING;
+    if (strcmp(type_str, "falling_edge") == 0) return AICAM_TRIGGER_TYPE_FALLING;
+    if (strcmp(type_str, "both_edges") == 0) return AICAM_TRIGGER_TYPE_BOTH_EDGES;
+    if (strcmp(type_str, "high_level") == 0) return AICAM_TRIGGER_TYPE_HIGH;
+    if (strcmp(type_str, "low_level") == 0) return AICAM_TRIGGER_TYPE_LOW;
+
+    return AICAM_TRIGGER_TYPE_RISING; // Default to rising_edge
+}
 
 /**
  * @brief Get capture mode string
@@ -664,7 +666,13 @@ static aicam_result_t work_mode_triggers_get_handler(http_handler_context_t* ctx
     cJSON* pir_trigger = cJSON_CreateObject();
     cJSON_AddBoolToObject(pir_trigger, "enable", config.pir_trigger.enable);
     //cJSON_AddNumberToObject(pir_trigger, "pin_number", config.pir_trigger.pin_number);
-    //cJSON_AddStringToObject(pir_trigger, "trigger_type", get_trigger_type_string(config.pir_trigger.trigger_type));
+    cJSON_AddStringToObject(pir_trigger, "trigger_type", get_trigger_type_string(config.pir_trigger.trigger_type));
+    // PIR sensor configuration parameters
+    cJSON_AddNumberToObject(pir_trigger, "sensitivity_level", config.pir_trigger.sensitivity_level);
+    cJSON_AddNumberToObject(pir_trigger, "ignore_time_s", config.pir_trigger.ignore_time_s);
+    // Convert register value (0-3) to actual pulse count (1-4) for frontend
+    cJSON_AddNumberToObject(pir_trigger, "pulse_count", config.pir_trigger.pulse_count + 1);
+    cJSON_AddNumberToObject(pir_trigger, "window_time_s", config.pir_trigger.window_time_s);
     cJSON_AddItemToObject(response, "pir_trigger", pir_trigger);
 
     // Remote trigger configuration
@@ -816,7 +824,53 @@ static aicam_result_t work_mode_triggers_set_handler(http_handler_context_t* ctx
         cJSON* enable_item = cJSON_GetObjectItem(pir_trigger, "enable");
         config.pir_trigger.enable = (enable_item && cJSON_IsBool(enable_item)) ? cJSON_IsTrue(enable_item) : AICAM_FALSE;
         //config.pir_trigger.pin_number = web_api_get_int(pir_trigger, "pin_number");
-        //config.pir_trigger.trigger_type = parse_trigger_type(web_api_get_string(pir_trigger, "trigger_type"));
+        
+        // Parse trigger type (wakeup mode)
+        cJSON* trigger_type_item = cJSON_GetObjectItem(pir_trigger, "trigger_type");
+        if (trigger_type_item) {
+            if (cJSON_IsString(trigger_type_item)) {
+                config.pir_trigger.trigger_type = parse_trigger_type(cJSON_GetStringValue(trigger_type_item));
+            } else if (cJSON_IsNumber(trigger_type_item)) {
+                uint32_t trigger_type = (uint32_t)cJSON_GetNumberValue(trigger_type_item);
+                if (trigger_type < AICAM_TRIGGER_TYPE_MAX) {
+                    config.pir_trigger.trigger_type = (aicam_trigger_type_t)trigger_type;
+                }
+            }
+        }
+        
+        // Parse PIR sensor configuration parameters
+        cJSON* sensitivity_item = cJSON_GetObjectItem(pir_trigger, "sensitivity_level");
+        if (sensitivity_item && cJSON_IsNumber(sensitivity_item)) {
+            uint8_t sensitivity = (uint8_t)cJSON_GetNumberValue(sensitivity_item);
+            if (sensitivity >= 10 && sensitivity <= 255) {
+                config.pir_trigger.sensitivity_level = sensitivity;
+            }
+        }
+        
+        cJSON* ignore_time_item = cJSON_GetObjectItem(pir_trigger, "ignore_time_s");
+        if (ignore_time_item && cJSON_IsNumber(ignore_time_item)) {
+            uint8_t ignore_time = (uint8_t)cJSON_GetNumberValue(ignore_time_item);
+            if (ignore_time <= 15) {
+                config.pir_trigger.ignore_time_s = ignore_time;
+            }
+        }
+        
+        cJSON* pulse_count_item = cJSON_GetObjectItem(pir_trigger, "pulse_count");
+        if (pulse_count_item && cJSON_IsNumber(pulse_count_item)) {
+            uint8_t pulse_count = (uint8_t)cJSON_GetNumberValue(pulse_count_item);
+            // Frontend sends 1-4, we store as register value 0-3
+            if (pulse_count >= 1 && pulse_count <= 4) {
+                config.pir_trigger.pulse_count = pulse_count - 1;
+            }
+        }
+        
+        cJSON* window_time_item = cJSON_GetObjectItem(pir_trigger, "window_time_s");
+        if (window_time_item && cJSON_IsNumber(window_time_item)) {
+            uint8_t window_time = (uint8_t)cJSON_GetNumberValue(window_time_item);
+            if (window_time <= 3) {
+                config.pir_trigger.window_time_s = window_time;
+            }
+        }
     }
 
     // Parse Remote trigger settings
@@ -880,6 +934,16 @@ static aicam_result_t work_mode_triggers_set_handler(http_handler_context_t* ctx
     for (int i = 1; i < config.timer_trigger.time_node_count; i++) {
         LOG_SVC_INFO("Timer trigger weekdays %d: %d", i, config.timer_trigger.weekdays[i]);
     }
+    
+    // Log PIR trigger configuration
+    LOG_SVC_INFO("PIR trigger configuration: %s", config.pir_trigger.enable ? "enabled" : "disabled");
+    LOG_SVC_INFO("PIR sensitivity_level: %u", config.pir_trigger.sensitivity_level);
+    LOG_SVC_INFO("PIR ignore_time_s: %u (%.1f seconds)", config.pir_trigger.ignore_time_s, 
+                 0.5 + 0.5 * config.pir_trigger.ignore_time_s);
+    LOG_SVC_INFO("PIR pulse_count: %u (actual: %u pulses)", config.pir_trigger.pulse_count, 
+                 config.pir_trigger.pulse_count + 1);
+    LOG_SVC_INFO("PIR window_time_s: %u (%.0f seconds)", config.pir_trigger.window_time_s, 
+                 2.0 + 2.0 * config.pir_trigger.window_time_s);
  
     // Update configuration
     result = system_controller_set_work_config(controller, &config);

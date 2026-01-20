@@ -296,9 +296,12 @@ aicam_result_t device_service_camera_set_config(const camera_config_t *config);
  * @brief Capture image
  * @param buffer Pointer to image buffer
  * @param out_len Pointer to actual captured size
+ * @param need_ai_inference Whether AI inference is needed
+ * @param nn_result Pointer to AI inference result (output, can be NULL if need_ai_inference is false)
+ * @param frame_id Pointer to frame ID (output, optional, can be NULL)
  * @return aicam_result_t Operation result
  */
-aicam_result_t device_service_camera_capture(uint8_t **buffer, int *out_len,  aicam_bool_t need_ai_inference, nn_result_t *nn_result);
+aicam_result_t device_service_camera_capture(uint8_t **buffer, int *out_len,  aicam_bool_t need_ai_inference, nn_result_t *nn_result, uint32_t *frame_id);
 
 /**
  * @brief Fast capture image for low-power RTC wakeup
@@ -309,10 +312,11 @@ aicam_result_t device_service_camera_capture(uint8_t **buffer, int *out_len,  ai
  * @param out_len Pointer to actual captured size (output)
  * @param need_ai_inference Whether AI inference is needed
  * @param nn_result Pointer to AI inference result (output, can be NULL if need_ai_inference is false)
+ * @param frame_id Pointer to frame ID (output, optional, can be NULL)
  * @return aicam_result_t Operation result
  */
 aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len, 
-                                                  aicam_bool_t need_ai_inference, nn_result_t *nn_result);
+                                                  aicam_bool_t need_ai_inference, nn_result_t *nn_result, uint32_t *frame_id);
 
 /**
  * @brief Get JPEG parameters

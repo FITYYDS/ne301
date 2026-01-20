@@ -121,6 +121,32 @@ int u0_module_enter_sleep_mode(uint32_t wakeup_flag, uint32_t switch_bits, uint3
 /// @return 0 on success, other on error
 int u0_module_enter_sleep_mode_ex(uint32_t wakeup_flag, uint32_t switch_bits, uint32_t sleep_second, ms_bridging_alarm_t *rtc_alarm_a, ms_bridging_alarm_t *rtc_alarm_b);
 
+/// @brief u0 chip value change callback type
+typedef void (*u0_module_value_change_cb_t)(uint32_t value);
+
+/// @brief register u0 chip pir value change callback
+/// @param pir_value_change_cb pir value change callback function
+/// @return 0 on success, other on error
+int u0_module_pir_value_change_cb_register(u0_module_value_change_cb_t pir_value_change_cb);
+
+/// @brief unregister u0 chip pir value change callback
+/// @param pir_value_change_cb pir value change callback function
+/// @return 0 on success, other on error
+int u0_module_pir_value_change_cb_unregister(void);
+
+/// @brief register u0 chip key value change callback
+/// @param key_value_change_cb key value change callback function
+/// @return 0 on success, other on error
+int u0_module_key_value_change_cb_register(u0_module_value_change_cb_t key_value_change_cb);
+
+/// @brief unregister u0 chip key value change callback
+/// @param key_value_change_cb key value change callback function
+/// @return 0 on success, other on error
+int u0_module_key_value_change_cb_unregister(void);
+
+/// @brief u0 callback process
+void u0_module_callback_process(void);
+
 #ifdef __cplusplus
 }
 #endif

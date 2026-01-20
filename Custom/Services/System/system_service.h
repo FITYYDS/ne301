@@ -447,6 +447,27 @@ aicam_result_t system_service_get_status_info(aicam_bool_t *is_started,
 wakeup_source_type_t system_service_get_wakeup_source_type(void);
 
 /**
+ * @brief Check if wakeup source requires time-optimized mode (skip time-consuming operations)
+ * @param source Wakeup source type
+ * @return AICAM_TRUE if time-optimized mode is required, AICAM_FALSE otherwise
+ * @details Time-optimized mode is used for wakeup sources that need quick response,
+ *          such as RTC timer wakeup and button short press. In this mode, time-consuming
+ *          operations (like network scan, auto-subscribe) should be skipped to save time.
+ *          Wakeup sources like button long press (AP enable) or other sources don't need this optimization.
+ */
+aicam_bool_t system_service_requires_time_optimized_mode(wakeup_source_type_t source);
+
+/**
+ * @brief Check if wakeup source requires only essential services in low power mode
+ * @param source Wakeup source type
+ * @return AICAM_TRUE if only essential services should be started, AICAM_FALSE otherwise
+ * @details In low power mode, some wakeup sources (like RTC, button short press, PIR, IO)
+ *          only need essential services to be started for quick response.
+ *          Other wakeup sources (like button long press for AP enable) require all services.
+ */
+aicam_bool_t system_service_requires_only_essential_services(wakeup_source_type_t source);
+
+/**
  * @brief Configure wakeup source
  * @param source Wakeup source type
  * @param config Wakeup source configuration
@@ -643,6 +664,16 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
  */
 aicam_result_t system_service_capture_request(const system_capture_request_t *request,
                                               system_capture_response_t *response);
+
+/**
+ * @brief Register PIR debug commands
+ * @details Register CLI commands for PIR sensor debugging:
+ *   - pir_status: Show PIR sensor status and configuration
+ *   - pir_test: Test PIR sensor reading
+ *   - pir_cfg: Configure PIR sensor parameters
+ *   - pir_wakeup_test: Test PIR wakeup configuration
+ */
+void system_service_pir_debug_register_commands(void);
 
 #ifdef __cplusplus
 }

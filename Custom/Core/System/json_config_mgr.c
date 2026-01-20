@@ -104,7 +104,11 @@
         .pir_trigger = {
             .enable = AICAM_TRUE,
             .pin_number = 2,
-            .trigger_type = AICAM_TRIGGER_TYPE_RISING
+            .trigger_type = AICAM_TRIGGER_TYPE_RISING,
+            .sensitivity_level = 30,    // Default sensitivity level
+            .ignore_time_s = 7,         // Default ignore time (4 seconds)
+            .pulse_count = 1,            // Default pulse count (2 pulses)
+            .window_time_s = 0           // Default window time (2 seconds)
         },
         .remote_trigger = {
             .enable = AICAM_FALSE

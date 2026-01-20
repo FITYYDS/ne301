@@ -588,8 +588,8 @@ aicam_result_t service_start(void)
             continue;
         }
         
-        // Low power mode + non-button and non-other wakeup source: only start required services
-        if (current_power_mode == POWER_MODE_LOW_POWER && (current_wakeup_source != WAKEUP_SOURCE_BUTTON_LONG && current_wakeup_source != WAKEUP_SOURCE_OTHER)) {
+        // Low power mode: only start essential services unless wakeup source requires all services
+        if (current_power_mode == POWER_MODE_LOW_POWER && system_service_requires_only_essential_services(current_wakeup_source)) {
             if (!module->required_in_low_power) {
                 LOG_SVC_INFO("Skipping '%s' in low power mode", module->name);
                 continue;

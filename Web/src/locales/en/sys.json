@@ -119,7 +119,17 @@
       "url_illegal": "URL format error",
       "url_length_error": "URL length cannot exceed 256 characters",
       "stream_key_illegal": "Secret Key format error",
-      "stream_key_length_error": "Secret Key length cannot exceed 128 characters"
+      "stream_key_length_error": "Secret Key length cannot exceed 128 characters",
+      "trigger_type": "Trigger Type",
+      "sensitivity_level": "Sensitivity Level",
+      "ignore_time": "Ignore Time",
+      "pulse_count": "Pulse Count",
+      "window_time": "Window Time",
+      "rising_edge": "Rising Edge",
+      "falling_edge": "Falling Edge",
+      "both_edges": "Both Edges",
+      "high_level": "High Level",
+      "low_level": "Low Level"
     },
     "model_verification": { 
       "model_verification_title": "Model Validation",

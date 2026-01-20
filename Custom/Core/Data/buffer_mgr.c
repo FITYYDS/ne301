@@ -91,4 +91,20 @@ aicam_result_t buffer_mgr_deinit(void)
  {
     return hal_mem_alloc_aligned(size, alignment, MEM_LARGE);
  }
+
+ /**
+  * @brief Allocate aligned memory with preferred memory type
+  */
+ void* buffer_malloc_aligned_ex(size_t size, uint32_t alignment, buffer_memory_type_t prefer_type)
+ {
+    switch (prefer_type) {
+        case BUFFER_MEMORY_TYPE_PSRAM:
+            return hal_mem_alloc_aligned(size, alignment, MEM_LARGE);
+        case BUFFER_MEMORY_TYPE_RAM:
+            return hal_mem_alloc_aligned(size, alignment, MEM_FAST);
+        default:
+            return hal_mem_alloc_aligned(size, alignment, MEM_LARGE);
+    }
+    return hal_mem_alloc_aligned(size, alignment, MEM_LARGE);
+ }
  

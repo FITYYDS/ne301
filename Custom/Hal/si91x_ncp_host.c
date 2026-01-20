@@ -274,7 +274,7 @@ void sl_si91x_host_enable_high_speed_bus()
 #else
     hspi4.Init.NSS = SPI_NSS_HARD_OUTPUT;
 #endif
-    hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_BYPASS;
+    hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
     hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
     hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
     hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;

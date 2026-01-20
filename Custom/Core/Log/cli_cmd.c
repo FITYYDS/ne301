@@ -23,6 +23,7 @@
 #include "version.h"
 #include "factory_test.h"
 #include "rtmp_service.h"
+#include "system_service.h"
 
 
 static int cat_cmd(int argc, char* argv[]) 
@@ -1172,6 +1173,7 @@ void register_cmds(void)
     websocket_stream_server_register_commands();
     factory_test_register_commands();
     rtmp_cmd_register();
+    system_service_pir_debug_register_commands();
 
     
     LOG_SIMPLE("[CLI] All commands registered (%d util commands + driver commands)\r\n", 

@@ -17,12 +17,15 @@
  #include <string.h>
  #include <stdlib.h>
  #include <time.h>
- #include "ai_service.h"
- #include "device_service.h"
- #include "service_init.h"
- #include "sl_net_netif.h"
- #include "communication_service.h"
- #include "web_server.h"
+#include "ai_service.h"
+#include "device_service.h"
+#include "service_init.h"
+#include "sl_net_netif.h"
+#include "communication_service.h"
+#include "web_server.h"
+#include "ai_draw_service.h"
+#include "nn.h"
+#include "cJSON.h"
  
  
  /* ==================== System Controller Implementation ==================== */
@@ -119,7 +122,7 @@ static const system_capture_request_t g_capture_defaults = {
      // PIR wakeup source
      wakeup_sources[WAKEUP_SOURCE_PIR] = (wakeup_source_config_t){
          .enabled = AICAM_TRUE,
-         .low_power_supported = AICAM_FALSE,
+         .low_power_supported = AICAM_TRUE,
          .full_speed_supported = AICAM_TRUE,
          .debounce_ms = 100,
          .config_data = NULL
@@ -637,6 +640,16 @@ static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeu
  /* ==================== Work Mode Management Helper Functions ==================== */
  
  /**
+  * @brief Configure PIR sensor with current configuration
+  * @param controller System controller
+  * @return AICAM_OK on success, error code otherwise
+  */
+ static aicam_result_t configure_pir_sensor(system_controller_t *controller);
+static void pir_value_change_callback(uint32_t pir_value);
+static aicam_result_t register_pir_runtime_callback(system_controller_t *controller);
+static aicam_result_t unregister_pir_runtime_callback(void);
+ 
+ /**
   * @brief Save work mode configuration to persistent storage
   * @param controller System controller handle
   * @return AICAM_OK on success
@@ -743,12 +756,58 @@ static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeu
      for (int i = 0; i < config->timer_trigger.time_node_count; i++) {
          LOG_SVC_INFO("Timer trigger time node %d: %d", i, config->timer_trigger.time_node[i]);
      }
-     for (int i = 1; i < config->timer_trigger.time_node_count; i++) {
-         LOG_SVC_INFO("Timer trigger weekdays %d: %d", i, config->timer_trigger.weekdays[i]);
-     }
- 
-     
-     // Save configuration to persistent storage
+    for (int i = 1; i < config->timer_trigger.time_node_count; i++) {
+        LOG_SVC_INFO("Timer trigger weekdays %d: %d", i, config->timer_trigger.weekdays[i]);
+    }
+
+    // Sync PIR trigger enable state to wakeup source configuration
+    aicam_bool_t pir_was_enabled = controller->work_config.pir_trigger.enable;
+    controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled = config->pir_trigger.enable;
+    LOG_SVC_INFO("PIR trigger configuration: %s (wakeup source enabled: %s)", 
+                 config->pir_trigger.enable ? "enabled" : "disabled",
+                 controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled ? "yes" : "no");
+    
+    // Configure PIR sensor if PIR trigger is enabled or configuration changed
+    if (config->pir_trigger.enable) {
+        aicam_result_t pir_result = configure_pir_sensor(controller);
+        if (pir_result != AICAM_OK) {
+            LOG_SVC_WARN("Failed to configure PIR sensor after config update: %d", pir_result);
+        } else {
+            LOG_SVC_INFO("PIR sensor configured after config update");
+        }
+        
+        // Register runtime callback if PIR trigger is newly enabled
+        // Also ensure callback is registered if PIR was already enabled (for robustness)
+        if (!pir_was_enabled) {
+            pir_result = register_pir_runtime_callback(controller);
+            if (pir_result != AICAM_OK) {
+                LOG_SVC_WARN("Failed to register PIR runtime callback: %d", pir_result);
+            } else {
+                LOG_SVC_INFO("PIR runtime callback registered");
+            }
+        } else {
+            // PIR was already enabled: ensure callback is still registered (re-register for robustness)
+            // This handles cases where callback might have been lost (e.g., u0_module reset)
+            pir_result = register_pir_runtime_callback(controller);
+            if (pir_result != AICAM_OK) {
+                LOG_SVC_WARN("Failed to re-register PIR runtime callback: %d", pir_result);
+            } else {
+                LOG_SVC_DEBUG("PIR runtime callback re-registered (was already enabled)");
+            }
+        }
+    } else {
+        // Unregister runtime callback if PIR trigger is disabled
+        if (pir_was_enabled) {
+            aicam_result_t pir_result = unregister_pir_runtime_callback();
+            if (pir_result != AICAM_OK) {
+                LOG_SVC_WARN("Failed to unregister PIR runtime callback: %d", pir_result);
+            } else {
+                LOG_SVC_INFO("PIR runtime callback unregistered");
+            }
+        }
+    }
+    
+    // Save configuration to persistent storage
      aicam_result_t config_result = save_work_mode_config_to_nvs(controller);
      if (config_result != AICAM_OK) {
          LOG_SVC_ERROR("Failed to save work mode configuration persistently: %d", config_result);
@@ -1020,9 +1079,11 @@ static void default_capture_callback(capture_trigger_type_t trigger_type, void *
             break;
             
         case CAPTURE_TRIGGER_PIR:
-            LOG_SVC_INFO("PIR motion detected - starting video recording");
-            // TODO: Implement PIR trigger capture logic
-            // Example: trigger_motion_recording();
+            // PIR wakeup from sleep: trigger capture and mark task completed (will enter sleep after)
+            LOG_SVC_INFO("PIR wakeup detected - triggering capture (will enter sleep after completion)");
+            wakeup_task_async(controller);
+            LOG_SVC_INFO("PIR wakeup trigger capture completed");
+            system_service_task_completed();
             break;
             
         case CAPTURE_TRIGGER_BUTTON:
@@ -1269,7 +1330,20 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
     }
     else if (wakeup_flag & (PWR_WAKEUP_FLAG_PIR_HIGH | PWR_WAKEUP_FLAG_PIR_LOW | 
                        PWR_WAKEUP_FLAG_PIR_RISING | PWR_WAKEUP_FLAG_PIR_FALLING)) {
-        LOG_SVC_INFO("Woken by PIR sensor");
+        // PIR sensor wakeup detected
+        uint32_t pir_value = u0_module_get_pir_value_ex();
+        
+        // Log detailed PIR wakeup information
+        if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_RISING) {
+            LOG_SVC_INFO("Woken by PIR sensor: rising edge (motion detected), PIR value: %u", pir_value);
+        } else if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_FALLING) {
+            LOG_SVC_INFO("Woken by PIR sensor: falling edge (motion ended), PIR value: %u", pir_value);
+        } else if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_HIGH) {
+            LOG_SVC_INFO("Woken by PIR sensor: high level, PIR value: %u", pir_value);
+        } else if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_LOW) {
+            LOG_SVC_INFO("Woken by PIR sensor: low level, PIR value: %u", pir_value);
+        }
+        
         handle_wakeup_event(controller, WAKEUP_SOURCE_PIR);
     }
     else if (wakeup_flag & (PWR_WAKEUP_FLAG_SI91X | PWR_WAKEUP_FLAG_NET)) {
@@ -1277,11 +1351,115 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
         handle_wakeup_event(controller, WAKEUP_SOURCE_REMOTE);
     }
      
-     return AICAM_OK;
- }
- 
- /**
-  * @brief Configure U0 wakeup sources based on power mode and user configuration
+    return AICAM_OK;
+}
+
+/**
+ * @brief PIR value change callback for runtime trigger
+ * @param pir_value PIR sensor value (0 or 1)
+ * @details This callback is called when PIR sensor value changes during runtime.
+ *          It triggers capture if PIR trigger is enabled and configured.
+ *          Note: Runtime PIR trigger does NOT enter sleep after capture completion,
+ *          unlike PIR wakeup from sleep mode.
+ */
+static void pir_value_change_callback(uint32_t pir_value)
+{
+    if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
+        return;
+    }
+    
+    system_controller_t *controller = g_system_service_ctx.controller;
+    
+    // Check if PIR trigger is enabled
+    if (!controller->work_config.pir_trigger.enable) {
+        LOG_SVC_DEBUG("PIR value changed but trigger is disabled, ignoring (value: %u)", pir_value);
+        return;
+    }
+    
+    // Check trigger type match
+    aicam_trigger_type_t trigger_type = controller->work_config.pir_trigger.trigger_type;
+    aicam_bool_t should_trigger = AICAM_FALSE;
+    
+    switch (trigger_type) {
+        case AICAM_TRIGGER_TYPE_RISING:
+            // Trigger on rising edge (0 -> 1)
+            should_trigger = (pir_value == 1);
+            break;
+        case AICAM_TRIGGER_TYPE_FALLING:
+            // Trigger on falling edge (1 -> 0)
+            should_trigger = (pir_value == 0);
+            break;
+        case AICAM_TRIGGER_TYPE_HIGH:
+            // Trigger on high level (value == 1)
+            should_trigger = (pir_value == 1);
+            break;
+        case AICAM_TRIGGER_TYPE_LOW:
+            // Trigger on low level (value == 0)
+            should_trigger = (pir_value == 0);
+            break;
+        case AICAM_TRIGGER_TYPE_BOTH_EDGES:
+            // Trigger on both edges (any change)
+            should_trigger = AICAM_TRUE;
+            break;
+        default:
+            LOG_SVC_WARN("Unknown PIR trigger type: %d", trigger_type);
+            return;
+    }
+    
+    if (should_trigger) {
+        LOG_SVC_INFO("PIR runtime trigger detected (value: %u, trigger_type: %d) - triggering capture (no sleep)", 
+                     pir_value, trigger_type);
+        
+        // Runtime PIR trigger: directly call wakeup_task_async without system_service_task_completed()
+        // This ensures the system does not enter sleep after runtime trigger
+        wakeup_task_async(controller);
+        LOG_SVC_INFO("PIR runtime trigger capture completed (system will remain active)");
+    } else {
+        LOG_SVC_DEBUG("PIR value changed but doesn't match trigger type (value: %u, trigger_type: %d)", 
+                     pir_value, trigger_type);
+    }
+}
+
+/**
+ * @brief Register PIR runtime callback
+ * @param controller System controller
+ * @return AICAM_OK on success, error code otherwise
+ */
+static aicam_result_t register_pir_runtime_callback(system_controller_t *controller)
+{
+    if (!controller) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    
+    // Register callback with u0_module
+    int ret = u0_module_pir_value_change_cb_register(pir_value_change_callback);
+    if (ret != 0) {
+        LOG_SVC_ERROR("Failed to register PIR value change callback: %d", ret);
+        return AICAM_ERROR;
+    }
+    
+    LOG_SVC_INFO("PIR runtime callback registered successfully");
+    return AICAM_OK;
+}
+
+/**
+ * @brief Unregister PIR runtime callback
+ * @return AICAM_OK on success, error code otherwise
+ */
+static aicam_result_t unregister_pir_runtime_callback(void)
+{
+    int ret = u0_module_pir_value_change_cb_unregister();
+    if (ret != 0) {
+        LOG_SVC_WARN("Failed to unregister PIR value change callback: %d", ret);
+        return AICAM_ERROR;
+    }
+    
+    LOG_SVC_INFO("PIR runtime callback unregistered successfully");
+    return AICAM_OK;
+}
+
+/**
+ * @brief Configure U0 wakeup sources based on power mode and user configuration
   * @param controller System controller
   * @return Configured wakeup flags
   */
@@ -1298,13 +1476,45 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
      if (power_mode == POWER_MODE_LOW_POWER) {
          // Default wakeup sources for low power mode
          wakeup_flags = PWR_WAKEUP_FLAG_RTC_TIMING | PWR_WAKEUP_FLAG_CONFIG_KEY;
+
+         LOG_SVC_INFO("pir trigger enable: %d", controller->work_config.pir_trigger.enable);
+         LOG_SVC_INFO("pir wakeup source enabled: %d", controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled);
+         LOG_SVC_INFO("pir wakeup source low power supported: %d", controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported);
          
-         // Check user-configured wakeup sources
-         if (controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
-             controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
-             wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
-             LOG_SVC_INFO("PIR wakeup enabled in low power mode");
-         }
+        // Check user-configured wakeup sources
+        if (controller->work_config.pir_trigger.enable &&
+            controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
+            controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
+            // Select PIR wakeup flag based on trigger type
+            switch (controller->work_config.pir_trigger.trigger_type) {
+                case AICAM_TRIGGER_TYPE_RISING:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
+                    LOG_SVC_INFO("PIR wakeup enabled in low power mode: rising edge");
+                    break;
+                case AICAM_TRIGGER_TYPE_FALLING:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_FALLING;
+                    LOG_SVC_INFO("PIR wakeup enabled in low power mode: falling edge");
+                    break;
+                case AICAM_TRIGGER_TYPE_HIGH:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_HIGH;
+                    LOG_SVC_INFO("PIR wakeup enabled in low power mode: high level");
+                    break;
+                case AICAM_TRIGGER_TYPE_LOW:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_LOW;
+                    LOG_SVC_INFO("PIR wakeup enabled in low power mode: low level");
+                    break;
+                case AICAM_TRIGGER_TYPE_BOTH_EDGES:
+                    // Both edges: use rising edge as default
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
+                    LOG_SVC_INFO("PIR wakeup enabled in low power mode: both edges (using rising)");
+                    break;
+                default:
+                    // Default to rising edge
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
+                    LOG_SVC_INFO("PIR wakeup enabled in low power mode: default (rising edge)");
+                    break;
+            }
+        }
          
          if (controller->wakeup_sources[WAKEUP_SOURCE_RTC].enabled) {
              wakeup_flags |= PWR_WAKEUP_FLAG_RTC_ALARM_A;
@@ -1349,10 +1559,33 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
                        PWR_WAKEUP_FLAG_RTC_ALARM_A |
                        PWR_WAKEUP_FLAG_CONFIG_KEY;
          
-         if (controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
-             controller->wakeup_sources[WAKEUP_SOURCE_PIR].full_speed_supported) {
-             wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
-         }
+        if (controller->work_config.pir_trigger.enable &&
+            controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
+            controller->wakeup_sources[WAKEUP_SOURCE_PIR].full_speed_supported) {
+            // Select PIR wakeup flag based on trigger type
+            switch (controller->work_config.pir_trigger.trigger_type) {
+                case AICAM_TRIGGER_TYPE_RISING:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
+                    break;
+                case AICAM_TRIGGER_TYPE_FALLING:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_FALLING;
+                    break;
+                case AICAM_TRIGGER_TYPE_HIGH:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_HIGH;
+                    break;
+                case AICAM_TRIGGER_TYPE_LOW:
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_LOW;
+                    break;
+                case AICAM_TRIGGER_TYPE_BOTH_EDGES:
+                    // Both edges: use rising edge as default
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
+                    break;
+                default:
+                    // Default to rising edge
+                    wakeup_flags |= PWR_WAKEUP_FLAG_PIR_RISING;
+                    break;
+            }
+        }
          
          if (controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].enabled &&
              controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].full_speed_supported) {
@@ -1381,12 +1614,13 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
      
      // Low power mode: turn off all power (Standby mode)
      if (power_mode == POWER_MODE_LOW_POWER) {
-         // Check if PIR is enabled and needs 3V3 power
-         if (controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
-             controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
-             switch_bits |= PWR_3V3_SWITCH_BIT;
-             LOG_SVC_INFO("Keeping 3V3 power for PIR in low power mode");
-         }
+        // Check if PIR is enabled and needs 3V3 power
+        if (controller->work_config.pir_trigger.enable &&
+            controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
+            controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
+            switch_bits |= PWR_3V3_SWITCH_BIT;
+            LOG_SVC_INFO("Keeping 3V3 power for PIR in low power mode");
+        }
 
          if (controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].enabled &&
              controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].low_power_supported &&
@@ -1414,37 +1648,97 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
      return switch_bits;
  }
  
- /**
-  * @brief Prepare system for sleep mode
-  * @return AICAM_OK on success
-  */
- static aicam_result_t prepare_for_sleep(void)
- {
-     if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
-         return AICAM_ERROR_NOT_INITIALIZED;
-     }
-     
-     system_controller_t *controller = g_system_service_ctx.controller;
-     
-     LOG_SVC_INFO("Preparing system for sleep mode...");
-     
-     // Update RTC time to U0 chip before sleep
-     int ret = u0_module_update_rtc_time();
-     if (ret != 0) {
-         LOG_SVC_ERROR("Failed to update RTC time to U0: %d", ret);
-     }
-     
-     // Save critical configuration to NVS
-     aicam_result_t result = system_service_save_config();
-     if (result != AICAM_OK) {
-         LOG_SVC_WARN("Failed to save config before sleep: %d", result);
-     }
-     
-     // Set system state to sleep
-     system_controller_set_state(controller, SYSTEM_STATE_SLEEP);
-     
-     return AICAM_OK;
- }
+/**
+ * @brief Configure PIR sensor with current configuration
+ * @param controller System controller
+ * @return AICAM_OK on success, error code otherwise
+ */
+static aicam_result_t configure_pir_sensor(system_controller_t *controller)
+{
+    if (!controller) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    
+    // Check if PIR wakeup is enabled
+    if (!controller->work_config.pir_trigger.enable ||
+        !controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled) {
+        return AICAM_OK;  // PIR not enabled, skip configuration
+    }
+    
+    // Configure PIR sensor with parameters from configuration
+    ms_bridging_pir_cfg_t pir_cfg = {0};
+    pir_cfg.sensitivity_level = controller->work_config.pir_trigger.sensitivity_level;
+    if (pir_cfg.sensitivity_level == 0) {
+        pir_cfg.sensitivity_level = 30;  // Default if not configured
+    }
+    pir_cfg.ignore_time_s = controller->work_config.pir_trigger.ignore_time_s;
+    if (pir_cfg.ignore_time_s == 0 && controller->work_config.pir_trigger.enable) {
+        pir_cfg.ignore_time_s = 7;  // Default if not configured
+    }
+    pir_cfg.pulse_count = controller->work_config.pir_trigger.pulse_count;
+    if (pir_cfg.pulse_count == 0) {
+        pir_cfg.pulse_count = 1;  // Default if not configured
+    }
+    pir_cfg.window_time_s = controller->work_config.pir_trigger.window_time_s;
+    pir_cfg.motion_enable = 1;         // Enable motion detection
+    pir_cfg.interrupt_src = 0;          // Interrupt source: 0 = motion detection
+    pir_cfg.volt_select = 0;           // ADC selection: 0 = PIR signal BFP output
+    pir_cfg.reserved1 = 0;
+    pir_cfg.reserved2 = 0;
+    
+    int ret = u0_module_cfg_pir(&pir_cfg);
+    if (ret != 0) {
+        LOG_SVC_ERROR("Failed to configure PIR sensor: %d", ret);
+        return AICAM_ERROR;
+    }
+    
+    LOG_SVC_INFO("PIR sensor configured: sensitivity=%u, ignore_time=%u (%.1fs), pulse_count=%u (actual: %u pulses), window_time=%u (%.0fs)",
+                 pir_cfg.sensitivity_level, 
+                 pir_cfg.ignore_time_s, 0.5 + 0.5 * pir_cfg.ignore_time_s,
+                 pir_cfg.pulse_count, pir_cfg.pulse_count + 1,
+                 pir_cfg.window_time_s, 2.0 + 2.0 * pir_cfg.window_time_s);
+    
+    return AICAM_OK;
+}
+
+/**
+ * @brief Prepare system for sleep mode
+ * @return AICAM_OK on success
+ */
+static aicam_result_t prepare_for_sleep(void)
+{
+    if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+    
+    system_controller_t *controller = g_system_service_ctx.controller;
+    
+    LOG_SVC_INFO("Preparing system for sleep mode...");
+    
+    // Update RTC time to U0 chip before sleep
+    int ret = u0_module_update_rtc_time();
+    if (ret != 0) {
+        LOG_SVC_ERROR("Failed to update RTC time to U0: %d", ret);
+    }
+    
+    // Configure PIR sensor if PIR wakeup is enabled
+    aicam_result_t result = configure_pir_sensor(controller);
+    if (result != AICAM_OK) {
+        LOG_SVC_WARN("Failed to configure PIR for sleep: %d", result);
+        // Continue even if PIR configuration fails
+    }
+    
+    // Save critical configuration to NVS
+    result = system_service_save_config();
+    if (result != AICAM_OK) {
+        LOG_SVC_WARN("Failed to save config before sleep: %d", result);
+    }
+    
+    // Set system state to sleep
+    system_controller_set_state(controller, SYSTEM_STATE_SLEEP);
+    
+    return AICAM_OK;
+}
  
  /**
   * @brief Enter sleep mode based on current power mode configuration
@@ -1629,20 +1923,42 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
          g_system_service_ctx.last_wakeup_flag = 0;
      }
      
-     g_system_service_ctx.is_initialized = true;
-     g_system_service_ctx.is_started = false;
-     g_system_service_ctx.timer_trigger_configured = false;
-     g_system_service_ctx.timer_trigger_active = false;
-     
-     LOG_SVC_INFO("Simplified system service initialized successfully");
-     return AICAM_OK;
- }
+    g_system_service_ctx.is_initialized = true;
+    g_system_service_ctx.is_started = false;
+    g_system_service_ctx.timer_trigger_configured = false;
+    g_system_service_ctx.timer_trigger_active = false;
+    
+    // Initialize PIR sensor if PIR trigger is enabled
+    if (g_system_service_ctx.controller->work_config.pir_trigger.enable) {
+        result = configure_pir_sensor(g_system_service_ctx.controller);
+        if (result != AICAM_OK) {
+            LOG_SVC_WARN("Failed to initialize PIR sensor on startup: %d", result);
+            // Continue even if PIR initialization fails
+        } else {
+            LOG_SVC_INFO("PIR sensor initialized on startup");
+        }
+        
+        // Register PIR value change callback for runtime trigger
+        result = register_pir_runtime_callback(g_system_service_ctx.controller);
+        if (result != AICAM_OK) {
+            LOG_SVC_WARN("Failed to register PIR runtime callback: %d", result);
+        } else {
+            LOG_SVC_INFO("PIR runtime callback registered");
+        }
+    }
+    
+    LOG_SVC_INFO("Simplified system service initialized successfully");
+    return AICAM_OK;
+}
  
- aicam_result_t system_service_deinit(void)
- {
-     if (!g_system_service_ctx.is_initialized) {
-         return AICAM_ERROR_NOT_INITIALIZED;
-     }
+aicam_result_t system_service_deinit(void)
+{
+    if (!g_system_service_ctx.is_initialized) {
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+    
+    // Unregister PIR runtime callback
+    unregister_pir_runtime_callback();
      
      LOG_SVC_INFO("Deinitializing simplified system service...");
      
@@ -1985,6 +2301,61 @@ wakeup_source_type_t system_service_get_wakeup_source_type(void)
    }
 
    return WAKEUP_SOURCE_OTHER;
+}
+
+/**
+ * @brief Check if wakeup source requires time-optimized mode (skip time-consuming operations)
+ * @param source Wakeup source type
+ * @return AICAM_TRUE if time-optimized mode is required, AICAM_FALSE otherwise
+ * @details Time-optimized mode is used for wakeup sources that need quick response,
+ *          such as RTC timer wakeup and button short press. In this mode, time-consuming
+ *          operations (like network scan, auto-subscribe) should be skipped to save time.
+ *          Wakeup sources like button long press (AP enable) or other sources don't need this optimization.
+ */
+aicam_bool_t system_service_requires_time_optimized_mode(wakeup_source_type_t source)
+{
+    switch (source) {
+        case WAKEUP_SOURCE_RTC:           // RTC timer wakeup - needs time optimization
+        case WAKEUP_SOURCE_BUTTON:        // Button short press - needs time optimization
+        case WAKEUP_SOURCE_PIR:           // PIR sensor wakeup - needs time optimization
+        case WAKEUP_SOURCE_IO:            // IO trigger wakeup - needs time optimization
+            return AICAM_TRUE;
+
+        case WAKEUP_SOURCE_BUTTON_LONG:   // Button long press (AP enable) - no time optimization needed
+        case WAKEUP_SOURCE_BUTTON_SUPER_LONG: // Button super long press (factory reset) - no time optimization needed
+        case WAKEUP_SOURCE_REMOTE:       // Remote wakeup (MQTT/Network) - no time optimization needed
+        case WAKEUP_SOURCE_WUFI:          // WUFI wakeup - no time optimization needed
+        case WAKEUP_SOURCE_OTHER:         // Other wakeup - no time optimization needed
+        default:
+            return AICAM_FALSE;
+    }
+}
+
+/**
+ * @brief Check if wakeup source requires only essential services in low power mode
+ * @param source Wakeup source type
+ * @return AICAM_TRUE if only essential services should be started, AICAM_FALSE otherwise
+ * @details In low power mode, some wakeup sources (like RTC, button short press, PIR, IO)
+ *          only need essential services to be started for quick response.
+ *          Other wakeup sources (like button long press for AP enable) require all services.
+ */
+aicam_bool_t system_service_requires_only_essential_services(wakeup_source_type_t source)
+{
+    switch (source) {
+        case WAKEUP_SOURCE_RTC:           // RTC timer wakeup - only essential services
+        case WAKEUP_SOURCE_BUTTON:        // Button short press - only essential services
+        case WAKEUP_SOURCE_PIR:           // PIR sensor wakeup - only essential services
+        case WAKEUP_SOURCE_IO:            // IO trigger wakeup - only essential services
+        case WAKEUP_SOURCE_BUTTON_SUPER_LONG: // Button super long press (factory reset) - only essential services
+        case WAKEUP_SOURCE_REMOTE:       // Remote wakeup (MQTT/Network) - only essential services
+        case WAKEUP_SOURCE_WUFI:          // WUFI wakeup - only essential services
+            return AICAM_TRUE;
+            
+        case WAKEUP_SOURCE_BUTTON_LONG:   // Button long press (AP enable) - needs all services
+        case WAKEUP_SOURCE_OTHER:         // Other wakeup - needs all services
+        default:
+            return AICAM_FALSE;
+    }
 }
  
  /**
@@ -2433,6 +2804,180 @@ aicam_result_t system_service_capture_request(const system_capture_request_t *re
     return ret;
 }
 
+/* ==================== SD Card Storage Helper Functions ==================== */
+
+/**
+ * @brief Generate image with detection boxes drawn (inference image)
+ * @param jpeg_buffer Original JPEG buffer
+ * @param jpeg_size Original JPEG size
+ * @param nn_result AI detection result
+ * @param output_jpeg Output JPEG buffer (allocated by function)
+ * @param output_jpeg_size Output JPEG size
+ * @return aicam_result_t Operation result
+ */
+static aicam_result_t generate_inference_image(const uint8_t *jpeg_buffer, 
+                                           uint32_t jpeg_size,
+                                           const nn_result_t *nn_result,
+                                           uint8_t **output_jpeg,
+                                           uint32_t *output_jpeg_size)
+{
+    if (!jpeg_buffer || jpeg_size == 0 || !nn_result || !output_jpeg || !output_jpeg_size) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    // Check if there are any detections to draw
+    if (!nn_result->is_valid || 
+        (nn_result->od.nb_detect == 0 && nn_result->mpe.nb_detect == 0)) {
+        LOG_SVC_INFO("No AI detections to draw, skipping inference image generation");
+        return AICAM_ERROR_UNAVAILABLE;
+    }
+
+    aicam_result_t ret = AICAM_OK;
+    uint8_t *jpeg_copy = NULL;
+    uint8_t *raw_data = NULL;
+    uint8_t *rgb_data = NULL;
+    uint32_t raw_size = 0;
+
+    // Step 1: Copy JPEG data
+    jpeg_copy = buffer_calloc(1, jpeg_size);
+    if (!jpeg_copy) {
+        LOG_SVC_ERROR("Failed to allocate JPEG copy buffer");
+        return AICAM_ERROR_NO_MEMORY;
+    }
+    memcpy(jpeg_copy, jpeg_buffer, jpeg_size);
+
+    // Step 2: Decode JPEG to raw YCbCr
+    jpegc_params_t jpeg_params = {0};
+    ret = device_service_camera_get_jpeg_params(&jpeg_params);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get JPEG parameters: %d", ret);
+        buffer_free(jpeg_copy);
+        return ret;
+    }
+
+    ai_jpeg_decode_config_t decode_config = {
+        .width = jpeg_params.ImageWidth,
+        .height = jpeg_params.ImageHeight,
+        .chroma_subsampling = JPEG_444_SUBSAMPLING,
+        .quality = jpeg_params.ImageQuality
+    };
+
+    ret = ai_jpeg_decode(jpeg_copy, jpeg_size, &decode_config, &raw_data, &raw_size);
+    buffer_free(jpeg_copy);
+    jpeg_copy = NULL;
+
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to decode JPEG: %d", ret);
+        return ret;
+    }
+
+    // Step 3: Convert YCbCr to RGB565 for drawing
+    ret = ai_color_convert(raw_data, decode_config.width, decode_config.height,
+                          DMA2D_INPUT_YCBCR, 0, &rgb_data, &raw_size, DMA2D_OUTPUT_RGB565);
+    
+    // Return decode buffer
+    device_t *jpeg_dev = device_find_pattern(JPEG_DEVICE_NAME, DEV_TYPE_VIDEO);
+    if (jpeg_dev) {
+        device_ioctl(jpeg_dev, JPEGC_CMD_RETURN_DEC_BUFFER, raw_data, 0);
+    }
+    raw_data = NULL;
+
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to convert color: %d", ret);
+        return ret;
+    }
+
+    // Step 4: Initialize AI draw service if needed
+    if (!ai_draw_is_initialized()) {
+        ai_draw_config_t draw_config;
+        ai_draw_get_default_config(&draw_config);
+        draw_config.image_width = decode_config.width;
+        draw_config.image_height = decode_config.height;
+
+        ret = ai_draw_service_init(&draw_config);
+        if (ret != AICAM_OK) {
+            LOG_SVC_WARN("Failed to initialize AI draw service: %d", ret);
+            buffer_free(rgb_data);
+            return ret;
+        }
+    }
+
+    // Step 5: Draw AI results on image
+    if (ai_draw_is_initialized()) {
+        ret = ai_draw_results(rgb_data, decode_config.width, decode_config.height, nn_result);
+        if (ret != AICAM_OK) {
+            LOG_SVC_WARN("Failed to draw AI results: %d", ret);
+            buffer_free(rgb_data);
+            return ret;
+        }
+    }
+
+    // Step 6: Encode RGB565 back to JPEG
+    ai_jpeg_encode_config_t encode_config = {
+        .width = decode_config.width,
+        .height = decode_config.height,
+        .chroma_subsampling = JPEG_420_SUBSAMPLING,
+        .quality = 90
+    };
+
+    ret = ai_jpeg_encode(rgb_data, raw_size, &encode_config, output_jpeg, output_jpeg_size);
+    buffer_free(rgb_data);
+    rgb_data = NULL;
+
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to encode inference image to JPEG: %d", ret);
+        return ret;
+    }
+
+    LOG_SVC_INFO("Inference image generated: %u bytes", *output_jpeg_size);
+    return AICAM_OK;
+}
+
+/**
+ * @brief Generate JSON file with detection boxes (inference JSON)
+ * @param nn_result AI detection result
+ * @param json_buffer Output JSON buffer (allocated by function, caller must free)
+ * @param json_size Output JSON size
+ * @return aicam_result_t Operation result
+ */
+static aicam_result_t generate_inference_json(const nn_result_t *nn_result,
+                                        char **json_buffer,
+                                        uint32_t *json_size)
+{
+    if (!nn_result || !json_buffer || !json_size) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    // Check if there are any detections
+    if (!nn_result->is_valid || 
+        (nn_result->od.nb_detect == 0 && nn_result->mpe.nb_detect == 0)) {
+        LOG_SVC_INFO("No AI detections, skipping JSON generation");
+        return AICAM_ERROR_UNAVAILABLE;
+    }
+
+    // Generate JSON using existing function
+    cJSON *json_obj = nn_create_ai_result_json(nn_result);
+    if (!json_obj) {
+        LOG_SVC_ERROR("Failed to create AI result JSON");
+        return AICAM_ERROR;
+    }
+
+    // Convert to string
+    char *json_string = cJSON_Print(json_obj);
+    cJSON_Delete(json_obj);
+
+    if (!json_string) {
+        LOG_SVC_ERROR("Failed to print JSON string");
+        return AICAM_ERROR;
+    }
+
+    *json_buffer = json_string;
+    *json_size = strlen(json_string);
+
+    LOG_SVC_INFO("Inference JSON generated: %u bytes", *json_size);
+    return AICAM_OK;
+}
+
 /* ==================== Image Capture and Upload API Implementation ==================== */
 
 /**
@@ -2460,19 +3005,19 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
 
     // Check if this is an RTC wakeup (for fast capture)
     wakeup_source_type_t wakeup_source = system_service_get_wakeup_source_type();
-    aicam_bool_t is_rtc_wakeup = (wakeup_source == WAKEUP_SOURCE_RTC);
-    aicam_bool_t is_button_wakeup = (wakeup_source == WAKEUP_SOURCE_BUTTON);
+    aicam_bool_t requires_time_optimized_mode = system_service_requires_time_optimized_mode(wakeup_source);
 
     // Step 1: Capture image with optional AI inference
     uint8_t *jpeg_buffer = NULL;
     int jpeg_size = 0;
     nn_result_t nn_result = {0};
+    uint32_t frame_id = 0;
     aicam_result_t ret = AICAM_OK;
 
     step_start_time = rtc_get_uptime_ms();
-    if (is_rtc_wakeup || is_button_wakeup) {
+    if (requires_time_optimized_mode) {
         LOG_SVC_INFO("[TIMING] Step 1: Capturing image using fast capture API (RTC wakeup)...");
-        ret = device_service_camera_capture_fast(&jpeg_buffer, &jpeg_size, enable_ai, &nn_result);
+        ret = device_service_camera_capture_fast(&jpeg_buffer, &jpeg_size, enable_ai, &nn_result, &frame_id);
         step_end_time = rtc_get_uptime_ms();
         step_duration = step_end_time - step_start_time;
         
@@ -2480,11 +3025,11 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             LOG_SVC_ERROR("[TIMING] Step 1 FAILED (fast capture): %d (duration: %lu ms)", ret, (unsigned long)step_duration);
             return ret;
         }
-        LOG_SVC_INFO("[TIMING] Step 1 COMPLETED (fast capture): Image captured - %u bytes (duration: %lu ms)", 
-                     jpeg_size, (unsigned long)step_duration);
+        LOG_SVC_INFO("[TIMING] Step 1 COMPLETED (fast capture): Image captured - %u bytes, frame_id: %lu (duration: %lu ms)", 
+                     jpeg_size, (unsigned long)frame_id, (unsigned long)step_duration);
     } else {
         LOG_SVC_INFO("[TIMING] Step 1: Capturing image...");
-        ret = device_service_camera_capture(&jpeg_buffer, &jpeg_size, enable_ai, &nn_result);
+        ret = device_service_camera_capture(&jpeg_buffer, &jpeg_size, enable_ai, &nn_result, &frame_id);
         step_end_time = rtc_get_uptime_ms();
         step_duration = step_end_time - step_start_time;
         
@@ -2492,27 +3037,103 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             LOG_SVC_ERROR("[TIMING] Step 1 FAILED: %d (duration: %lu ms)", ret, (unsigned long)step_duration);
             return ret;
         }
-        LOG_SVC_INFO("[TIMING] Step 1 COMPLETED: Image captured - %u bytes (duration: %lu ms)", 
-                     jpeg_size, (unsigned long)step_duration);
+        LOG_SVC_INFO("[TIMING] Step 1 COMPLETED: Image captured - %u bytes, frame_id: %lu (duration: %lu ms)", 
+                     jpeg_size, (unsigned long)frame_id, (unsigned long)step_duration);
     }
+
 
     //store image to sd card if sd card is connected
     if(store_to_sd && device_service_storage_is_sd_connected()){
+        printf("xxx1\r\n");
         step_start_time = rtc_get_uptime_ms();
-        LOG_SVC_INFO("[TIMING] Step 1.1: Storing image to SD card...");
+        LOG_SVC_INFO("[TIMING] Step 1.1: Storing images to SD card...");
+        uint32_t timestamp = (uint32_t)rtc_get_timeStamp();
         char filename[64];
-        snprintf(filename, sizeof(filename), "image_%u.jpg", (unsigned int)rtc_get_timeStamp());
+        
+        // Step 1.1.1: Store original image
+        snprintf(filename, sizeof(filename), "image_%lu_%lu.jpg", timestamp, (unsigned long)frame_id);
         ret = sd_write_file(jpeg_buffer, jpeg_size, filename);
         step_end_time = rtc_get_uptime_ms();
         step_duration = step_end_time - step_start_time;
         
         if(ret != AICAM_OK){
-            LOG_SVC_ERROR("[TIMING] Step 1.1 FAILED: Store image to sd card failed: %d (duration: %lu ms)", 
+            LOG_SVC_ERROR("[TIMING] Step 1.1.1 FAILED: Store original image to sd card failed: %d (duration: %lu ms)", 
                          ret, (unsigned long)step_duration);
         } else {
-            LOG_SVC_INFO("[TIMING] Step 1.1 COMPLETED: Image stored to SD card (duration: %lu ms)", 
+            LOG_SVC_INFO("[TIMING] Step 1.1.1 COMPLETED: Original image stored to SD card (duration: %lu ms)", 
                         (unsigned long)step_duration);
         }
+
+        // Step 1.1.2: Generate and store inference image if AI is enabled and has detections
+        if (enable_ai && nn_result.is_valid && 
+            (nn_result.od.nb_detect > 0 || nn_result.mpe.nb_detect > 0)) {
+            uint8_t *inference_jpeg = NULL;
+            uint32_t inference_jpeg_size = 0;
+            
+            step_start_time = rtc_get_uptime_ms();
+            LOG_SVC_INFO("[TIMING] Step 1.1.2: Generating inference image...");
+            ret = generate_inference_image(jpeg_buffer, jpeg_size, &nn_result, 
+                                      &inference_jpeg, &inference_jpeg_size);
+            step_end_time = rtc_get_uptime_ms();
+            step_duration = step_end_time - step_start_time;
+            
+            if (ret == AICAM_OK && inference_jpeg && inference_jpeg_size > 0) {
+                snprintf(filename, sizeof(filename), "image_%lu_%lu_inference.jpg", timestamp, (unsigned long)frame_id);
+                aicam_result_t inference_ret = sd_write_file(inference_jpeg, inference_jpeg_size, filename);
+                step_end_time = rtc_get_uptime_ms();
+                step_duration = step_end_time - step_start_time;
+                
+                if (inference_ret != AICAM_OK) {
+                    LOG_SVC_ERROR("[TIMING] Step 1.1.2 FAILED: Store inference image to sd card failed: %d (duration: %lu ms)", 
+                                 inference_ret, (unsigned long)step_duration);
+                } else {
+                    LOG_SVC_INFO("[TIMING] Step 1.1.2 COMPLETED: Inference image stored to SD card (duration: %lu ms)", 
+                                (unsigned long)step_duration);
+                }
+                
+                // Free inference JPEG buffer
+                buffer_free(inference_jpeg);
+            } else {
+                LOG_SVC_WARN("[TIMING] Step 1.1.2 SKIPPED: Failed to generate inference image: %d (duration: %lu ms)", 
+                            ret, (unsigned long)step_duration);
+            }
+        }
+
+        // Step 1.1.3: Generate and store inference JSON file if AI is enabled and has detections
+        if (enable_ai && nn_result.is_valid && 
+            (nn_result.od.nb_detect > 0 || nn_result.mpe.nb_detect > 0)) {
+            char *json_buffer = NULL;
+            uint32_t json_size = 0;
+            
+            step_start_time = rtc_get_uptime_ms();
+            LOG_SVC_INFO("[TIMING] Step 1.1.3: Generating inference JSON...");
+            ret = generate_inference_json(&nn_result, &json_buffer, &json_size);
+            step_end_time = rtc_get_uptime_ms();
+            step_duration = step_end_time - step_start_time;
+            
+            if (ret == AICAM_OK && json_buffer && json_size > 0) {
+                snprintf(filename, sizeof(filename), "image_%lu_%lu_inference.json", timestamp, (unsigned long)frame_id);
+                aicam_result_t json_ret = sd_write_file((const uint8_t *)json_buffer, json_size, filename);
+                step_end_time = rtc_get_uptime_ms();
+                step_duration = step_end_time - step_start_time;
+                
+                if (json_ret != AICAM_OK) {
+                    LOG_SVC_ERROR("[TIMING] Step 1.1.3 FAILED: Store inference JSON to sd card failed: %d (duration: %lu ms)", 
+                                 json_ret, (unsigned long)step_duration);
+                } else {
+                    LOG_SVC_INFO("[TIMING] Step 1.1.3 COMPLETED: Inference JSON stored to SD card (duration: %lu ms)", 
+                                (unsigned long)step_duration);
+                }
+                
+                // Free JSON buffer (allocated by cJSON_Print)
+                cJSON_free(json_buffer);
+            } else {
+                LOG_SVC_WARN("[TIMING] Step 1.1.3 SKIPPED: Failed to generate inference JSON: %d (duration: %lu ms)", 
+                            ret, (unsigned long)step_duration);
+            }
+        }
+        
+        LOG_SVC_INFO("[TIMING] Step 1.1 COMPLETED: All SD card storage operations finished");
     }
 
     // Validate capture result
@@ -2726,5 +3347,352 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     }
 
     return upload_result;
+}
+
+/* ==================== PIR Debug Commands ==================== */
+
+/**
+ * @brief PIR status command: Show PIR sensor status and configuration
+ * @param argc Argument count
+ * @param argv Argument vector
+ * @return 0 on success, negative on error
+ */
+static int pir_status_cmd(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
+        LOG_SVC_ERROR("System service not initialized");
+        return -1;
+    }
+    
+    system_controller_t *controller = g_system_service_ctx.controller;
+    
+    // Get PIR value
+    uint32_t pir_value = u0_module_get_pir_value_ex();
+    
+    // Get wakeup flag
+    uint32_t wakeup_flag = u0_module_get_wakeup_flag_ex();
+    
+    // Get work config
+    work_mode_config_t work_config;
+    aicam_result_t ret = system_controller_get_work_config(controller, &work_config);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get work config: %d", ret);
+        return -1;
+    }
+    
+    // Get wakeup source config
+    wakeup_source_config_t pir_wakeup_config;
+    ret = system_service_get_wakeup_source_config(WAKEUP_SOURCE_PIR, &pir_wakeup_config);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get PIR wakeup source config: %d", ret);
+        return -1;
+    }
+    
+    LOG_SVC_INFO("=== PIR Sensor Status ===");
+    LOG_SVC_INFO("Current PIR value: %u (1=motion detected)", pir_value);
+    LOG_SVC_INFO("PIR trigger enabled: %s", work_config.pir_trigger.enable ? "YES" : "NO");
+    LOG_SVC_INFO("Wakeup source enabled: %s", pir_wakeup_config.enabled ? "YES" : "NO");
+    LOG_SVC_INFO("Low power supported: %s", pir_wakeup_config.low_power_supported ? "YES" : "NO");
+    LOG_SVC_INFO("Full speed supported: %s", pir_wakeup_config.full_speed_supported ? "YES" : "NO");
+    LOG_SVC_INFO("Debounce time: %u ms", pir_wakeup_config.debounce_ms);
+    
+    // Check wakeup flags
+    if (wakeup_flag & PWR_WAKEUP_FLAG_VALID) {
+        LOG_SVC_INFO("Last wakeup flag: 0x%08X", wakeup_flag);
+        if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_RISING) {
+            LOG_SVC_INFO("  - PIR rising edge wakeup");
+        }
+        if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_FALLING) {
+            LOG_SVC_INFO("  - PIR falling edge wakeup");
+        }
+        if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_HIGH) {
+            LOG_SVC_INFO("  - PIR high level wakeup");
+        }
+        if (wakeup_flag & PWR_WAKEUP_FLAG_PIR_LOW) {
+            LOG_SVC_INFO("  - PIR low level wakeup");
+        }
+    } else {
+        LOG_SVC_INFO("No valid wakeup flag (cold boot)");
+    }
+    
+    // Get power mode
+    power_mode_config_t power_config;
+    ret = system_controller_get_power_config(controller, &power_config);
+    if (ret == AICAM_OK) {
+        LOG_SVC_INFO("Current power mode: %s", 
+                     power_config.current_mode == POWER_MODE_LOW_POWER ? "LOW_POWER" : "FULL_SPEED");
+    }
+    
+    LOG_SVC_INFO("=========================");
+    
+    return 0;
+}
+
+/**
+ * @brief PIR test command: Test PIR sensor reading
+ * @param argc Argument count
+ * @param argv Argument vector
+ * @return 0 on success, negative on error
+ */
+static int pir_test_cmd(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    LOG_SVC_INFO("=== PIR Sensor Test ===");
+    LOG_SVC_INFO("Reading PIR value (from cache)...");
+    uint32_t pir_value_cache = u0_module_get_pir_value_ex();
+    LOG_SVC_INFO("PIR value (cache): %u", pir_value_cache);
+    
+    LOG_SVC_INFO("Reading PIR value (from U0 chip)...");
+    uint32_t pir_value = 0;
+    int ret = u0_module_get_pir_value(&pir_value);
+    if (ret == 0) {
+        LOG_SVC_INFO("PIR value (U0): %u", pir_value);
+    } else {
+        LOG_SVC_ERROR("Failed to read PIR value from U0: %d", ret);
+        return -1;
+    }
+    
+    LOG_SVC_INFO("PIR test completed");
+    LOG_SVC_INFO("======================");
+    
+    return 0;
+}
+
+/**
+ * @brief PIR configuration command: Configure PIR sensor parameters
+ * @param argc Argument count
+ * @param argv Argument vector
+ * @return 0 on success, negative on error
+ */
+static int pir_cfg_cmd(int argc, char **argv)
+{
+    if (argc < 2) {
+        LOG_SVC_INFO("Usage: pir_cfg [sensitivity] [ignore_time] [pulse_count] [window_time]");
+        LOG_SVC_INFO("  sensitivity:  Sensitivity level (recommended >30, default: 30)");
+        LOG_SVC_INFO("  ignore_time:  Ignore time after interrupt (0-15, default: 7 = 4s)");
+        LOG_SVC_INFO("  pulse_count:  Pulse count (1-4, default: 1)");
+        LOG_SVC_INFO("  window_time:  Window time (0-3, default: 0 = 2s)");
+        LOG_SVC_INFO("Example: pir_cfg 30 7 1 0");
+        return 0;
+    }
+    
+    ms_bridging_pir_cfg_t pir_cfg = {0};
+    
+    // Parse arguments
+    if (argc >= 2) {
+        pir_cfg.sensitivity_level = (uint8_t)atoi(argv[1]);
+    }
+    if (argc >= 3) {
+        pir_cfg.ignore_time_s = (uint8_t)atoi(argv[2]);
+    }
+    if (argc >= 4) {
+        pir_cfg.pulse_count = (uint8_t)atoi(argv[3]);
+    }
+    if (argc >= 5) {
+        pir_cfg.window_time_s = (uint8_t)atoi(argv[4]);
+    }
+    
+    // Set default values if not provided
+    if (pir_cfg.sensitivity_level == 0) pir_cfg.sensitivity_level = 30;
+    if (pir_cfg.ignore_time_s == 0 && argc < 3) pir_cfg.ignore_time_s = 7;
+    if (pir_cfg.pulse_count == 0 && argc < 4) pir_cfg.pulse_count = 1;
+    
+    pir_cfg.motion_enable = 1;
+    pir_cfg.interrupt_src = 0;
+    pir_cfg.volt_select = 0;
+    pir_cfg.reserved1 = 0;
+    pir_cfg.reserved2 = 0;
+    
+    LOG_SVC_INFO("Configuring PIR sensor:");
+    LOG_SVC_INFO("  Sensitivity: %u", pir_cfg.sensitivity_level);
+    LOG_SVC_INFO("  Ignore time: %u (%.1f seconds)", pir_cfg.ignore_time_s, 
+                 0.5 + 0.5 * pir_cfg.ignore_time_s);
+    LOG_SVC_INFO("  Pulse count: %u", pir_cfg.pulse_count);
+    LOG_SVC_INFO("  Window time: %u (%.0f seconds)", pir_cfg.window_time_s, 
+                 2.0 + 2.0 * pir_cfg.window_time_s);
+    
+    int ret = u0_module_cfg_pir(&pir_cfg);
+    if (ret == 0) {
+        LOG_SVC_INFO("PIR sensor configured successfully");
+    } else {
+        LOG_SVC_ERROR("Failed to configure PIR sensor: %d", ret);
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * @brief PIR wakeup test command: Test PIR wakeup configuration
+ * @param argc Argument count
+ * @param argv Argument vector
+ * @return 0 on success, negative on error
+ */
+static int pir_wakeup_test_cmd(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
+        LOG_SVC_ERROR("System service not initialized");
+        return -1;
+    }
+    
+    system_controller_t *controller = g_system_service_ctx.controller;
+    
+    LOG_SVC_INFO("=== PIR Wakeup Test ===");
+    
+    // Check current configuration
+    work_mode_config_t work_config;
+    aicam_result_t ret = system_controller_get_work_config(controller, &work_config);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get work config: %d", ret);
+        return -1;
+    }
+    
+    wakeup_source_config_t pir_wakeup_config;
+    ret = system_service_get_wakeup_source_config(WAKEUP_SOURCE_PIR, &pir_wakeup_config);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get PIR wakeup source config: %d", ret);
+        return -1;
+    }
+    
+    power_mode_config_t power_config;
+    ret = system_controller_get_power_config(controller, &power_config);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get power config: %d", ret);
+        return -1;
+    }
+    
+    LOG_SVC_INFO("Current configuration:");
+    LOG_SVC_INFO("  PIR trigger enabled: %s", work_config.pir_trigger.enable ? "YES" : "NO");
+    LOG_SVC_INFO("  Wakeup source enabled: %s", pir_wakeup_config.enabled ? "YES" : "NO");
+    LOG_SVC_INFO("  Power mode: %s", 
+                 power_config.current_mode == POWER_MODE_LOW_POWER ? "LOW_POWER" : "FULL_SPEED");
+    LOG_SVC_INFO("  Low power supported: %s", pir_wakeup_config.low_power_supported ? "YES" : "NO");
+    LOG_SVC_INFO("  Full speed supported: %s", pir_wakeup_config.full_speed_supported ? "YES" : "NO");
+    
+    // Check if PIR wakeup would be enabled
+    bool would_be_enabled = false;
+    if (power_config.current_mode == POWER_MODE_LOW_POWER) {
+        would_be_enabled = (work_config.pir_trigger.enable &&
+                           pir_wakeup_config.enabled &&
+                           pir_wakeup_config.low_power_supported);
+    } else {
+        would_be_enabled = (work_config.pir_trigger.enable &&
+                           pir_wakeup_config.enabled &&
+                           pir_wakeup_config.full_speed_supported);
+    }
+    
+    LOG_SVC_INFO("PIR wakeup would be enabled: %s", would_be_enabled ? "YES" : "NO");
+    
+    if (!would_be_enabled) {
+        LOG_SVC_WARN("PIR wakeup is not enabled. Reasons:");
+        if (!work_config.pir_trigger.enable) {
+            LOG_SVC_WARN("  - PIR trigger is disabled in work mode config");
+        }
+        if (!pir_wakeup_config.enabled) {
+            LOG_SVC_WARN("  - Wakeup source is disabled");
+        }
+        if (power_config.current_mode == POWER_MODE_LOW_POWER && !pir_wakeup_config.low_power_supported) {
+            LOG_SVC_WARN("  - PIR is not supported in low power mode");
+        }
+        if (power_config.current_mode == POWER_MODE_FULL_SPEED && !pir_wakeup_config.full_speed_supported) {
+            LOG_SVC_WARN("  - PIR is not supported in full speed mode");
+        }
+    }
+    
+    LOG_SVC_INFO("======================");
+    
+    return 0;
+}
+
+/**
+ * @brief Sleep command: Enter sleep mode immediately
+ * @param argc Argument count
+ * @param argv Argument vector
+ * @return 0 on success, negative on error
+ */
+static int sleep_cmd(int argc, char **argv)
+{
+    uint32_t sleep_duration = 0;
+    
+    if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
+        LOG_SVC_ERROR("System service not initialized");
+        return -1;
+    }
+    
+    // Parse optional sleep duration argument
+    if (argc >= 2) {
+        sleep_duration = (uint32_t)atoi(argv[1]);
+        if (sleep_duration == 0) {
+            LOG_SVC_WARN("Invalid sleep duration, using 0 (no timing wakeup)");
+        }
+    }
+    
+    system_controller_t *controller = g_system_service_ctx.controller;
+    
+    // Get current configuration for logging
+    power_mode_config_t power_config;
+    aicam_result_t ret = system_controller_get_power_config(controller, &power_config);
+    if (ret != AICAM_OK) {
+        LOG_SVC_WARN("Failed to get power config: %d", ret);
+    }
+    
+    work_mode_config_t work_config;
+    ret = system_controller_get_work_config(controller, &work_config);
+    if (ret != AICAM_OK) {
+        LOG_SVC_WARN("Failed to get work config: %d", ret);
+    }
+    
+    LOG_SVC_INFO("=== Entering Sleep Mode ===");
+    LOG_SVC_INFO("Power mode: %s", 
+                 power_config.current_mode == POWER_MODE_LOW_POWER ? "LOW_POWER" : "FULL_SPEED");
+    LOG_SVC_INFO("PIR trigger enabled: %s", work_config.pir_trigger.enable ? "YES" : "NO");
+    LOG_SVC_INFO("Remote trigger enabled: %s", work_config.remote_trigger.enable ? "YES" : "NO");
+    LOG_SVC_INFO("Timer trigger enabled: %s", work_config.timer_trigger.enable ? "YES" : "NO");
+    if (sleep_duration > 0) {
+        LOG_SVC_INFO("Sleep duration: %u seconds", sleep_duration);
+    } else {
+        LOG_SVC_INFO("Sleep duration: 0 (no timing wakeup)");
+    }
+    LOG_SVC_INFO("===========================");
+    
+    // Enter sleep mode
+    ret = system_service_enter_sleep(sleep_duration);
+    if (ret != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to enter sleep mode: %d", ret);
+        return -1;
+    }
+    
+    // Note: System will sleep after this point, so this message may not be printed
+    LOG_SVC_INFO("Sleep command executed successfully");
+    
+    return 0;
+}
+
+/**
+ * @brief Register PIR debug commands
+ */
+void system_service_pir_debug_register_commands(void)
+{
+    static const debug_cmd_reg_t pir_debug_cmd_table[] = {
+        { "pir_status", "Show PIR sensor status and configuration", pir_status_cmd },
+        { "pir_test", "Test PIR sensor reading", pir_test_cmd },
+        { "pir_cfg", "Configure PIR sensor parameters (usage: pir_cfg [sensitivity] [ignore_time] [pulse_count] [window_time])", pir_cfg_cmd },
+        { "pir_wakeup_test", "Test PIR wakeup configuration", pir_wakeup_test_cmd },
+        { "sleep", "Enter sleep mode immediately (usage: sleep [duration_seconds])", sleep_cmd },
+    };
+    
+    for (int i = 0; i < (int)(sizeof(pir_debug_cmd_table) / sizeof(pir_debug_cmd_table[0])); i++) {
+        debug_register_commands(&pir_debug_cmd_table[i], 1);
+    }
+    
+    LOG_SVC_INFO("PIR debug commands registered");
 }
 

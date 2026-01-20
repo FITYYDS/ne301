@@ -962,56 +962,50 @@ aicam_result_t device_service_storage_set_cyclic_overwrite(aicam_bool_t enabled,
 
 aicam_result_t sd_write_file(const uint8_t *buffer, uint32_t size, const char *filename)
 {
-    if (!buffer || !filename) {
+    if (!buffer || !filename || size == 0) {
+        LOG_SVC_DEBUG("sd_write_file: invalid parameter\r\n");
         return AICAM_ERROR_INVALID_PARAM;
     }
 
-    if (!filename || !buffer || size == 0) {
-        LOG_SVC_DEBUG("create_file: invalid parameter\r\n");
-        return AICAM_ERROR_INVALID_PARAM;
-    }
+    LOG_SVC_DEBUG("sd_write_file: %s size:%u\r\n", filename, (unsigned int)size);
 
-    int WRITE_CHUNK_SIZE = 4096;
-    uint8_t* write_buf = (uint8_t*)buffer_malloc_aligned(WRITE_CHUNK_SIZE, 32);
+    const size_t WRITE_CHUNK_SIZE = 4096;
+    uint8_t* write_buf = (uint8_t*)buffer_malloc_aligned_ex(WRITE_CHUNK_SIZE, 32, BUFFER_MEMORY_TYPE_RAM);
     if (!write_buf) {
-        LOG_SVC_DEBUG("create_file: cannot malloc %s\r\n", filename);
+        LOG_SVC_ERROR("sd_write_file: cannot malloc %s\r\n", filename);
         return AICAM_ERROR_INVALID_PARAM;
     }
 
-    LOG_SVC_DEBUG("create_file name :%s data_size:%d \r\n", filename, size);
+    LOG_SVC_DEBUG("sd_write_file open: %s size:%u\r\n", filename, (unsigned int)size);
     void *fd = file_fopen(filename, "w");
     if (!fd) {
-        LOG_SVC_DEBUG("create_file: cannot open %s\r\n", filename);
+        LOG_SVC_ERROR("sd_write_file: cannot open %s\r\n", filename);
+        buffer_free(write_buf);
         return AICAM_ERROR_INVALID_PARAM;
     }
 
     size_t total_written = 0;
-    const char *p = (const char*)buffer;
-    size_t last_reported = 0;
+    const uint8_t *p = buffer;
+    aicam_result_t result = AICAM_OK;
 
     while (total_written < size) {
-        size_t chunk_size = WRITE_CHUNK_SIZE;
-        if (size - total_written < WRITE_CHUNK_SIZE) {
-            chunk_size = size - total_written;
-        }
+        size_t chunk_size = (size - total_written < WRITE_CHUNK_SIZE)
+                            ? (size - total_written) : WRITE_CHUNK_SIZE;
+
         memcpy(write_buf, p + total_written, chunk_size);
         int written = file_fwrite(fd, write_buf, chunk_size);
         if (written != (int)chunk_size) {
-            LOG_SVC_DEBUG("create_file: write error \r\n");
-            file_fclose(fd);
-            return AICAM_ERROR_INVALID_PARAM;
+            LOG_SVC_ERROR("sd_write_file: write error at offset %u, written=%d, expected=%u\r\n",
+                         (unsigned int)total_written, written, (unsigned int)chunk_size);
+            result = AICAM_ERROR_INVALID_PARAM;
+            break;
         }
         total_written += chunk_size;
-
-        if (total_written - last_reported >= (WRITE_CHUNK_SIZE * 32) || total_written == size) {
-            LOG_SVC_DEBUG("create_file: written %u/%u bytes\r\n", (unsigned int)total_written, (unsigned int)size);
-            last_reported = total_written;
-        }
-        osDelay(1);
     }
+    
     file_fclose(fd);
     buffer_free(write_buf);
-    return AICAM_OK;
+    return result;
 }
 
 /* ==================== Hardware Management ==================== */
@@ -1365,7 +1359,7 @@ aicam_result_t device_service_camera_set_config(const camera_config_t *config)
 }
 
 aicam_result_t device_service_camera_capture(uint8_t **buffer, int *out_len,
-                                             aicam_bool_t need_ai_inference, nn_result_t *nn_result)
+                                             aicam_bool_t need_ai_inference, nn_result_t *nn_result, uint32_t *frame_id)
 {
     if (!g_device_service.camera_initialized || !g_device_service.camera_device)
     {
@@ -1446,13 +1440,29 @@ aicam_result_t device_service_camera_capture(uint8_t **buffer, int *out_len,
         goto cleanup;
     }
 
-    // 3. get frame buffer
-    fb_len = device_ioctl(g_device_service.camera_device, CAM_CMD_GET_PIPE1_BUFFER, (uint8_t *)&fb, 0);
-    if (fb_len <= 0 || fb == NULL)
-    {
-        LOG_SVC_WARN("Failed to get pipe1 buffer");
-        result = AICAM_ERROR_INVALID_PARAM;
-        goto cleanup;
+    // 3. get frame buffer with frame ID
+    uint32_t captured_frame_id = 0;
+    camera_buffer_with_frame_id_t buffer_with_id = {0};
+    aicam_result_t buffer_result = device_ioctl(g_device_service.camera_device, CAM_CMD_GET_PIPE1_BUFFER_WITH_FRAME_ID, 
+                                                 (uint8_t *)&buffer_with_id, 0);
+    if (buffer_result == AICAM_OK && buffer_with_id.buffer != NULL && buffer_with_id.size > 0) {
+        fb = buffer_with_id.buffer;
+        fb_len = buffer_with_id.size;
+        captured_frame_id = buffer_with_id.frame_id;
+    } else {
+        // Fallback to old method if WITH_FRAME_ID is not supported
+        fb_len = device_ioctl(g_device_service.camera_device, CAM_CMD_GET_PIPE1_BUFFER, (uint8_t *)&fb, 0);
+        if (fb_len <= 0 || fb == NULL)
+        {
+            LOG_SVC_WARN("Failed to get pipe1 buffer");
+            result = AICAM_ERROR_INVALID_PARAM;
+            goto cleanup;
+        }
+    }
+    
+    // Return frame ID if requested
+    if (frame_id != NULL) {
+        *frame_id = captured_frame_id;
     }
 
     if (need_ai_inference)
@@ -1563,7 +1573,7 @@ aicam_result_t device_service_camera_free_jpeg_buffer(uint8_t *buffer)
  *          This API is consistent with device_service_camera_capture but includes device initialization.
  */
 aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len,
-                                                  aicam_bool_t need_ai_inference, nn_result_t *nn_result)
+                                                  aicam_bool_t need_ai_inference, nn_result_t *nn_result, uint32_t *frame_id)
 {
     if (!buffer || !out_len) {
         return AICAM_ERROR_INVALID_PARAM;
@@ -1794,16 +1804,33 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
     uint64_t get_fb_time = rtc_get_uptime_ms();
     printf("prepare photo time %lu ms\r\n", (unsigned long)(get_fb_time - start_time));
 
-    // 9. Get frame buffer (same as device_service_camera_capture)
-    fb_len = device_ioctl(g_device_service.camera_device, CAM_CMD_GET_PIPE1_BUFFER, 
-                          (uint8_t *)&fb, 0);
-    printf("camera photo time %lu ms\r\n", (unsigned long)rtc_get_uptime_ms());
-    if (fb_len <= 0 || fb == NULL)
-    {
-        LOG_SVC_WARN("[FAST] Failed to get pipe1 buffer, fb_len:%d", fb_len);
-        result = AICAM_ERROR_INVALID_PARAM;
-        goto cleanup;
+    // 9. Get frame buffer with frame ID (same as device_service_camera_capture)
+    uint32_t captured_frame_id = 0;
+    camera_buffer_with_frame_id_t buffer_with_id = {0};
+    aicam_result_t buffer_result = device_ioctl(g_device_service.camera_device, CAM_CMD_GET_PIPE1_BUFFER_WITH_FRAME_ID, 
+                                                 (uint8_t *)&buffer_with_id, 0);
+    if (buffer_result == AICAM_OK && buffer_with_id.buffer != NULL && buffer_with_id.size > 0) {
+        fb = buffer_with_id.buffer;
+        fb_len = buffer_with_id.size;
+        captured_frame_id = buffer_with_id.frame_id;
+    } else {
+        // Fallback to old method if WITH_FRAME_ID is not supported
+        fb_len = device_ioctl(g_device_service.camera_device, CAM_CMD_GET_PIPE1_BUFFER, 
+                              (uint8_t *)&fb, 0);
+        if (fb_len <= 0 || fb == NULL)
+        {
+            LOG_SVC_WARN("[FAST] Failed to get pipe1 buffer, fb_len:%d", fb_len);
+            result = AICAM_ERROR_INVALID_PARAM;
+            goto cleanup;
+        }
     }
+    
+    // Return frame ID if requested
+    if (frame_id != NULL) {
+        *frame_id = captured_frame_id;
+    }
+    
+    printf("camera photo time %lu ms\r\n", (unsigned long)rtc_get_uptime_ms());
 
     // Get pipe2 buffer for AI inference (only if needed)
     if (need_ai_inference)

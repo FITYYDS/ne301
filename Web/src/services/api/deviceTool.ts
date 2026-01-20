@@ -1,22 +1,22 @@
 import request from '../request'
 
 export interface WorkModeSwitchReq {
-    mode:  'image' | 'video_stream'
+    mode: 'image' | 'video_stream'
 }
 
 export interface AiParams {
-   nms_threshold: number,
+    nms_threshold: number,
     confidence_threshold: number
 }
 export interface VideoStreamPushReq {
     enabled: boolean,
     server_url?: string,
 }
-export interface ImageTriggerReq {
-    io_trigger?: boolean,
-    pir_trigger?: boolean,
-    timer_trigger?: boolean
-}
+// export interface ImageTriggerReq {
+//     io_trigger?: boolean,
+//     pir_trigger?: boolean,
+//     timer_trigger?: boolean
+// }
 
 export interface PhotoCaptureReq {
     enable_ai: boolean,
@@ -33,6 +33,17 @@ export interface RtmpStartReq {
     url?: string,
     stream_key?: string,
 }
+
+export interface PirConfigReq {
+    pir_trigger: {
+        enable: boolean,
+        trigger_type: 'rising_edge' | 'falling_edge' | 'high_level' | 'low_level' | 'both_edges',
+        sensitivity_level: number,   // 10-255
+        ignore_time_s: number,   // 0-15
+        pulse_count: number,   // 1-4
+        window_time_s: number,   // 0-3
+    }
+}
 const deviceTool = {
     // Whether to enable video stream
     startVideoStreamReq: () => request.post('api/v1/preview/start'),
@@ -42,20 +53,20 @@ const deviceTool = {
     getWorkModeStatusReq: () => request.get('/api/v1/work-mode/status'),
     // Switch work mode
     switchWorkModeReq: (data: WorkModeSwitchReq) => request.post('/api/v1/work-mode/switch', data),
-   
+
     // Configure video stream push
     configVideoStreamPushReq: (data: VideoStreamPushReq) => request.post('/api/v1/work-mode/video-stream/config', data),
-    
+
     // Configure image mode trigger
-    configTriggerConfigReq: (data: ImageTriggerReq) => request.post('/api/v1/work-mode/triggers', data),
+    configTriggerConfigReq: (data: PirConfigReq) => request.post('/api/v1/work-mode/triggers', data),
 
     getTriggerConfigReq: () => request.get('/api/v1/work-mode/triggers'),
-    
+
     // Switch power mode
     switchPowerModeReq: (data: { mode: string }) => request.post('api/v1/power-mode/switch', data),
     getPowerModeReq: () => request.get('api/v1/power-mode/status'),
     // -----------------
-    
+
     // Get AI status
     getAiStatusReq: () => request.get('/api/v1/ai/status'),
     toggleAiReq: (data: { ai_enabled: boolean }) => request.post('/api/v1/ai/toggle', data),
@@ -74,6 +85,10 @@ const deviceTool = {
     startRtmpReq: (data: RtmpStartReq) => request.post('/api/v1/apps/rtmp/start', data),
     stopRtmpReq: () => request.post('/api/v1/apps/rtmp/stop'),
     getRtmpStatusReq: () => request.get('/api/v1/apps/rtmp/status'),
+
+    // // PIR
+    // getPirConfigReq: () => request.get('/api/v1/work-mode/triggers'),
+    // setPirConfigReq: (data: PirConfigReq) => request.post('/api/v1/work-mode/triggers', data),
 }
 
 export default deviceTool;

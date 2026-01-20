@@ -61,6 +61,11 @@ typedef struct {
      aicam_bool_t enable;
      uint32_t pin_number;
      aicam_trigger_type_t trigger_type;
+     // PIR sensor configuration parameters
+     uint8_t sensitivity_level;  // Sensitivity level (recommended >30, smaller value means more sensitive)
+     uint8_t ignore_time_s;      // Ignore time after interrupt (0-15, actual time = 0.5 + 0.5 * value seconds)
+     uint8_t pulse_count;        // Pulse count (1-4, actual count = value + 1)
+     uint8_t window_time_s;      // Window time (0-3, actual time = 2 + 2 * value seconds)
  } pir_trigger_config_t;
  
  typedef struct {

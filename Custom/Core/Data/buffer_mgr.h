@@ -71,6 +71,15 @@ void* buffer_calloc_ex(size_t count, size_t size, buffer_memory_type_t prefer_ty
  */
 void* buffer_malloc_aligned(size_t size, uint32_t alignment);
 
+/**
+ * @brief Allocate aligned memory with preferred memory type
+ * @param size Size to allocate
+ * @param alignment Alignment
+ * @param prefer_type Preferred memory type
+ * @return Pointer to allocated memory
+ */
+void* buffer_malloc_aligned_ex(size_t size, uint32_t alignment, buffer_memory_type_t prefer_type);
+
 
 #ifdef __cplusplus
 }

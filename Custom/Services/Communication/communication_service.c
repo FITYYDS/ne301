@@ -247,15 +247,13 @@ static aicam_result_t try_connect_known_networks(void)
         return AICAM_ERROR_NOT_FOUND;
     }
     
-    // Check if woken by RTC (timing or alarm) - only enable fast connection for RTC wakeup
-    // This indicates low power mode with scheduled RTC wakeup, where fast connection is critical
-    uint32_t wakeup_flag = u0_module_get_wakeup_flag_ex();
-    aicam_bool_t is_rtc_wakeup = (wakeup_flag & (PWR_WAKEUP_FLAG_RTC_TIMING | 
-                                                  PWR_WAKEUP_FLAG_RTC_ALARM_A | 
-                                                  PWR_WAKEUP_FLAG_RTC_ALARM_B)) != 0;
+    // Check if wakeup source requires time-optimized mode - only enable fast connection for time-optimized wakeup
+    // This indicates low power mode with scheduled wakeup, where fast connection is critical
+    wakeup_source_type_t wakeup_source = system_service_get_wakeup_source_type();
+    aicam_bool_t requires_time_optimized = system_service_requires_time_optimized_mode(wakeup_source);
     
-    LOG_SVC_INFO("Trying to connect to known networks (RTC wakeup: %s)...", 
-                 is_rtc_wakeup ? "YES" : "NO");
+    LOG_SVC_INFO("Trying to connect to known networks (time-optimized mode: %s)...", 
+                 requires_time_optimized ? "YES" : "NO");
     
     // Create a sorted index array
     uint32_t sorted_indices[MAX_KNOWN_NETWORKS];
@@ -271,7 +269,7 @@ static aicam_result_t try_connect_known_networks(void)
             
             aicam_bool_t should_swap = AICAM_FALSE;
             
-            if (is_rtc_wakeup) {
+            if (requires_time_optimized) {
                 // RTC wakeup (low power mode): prioritize last connected network (most recent first)
                 // If last_connected_time is same, prefer higher RSSI
                 if (net1->last_connected_time < net2->last_connected_time) {
@@ -309,7 +307,7 @@ static aicam_result_t try_connect_known_networks(void)
     }
     
     // In RTC wakeup mode, try last connected network first without waiting for scan
-    if (is_rtc_wakeup && g_communication_service.known_network_count > 0) {
+    if (requires_time_optimized && g_communication_service.known_network_count > 0) {
         uint32_t last_connected_idx = sorted_indices[0];
         network_scan_result_t *last_connected = &g_communication_service.known_networks[last_connected_idx];
         
@@ -851,18 +849,14 @@ aicam_result_t communication_service_init(void *config)
         return ret;
     }
     
-    // Check if woken by RTC (timing or alarm) - this indicates low power mode with RTC wakeup
-    aicam_bool_t is_rtc_wakeup = (wakeup_flag & (PWR_WAKEUP_FLAG_RTC_TIMING | 
-                                                  PWR_WAKEUP_FLAG_RTC_ALARM_A | 
-                                                  PWR_WAKEUP_FLAG_RTC_ALARM_B)) != 0;
+    // Check if wakeup source requires time-optimized mode (disable AP for faster startup)
+    wakeup_source_type_t wakeup_source = system_service_get_wakeup_source_type();
+    aicam_bool_t requires_time_optimized = system_service_requires_time_optimized_mode(wakeup_source);
     
-    // Check if woken only by button wakeup, not by long and super long press
-    aicam_bool_t is_button_wakeup = (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) != 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_LONG_PRESS) == 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_MAX_PRESS) == 0;
-    
-    // If woken by RTC | button wakeup, disable AP for faster startup
-    if (is_rtc_wakeup || is_button_wakeup) {
+    // If time-optimized mode is required, disable AP for faster startup
+    if (requires_time_optimized) {
         g_communication_service.config.auto_start_wifi_ap = AICAM_FALSE;
-        LOG_SVC_INFO("RTC wakeup detected, disabling AP for faster startup");
+        LOG_SVC_INFO("Time-optimized mode detected (wakeup source: %d), disabling AP for faster startup", wakeup_source);
     }
     
     // Register WiFi AP initialization configuration
@@ -5180,16 +5174,13 @@ static void on_wifi_sta_ready(const char *if_name, aicam_result_t result)
     if (result == AICAM_OK) {
         LOG_SVC_INFO("WiFi STA initialized and ready");
 
-        // Check if woken by RTC (timing or alarm) - only enable fast connection for RTC wakeup
-        uint32_t wakeup_flag = u0_module_get_wakeup_flag_ex();
-        aicam_bool_t is_rtc_wakeup = (wakeup_flag & (PWR_WAKEUP_FLAG_RTC_TIMING | 
-                                                     PWR_WAKEUP_FLAG_RTC_ALARM_A | 
-                                                     PWR_WAKEUP_FLAG_RTC_ALARM_B)) != 0;
-        aicam_bool_t is_button_wakeup = (wakeup_flag & PWR_WAKEUP_FLAG_CONFIG_KEY) != 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_LONG_PRESS) == 0 && (wakeup_flag & PWR_WAKEUP_FLAG_KEY_MAX_PRESS) == 0;
+        // Check if wakeup source requires time-optimized mode (skip time-consuming operations)
+        wakeup_source_type_t wakeup_source = system_service_get_wakeup_source_type();
+        aicam_bool_t requires_time_optimized = system_service_requires_time_optimized_mode(wakeup_source);
 
-        // In RTC wakeup mode, skip scan result loading to save time
+        // In time-optimized mode, skip scan result loading to save time
         // We'll use cached known network info directly
-        if (!is_rtc_wakeup && !is_button_wakeup) {
+        if (!requires_time_optimized) {
             // Get scan results from storage (full speed mode only)
             aicam_result_t scan_result_result = communication_start_network_scan(NULL);
             if (scan_result_result != AICAM_OK) {

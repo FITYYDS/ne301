@@ -108,6 +108,23 @@ aicam_result_t json_config_save_work_mode_config_to_nvs(const work_mode_config_t
     result = json_config_nvs_write_uint8(NVS_KEY_PIR_TRIGGER_TYPE, config->pir_trigger.trigger_type);
     if (result != AICAM_OK)
         LOG_CORE_ERROR("Failed to save pir trigger type to NVS");
+    
+    // Save PIR sensor configuration parameters
+    result = json_config_nvs_write_uint8(NVS_KEY_PIR_SENSITIVITY, config->pir_trigger.sensitivity_level);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save pir sensitivity to NVS");
+    
+    result = json_config_nvs_write_uint8(NVS_KEY_PIR_IGNORE_TIME, config->pir_trigger.ignore_time_s);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save pir ignore time to NVS");
+    
+    result = json_config_nvs_write_uint8(NVS_KEY_PIR_PULSE_COUNT, config->pir_trigger.pulse_count);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save pir pulse count to NVS");
+    
+    result = json_config_nvs_write_uint8(NVS_KEY_PIR_WINDOW_TIME, config->pir_trigger.window_time_s);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save pir window time to NVS");
 
     result = json_config_nvs_write_bool(NVS_KEY_TIMER_ENABLE, config->timer_trigger.enable);
     if (result != AICAM_OK)
@@ -1728,6 +1745,31 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
         config->work_mode_config.pir_trigger.trigger_type = temp_uint8;
     else
         json_config_nvs_write_uint8(NVS_KEY_PIR_TRIGGER_TYPE, config->work_mode_config.pir_trigger.trigger_type);
+    
+    // Load PIR sensor configuration parameters
+    result = json_config_nvs_read_uint8(NVS_KEY_PIR_SENSITIVITY, &temp_uint8);
+    if (result == AICAM_OK)
+        config->work_mode_config.pir_trigger.sensitivity_level = temp_uint8;
+    else
+        json_config_nvs_write_uint8(NVS_KEY_PIR_SENSITIVITY, config->work_mode_config.pir_trigger.sensitivity_level);
+    
+    result = json_config_nvs_read_uint8(NVS_KEY_PIR_IGNORE_TIME, &temp_uint8);
+    if (result == AICAM_OK)
+        config->work_mode_config.pir_trigger.ignore_time_s = temp_uint8;
+    else
+        json_config_nvs_write_uint8(NVS_KEY_PIR_IGNORE_TIME, config->work_mode_config.pir_trigger.ignore_time_s);
+    
+    result = json_config_nvs_read_uint8(NVS_KEY_PIR_PULSE_COUNT, &temp_uint8);
+    if (result == AICAM_OK)
+        config->work_mode_config.pir_trigger.pulse_count = temp_uint8;
+    else
+        json_config_nvs_write_uint8(NVS_KEY_PIR_PULSE_COUNT, config->work_mode_config.pir_trigger.pulse_count);
+    
+    result = json_config_nvs_read_uint8(NVS_KEY_PIR_WINDOW_TIME, &temp_uint8);
+    if (result == AICAM_OK)
+        config->work_mode_config.pir_trigger.window_time_s = temp_uint8;
+    else
+        json_config_nvs_write_uint8(NVS_KEY_PIR_WINDOW_TIME, config->work_mode_config.pir_trigger.window_time_s);
 
     // Load IO trigger configuration (array of IO_TRIGGER_MAX triggers)
     for (int i = 0; i < IO_TRIGGER_MAX; i++)

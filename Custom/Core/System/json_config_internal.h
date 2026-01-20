@@ -219,10 +219,14 @@
  #define NVS_KEY_IMAGE_MODE_ENABLE   "img_mode_en"
  #define NVS_KEY_VIDEO_STREAM_MODE_ENABLE "vid_mode_en"
 
- // PIR
- #define NVS_KEY_PIR_ENABLE          "pir_enable"
- #define NVS_KEY_PIR_PIN             "pir_pin"
- #define NVS_KEY_PIR_TRIGGER_TYPE    "pir_type"
+// PIR
+#define NVS_KEY_PIR_ENABLE          "pir_enable"
+#define NVS_KEY_PIR_PIN             "pir_pin"
+#define NVS_KEY_PIR_TRIGGER_TYPE    "pir_type"
+#define NVS_KEY_PIR_SENSITIVITY     "pir_sens"
+#define NVS_KEY_PIR_IGNORE_TIME     "pir_ignore"
+#define NVS_KEY_PIR_PULSE_COUNT     "pir_pulse"
+#define NVS_KEY_PIR_WINDOW_TIME     "pir_window"
  // Remote Trigger
  #define NVS_KEY_REMOTE_TRIGGER_ENABLE "remote_trigger_enable"
  // IO (Indexed)
