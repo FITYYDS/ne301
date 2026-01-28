@@ -637,7 +637,7 @@ static void sdProcess(void *argument)
     unsigned int sd_status = FX_SUCCESS;
     LOG_DRV_DEBUG("sdProcess start\r\n");
     pwr_manager_acquire(sd->pwr_handle);
-    osDelay(1000);
+    osDelay(100);
     fx_system_initialize();
     
     // Set FileX system time and date from RTC

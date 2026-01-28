@@ -25,9 +25,12 @@
 
 #include "sseg_deeplabv3_pp_if.h"
 
-static uint8_t *sseg_class_map = NULL;
-static sseg_deeplabv3_pp_static_param_t static_params = {0};
-static char **static_class_names = NULL;
+/* Per-instance parameters for SSEG DeepLabV3 UF postprocess */
+typedef struct {
+    sseg_deeplabv3_pp_static_param_t core;     /* original static params, now per-instance */
+    uint8_t *sseg_class_map;                  /* per-instance class map buffer */
+    char **class_names;                        /* per-instance class name array */
+} pp_sseg_deeplab_v3_uf_params_t;
 
 /*
 Example JSON configuration:
@@ -40,7 +43,13 @@ Example JSON configuration:
 */
 static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
 {
-    sseg_deeplabv3_pp_static_param_t *params = (sseg_deeplabv3_pp_static_param_t *)&static_params;
+    pp_sseg_deeplab_v3_uf_params_t *pp_ctx = (pp_sseg_deeplab_v3_uf_params_t *)hal_mem_alloc_any(sizeof(pp_sseg_deeplab_v3_uf_params_t));
+    if (!pp_ctx) {
+        return AI_SSEG_POSTPROCESS_ERROR_NO;
+    }
+    memset(pp_ctx, 0, sizeof(pp_sseg_deeplab_v3_uf_params_t));
+
+    sseg_deeplabv3_pp_static_param_t *params = &pp_ctx->core;
 
     params->nb_classes = 21;
     params->width = 513;
@@ -64,13 +73,13 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
 
                 cJSON *class_names = cJSON_GetObjectItemCaseSensitive(pp, "class_names");
                 if (cJSON_IsArray(class_names)) {
-                    static_class_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_classes);
+                    pp_ctx->class_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_classes);
                     for (int i = 0; i < params->nb_classes; i++) {
                         cJSON *name = cJSON_GetArrayItem(class_names, i);
                         if (cJSON_IsString(name)) {
                             uint8_t len = strlen(name->valuestring) + 1;
-                            static_class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
-                            memcpy(static_class_names[i], name->valuestring, len);
+                            pp_ctx->class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
+                            memcpy(pp_ctx->class_names[i], name->valuestring, len);
                         }
                     }
                 }
@@ -90,58 +99,67 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
         }
     }
     
-    // Allocate class map buffer
-    sseg_class_map = (uint8_t *)hal_mem_alloc_large(sizeof(uint8_t) * params->width * params->height);
-    assert(sseg_class_map != NULL);
+    // Allocate per-instance class map buffer
+    pp_ctx->sseg_class_map = (uint8_t *)hal_mem_alloc_large(sizeof(uint8_t) * params->width * params->height);
+    assert(pp_ctx->sseg_class_map != NULL);
     
     sseg_deeplabv3_pp_reset(params);
-    *pp_params = (void *)params;
+    *pp_params = (void *)pp_ctx;
     return AI_SSEG_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t deinit(void *pp_params)
 {
-    sseg_deeplabv3_pp_static_param_t *params = (sseg_deeplabv3_pp_static_param_t *)pp_params;
+    pp_sseg_deeplab_v3_uf_params_t *pp = (pp_sseg_deeplab_v3_uf_params_t *)pp_params;
+    if (!pp) {
+        return AI_SSEG_POSTPROCESS_ERROR_NO;
+    }
+
+    sseg_deeplabv3_pp_static_param_t *params = &pp->core;
     
-    if (sseg_class_map != NULL) {
-        hal_mem_free(sseg_class_map);
-        sseg_class_map = NULL;
+    if (pp->sseg_class_map != NULL) {
+        hal_mem_free(pp->sseg_class_map);
+        pp->sseg_class_map = NULL;
     }
     
-    if (static_class_names != NULL) {
+    if (pp->class_names != NULL) {
         for (int i = 0; i < params->nb_classes; i++) {
-            if (static_class_names[i] != NULL) {
-                hal_mem_free(static_class_names[i]);
+            if (pp->class_names[i] != NULL) {
+                hal_mem_free(pp->class_names[i]);
             }
         }
-        hal_mem_free(static_class_names);
-        static_class_names = NULL;
+        hal_mem_free(pp->class_names);
+        pp->class_names = NULL;
     }
     
+    hal_mem_free(pp);
     return AI_SSEG_POSTPROCESS_ERROR_NO;
 }
 
-static void sseg_pp_out_t_to_pp_result_t(sseg_pp_out_t *pSsegOutput, pp_result_t *result)
+static void sseg_pp_out_t_to_pp_result_t(sseg_pp_out_t *pSsegOutput,
+                                         pp_result_t *result,
+                                         const pp_sseg_deeplab_v3_uf_params_t *pp)
 {
     result->type = PP_TYPE_SSEG;
     result->is_valid = (pSsegOutput->pOutBuff != NULL);
     result->sseg.class_map = pSsegOutput->pOutBuff;
-    result->sseg.width = static_params.width;
-    result->sseg.height = static_params.height;
-    result->sseg.num_classes = static_params.nb_classes;
-    result->sseg.class_names = static_class_names;
+    result->sseg.width = pp->core.width;
+    result->sseg.height = pp->core.height;
+    result->sseg.num_classes = pp->core.nb_classes;
+    result->sseg.class_names = pp->class_names;
 }
 
 static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_params, void *nn_inst)
 {
     assert(nb_input == 1);
+    pp_sseg_deeplab_v3_uf_params_t *pp = (pp_sseg_deeplab_v3_uf_params_t *)pp_params;
+    sseg_deeplabv3_pp_static_param_t *params = &pp->core;
     int32_t error = AI_SSEG_POSTPROCESS_ERROR_NO;
-    sseg_deeplabv3_pp_static_param_t *params = (sseg_deeplabv3_pp_static_param_t *)pp_params;
 
     memset(pResult, 0, sizeof(pp_result_t));
 
     sseg_pp_out_t sseg_pp_out;
-    sseg_pp_out.pOutBuff = sseg_class_map;
+    sseg_pp_out.pOutBuff = pp->sseg_class_map;
     
     sseg_deeplabv3_pp_in_t pp_input = {
         .pRawData = (float32_t *)pInput[0],
@@ -149,7 +167,7 @@ static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_pa
     
     error = sseg_deeplabv3_pp_process(&pp_input, &sseg_pp_out, params);
     if (error == AI_SSEG_POSTPROCESS_ERROR_NO) {
-        sseg_pp_out_t_to_pp_result_t(&sseg_pp_out, (pp_result_t *)pResult);
+        sseg_pp_out_t_to_pp_result_t(&sseg_pp_out, (pp_result_t *)pResult, pp);
     }
     return error;
 }

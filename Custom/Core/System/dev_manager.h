@@ -31,6 +31,7 @@
 #define DRAW_DEVICE_NAME    "draw"
 #define IO_DEVICE_NAME      "io"
 #define PIR_DEVICE_NAME     "pir"
+#define NN_DEVICE_NAME      "nn"
 
 #define CAMERA_CMD_BASE       0x00010000
 #define WIFI_CMD_BASE         0x00020000

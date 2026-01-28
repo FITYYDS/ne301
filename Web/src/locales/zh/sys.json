@@ -114,12 +114,13 @@
       "preview_disconnected": "预览已断开，请前往最新页面查看。",
       "photo_capture_success": "抓拍成功",
       "url": "URL",
+      "stream_duration_sec": "连接时长",
       "media_stream_settings": "媒体流设置",
       "url_illegal": "URL格式错误",
       "url_length_error": "URL长度不能超过256个字符",
       "stream_key_illegal": "密钥格式错误",
       "stream_key_length_error": "密钥长度不能超过128个字符",
-      "trigger_type": "触发方式",
+      "trigger_type": "用途",
       "sensitivity_level": "灵敏度",
       "ignore_time": "忽略时间",
       "pulse_count": "脉冲计数",
@@ -128,7 +129,16 @@
       "falling_edge": "下降沿",
       "both_edges": "双边沿",
       "high_level": "高电平",
-      "low_level": "低电平"
+      "low_level": "低电平",
+      "sensitivity_level_note":"值越小，对红外变化越敏感，检测距离越远/越容易触发。室内常规建议30-40",
+      "ignore_time_note":"触发后，在此时间内忽略新触发。数值N对应时间=N*0.5+0.5秒。例:7→7*0.5+0.5=4秒",
+      "pulse_count_note":"需连续检测到N次有效信号才确认触发。增大此值可抗干扰，但会略微降低响应速度。",
+      "window_time_note":"允许脉冲发生的最大时间窗口。数值M对应时间=M*0.5+1.5秒。例:0-2秒。",
+      "reconnecting": "重连中",
+      "connecting": "连接中",
+      "connected": "已连接",
+      "disconnected": "未连接"
+
     },
     "model_verification": {
       "model_verification_title": "模型验证",

@@ -68,7 +68,7 @@ static const if_name_type_t if_name_type_list[] = {
 #endif
 };
 
-static uint8_t netif_manager_is_init = 0;
+static osMutexId_t netif_manager_mutex = NULL;
 static const char *netif_type_str[] = {"local", "wireless", "ethernet", "4g", "unknown"};
 static const char *netif_state_str[] = {"deinit", "down", "up", "unknown"};
 static const char *netif_security_str[] = {"open", "wpa", "wpa2", "wep", "wpa_enterprise", "wpa2_enterprise", "wpa_wpa2_mixed", "wpa3", "wpa3_transition", "wpa3_enterprise", "wpa3_transition_enterprise", "unknown"};
@@ -150,12 +150,14 @@ static int netif_manager_cmd(int argc, char* argv[])
         nm_print_netif_info(if_name, NULL);
         ret = 0;
     } else if (strcmp(argv[2], "cfg") == 0) {
-        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP) && strcmp(if_name, NETIF_NAME_4G_CAT1)) {
-            LOG_SIMPLE("Only wl/ap/4g support cfg cmd\r\n");
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP) && strcmp(if_name, NETIF_NAME_4G_CAT1) && strcmp(if_name, NETIF_NAME_ETH_WAN)) {
+            LOG_SIMPLE("Only wl/ap/4g/wn support cfg cmd\r\n");
             return -1;
         }
         if (argc < 4) {
-            LOG_SIMPLE("Usage: ifconfig [name] cfg [ssid | apn] [pw]\r\nname: wl/ap/4g\r\n");
+            LOG_SIMPLE("Usage: ifconfig [name] cfg [ssid] [pw]\r\nname: wl/ap\r\n");
+            LOG_SIMPLE("Usage: ifconfig [name] cfg [apn]\r\nname: 4g\r\n");
+            LOG_SIMPLE("Usage: ifconfig [name] cfg [ip_addr] [gw] [netmask]\r\nname: wn\r\n");
             return -1;
         }
         // Get current configuration
@@ -173,6 +175,54 @@ static int netif_manager_cmd(int argc, char* argv[])
             }
         } else if (strcmp(if_name, NETIF_NAME_4G_CAT1) == 0) {
             strncpy(if_cfg.cellular_cfg.apn, argv[3], sizeof(if_cfg.cellular_cfg.apn));
+        } else if (strcmp(if_name, NETIF_NAME_ETH_WAN) == 0) {
+            if_cfg.ip_mode = NETIF_IP_MODE_STATIC;
+            // parse ip_addr, gw, netmask, from argv (192.168.1.100 192.168.1.1 255.255.255.0)
+            if (argc < 4) {
+                LOG_SIMPLE("Usage: ifconfig [name] cfg [ip_addr] [gw] [netmask]\r\nname: wn\r\n");
+                return -1;
+            }
+            unsigned int ip_addr_u32[4];
+            // IP address
+            if (sscanf(argv[3], "%u.%u.%u.%u", &ip_addr_u32[0], &ip_addr_u32[1], &ip_addr_u32[2], &ip_addr_u32[3]) != 4) {
+                LOG_SIMPLE("Invalid ip_addr: %s\r\n", argv[3]);
+                return -1;
+            }
+            for (int i = 0; i < 4; i++) {
+                if (ip_addr_u32[i] > 255) {
+                    LOG_SIMPLE("Invalid ip_addr value: %u\r\n", ip_addr_u32[i]);
+                    return -1;
+                }
+                if_cfg.ip_addr[i] = (uint8_t)ip_addr_u32[i];
+            }
+            // Gateway (optional)
+            if (argc > 4) {
+                if (sscanf(argv[4], "%u.%u.%u.%u", &ip_addr_u32[0], &ip_addr_u32[1], &ip_addr_u32[2], &ip_addr_u32[3]) != 4) {
+                    LOG_SIMPLE("Invalid gw: %s\r\n", argv[4]);
+                    return -1;
+                }
+                for (int i = 0; i < 4; i++) {
+                    if (ip_addr_u32[i] > 255) {
+                        LOG_SIMPLE("Invalid gw value: %u\r\n", ip_addr_u32[i]);
+                        return -1;
+                    }
+                    if_cfg.gw[i] = (uint8_t)ip_addr_u32[i];
+                }
+            }
+            // Netmask (optional)
+            if (argc > 5) {
+                if (sscanf(argv[5], "%u.%u.%u.%u", &ip_addr_u32[0], &ip_addr_u32[1], &ip_addr_u32[2], &ip_addr_u32[3]) != 4) {
+                    LOG_SIMPLE("Invalid netmask: %s\r\n", argv[5]);
+                    return -1;
+                }
+                for (int i = 0; i < 4; i++) {
+                    if (ip_addr_u32[i] > 255) {
+                        LOG_SIMPLE("Invalid netmask value: %u\r\n", ip_addr_u32[i]);
+                        return -1;
+                    }
+                    if_cfg.netmask[i] = (uint8_t)ip_addr_u32[i];
+                }
+            }
         } else {
             LOG_SIMPLE("Invalid netif name: %s\r\n", if_name);
             return -1;
@@ -180,11 +230,15 @@ static int netif_manager_cmd(int argc, char* argv[])
         // Enable configuration
         ret = nm_set_netif_cfg(if_name, &if_cfg);
     } else if (strcmp(argv[2], "error_test") == 0) {
-        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
-            LOG_SIMPLE("Only wl/ap support error_test cmd\r\n");
+        if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP) && strcmp(if_name, NETIF_NAME_ETH_WAN)) {
+            LOG_SIMPLE("Only wl/ap/wn support error_test cmd\r\n");
             return -1;
         }
-        sli_firmware_error_callback(0x1234);
+        if (strcmp(if_name, NETIF_NAME_ETH_WAN) == 0) {
+            w5500_netif_reset_test();
+        } else {
+            sli_firmware_error_callback(0x1234);
+        }
     } else if (strcmp(argv[2], "fbcast") == 0) {
         if (strcmp(if_name, NETIF_NAME_WIFI_STA) && strcmp(if_name, NETIF_NAME_WIFI_AP)) {
             LOG_SIMPLE("Only wl/ap support fbcast cmd\r\n");
@@ -242,6 +296,7 @@ void netif_manager_change_default_if(void)
     struct netif *default_if = NULL;
     netif_state_t state = NETIF_STATE_MAX;
 
+    osMutexAcquire(netif_manager_mutex, osWaitForever);
     state = nm_get_netif_state(default_if_name);
     if (state == NETIF_STATE_UP) {
         if_name = default_if_name;
@@ -275,6 +330,7 @@ void netif_manager_change_default_if(void)
             LOG_DRV_INFO("Set default netif: %s\r\n", if_name);
         }
     }
+    osMutexRelease(netif_manager_mutex);
 }
 
 #if IP_NAT
@@ -290,6 +346,7 @@ void netif_manager_change_nat_route(void)
     struct netif *sta = NULL;
     err_t ret = ERR_OK;
 
+    osMutexAcquire(netif_manager_mutex, osWaitForever);
     ap_state = nm_get_netif_state(NETIF_NAME_WIFI_AP);
     sta_state = nm_get_netif_state(NETIF_NAME_WIFI_STA);
     eth_state = nm_get_netif_state(NETIF_NAME_ETH_WAN);
@@ -336,6 +393,7 @@ void netif_manager_change_nat_route(void)
         ap_nat_wn_is_add = 0;
         LOG_DRV_INFO("Nat remove: AP <-> WN");
     }
+    osMutexRelease(netif_manager_mutex);
 }
 #endif
 
@@ -345,7 +403,7 @@ int netif_manager_ctrl(const char *if_name, netif_cmd_t cmd, void *param)
     struct netif *lo_netif = NULL;
     netif_info_t *netif_info = NULL;
     netif_state_t last_state = NETIF_STATE_MAX;
-    if (!netif_manager_is_init) return AICAM_ERROR_NOT_INITIALIZED;
+    if (netif_manager_mutex == NULL) return AICAM_ERROR_NOT_INITIALIZED;
     
     if (strcmp(if_name, NETIF_NAME_WIFI_STA) == 0 || strcmp(if_name, NETIF_NAME_WIFI_AP) == 0) {
         sl_net_netif_ctrl(if_name, NETIF_CMD_STATE, &last_state);
@@ -423,11 +481,17 @@ static void ifconfig_cmd_register(void)
 
 void netif_manager_init(void)
 {
-    if (netif_manager_is_init) return;
+    if (netif_manager_mutex != NULL) return;
     
     LOG_DRV_INFO("Netif manager framework initialization (lightweight)");
     uint32_t start_time = osKernelGetTickCount();
     
+    netif_manager_mutex = osMutexNew(NULL);
+    if (netif_manager_mutex == NULL) {
+        LOG_DRV_ERROR("Failed to create netif manager mutex");
+        return;
+    }
+
     // 1. Initialize WiFi driver framework (fast, < 1s)
     sl_net_netif_init();
     
@@ -456,8 +520,6 @@ void netif_manager_init(void)
     sntp_setservername(1, default_sntp_server[1]);
     sntp_setservername(2, default_sntp_server[2]);
     sntp_init();
-    
-    netif_manager_is_init = 1;
     
     uint32_t elapsed_ms = osKernelGetTickCount() - start_time;
     LOG_DRV_INFO("Netif manager framework initialized in %u ms", elapsed_ms);

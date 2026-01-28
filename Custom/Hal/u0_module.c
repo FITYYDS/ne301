@@ -308,10 +308,16 @@ int u0_module_get_version(ms_bridging_version_t *version)
 
 int u0_module_cfg_pir(ms_bridging_pir_cfg_t *pir_cfg)
 {
-    int ret = 0;
+    int ret = 0, retry_times = 0;
 
-    ret = ms_bridging_request_pir_cfg(u0_handler, pir_cfg);
-    if (ret != MS_BR_OK) return ret;
+    do {
+        if (ret != MS_BR_OK) {
+            LOG_SIMPLE("pir config retry %d times...", retry_times);
+            osDelay(PIR_CONFIG_RETRY_DELAY_MS);
+        }
+        ret = ms_bridging_request_pir_cfg(u0_handler, pir_cfg);
+        if (ret < 0) break;
+    } while (++retry_times < PIR_CONFIG_RETRY_TIMES && ret != MS_BR_OK);
 
     return ret;
 }
@@ -702,7 +708,7 @@ int u0_module_cmd_deal(int argc, char* argv[])
         }
         if (argc > 2) sleep_second = atoi(argv[2]);
         wakeup_flags = PWR_WAKEUP_FLAG_RTC_TIMING | PWR_WAKEUP_FLAG_CONFIG_KEY | PWR_WAKEUP_FLAG_PIR_RISING;
-        switch_bits = PWR_3V3_SWITCH_BIT;
+        // switch_bits = PWR_3V3_SWITCH_BIT;
         ret = u0_module_enter_sleep_mode(wakeup_flags, switch_bits, sleep_second);
         if (ret != 0) {
             LOG_SIMPLE("enter sleep pir mode failed: %d", ret);

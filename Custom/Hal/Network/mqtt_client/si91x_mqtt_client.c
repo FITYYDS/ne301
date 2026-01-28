@@ -430,12 +430,11 @@ int si91x_mqtt_client_connnect(void)
 
     SI91X_MQTT_CLIENT_FUNC_START(false);
     status = sl_mqtt_client_connect(si91x_mqtt_client->sl_mqtt_client, si91x_mqtt_client->sl_mqtt_broker, si91x_mqtt_client->sl_mqtt_client_last_will_message, si91x_mqtt_client->sl_mqtt_client_configuration, 0);
+    SI91X_MQTT_CLIENT_FUNC_END();
     if (status != SL_STATUS_IN_PROGRESS) {
         LOG_DRV_ERROR("[SI91X MQTT]client connect failed: 0x%08X\r\n", status);
-        SI91X_MQTT_CLIENT_FUNC_END();
         return MQTT_ERR_RESPONSE;
     }
-    SI91X_MQTT_CLIENT_FUNC_END();
     return MQTT_ERR_OK;
 }
 
@@ -446,7 +445,11 @@ int si91x_mqtt_client_connnect_sync(uint32_t timeout_ms)
     SI91X_MQTT_CLIENT_FUNC_START(false);
     status = sl_mqtt_client_connect(si91x_mqtt_client->sl_mqtt_client, si91x_mqtt_client->sl_mqtt_broker, si91x_mqtt_client->sl_mqtt_client_last_will_message, si91x_mqtt_client->sl_mqtt_client_configuration, timeout_ms);
     SI91X_MQTT_CLIENT_FUNC_END();
-    return status;
+    if (status != SL_STATUS_OK) {
+        LOG_DRV_ERROR("[SI91X MQTT]client sync connect failed: 0x%08X\r\n", status);
+        return MQTT_ERR_RESPONSE;
+    }
+    return MQTT_ERR_OK;
 }
 
 int si91x_mqtt_client_publish(const char *topic, const char *data, int data_len, int qos, int retain)
@@ -468,12 +471,11 @@ int si91x_mqtt_client_publish(const char *topic, const char *data, int data_len,
         if (message_to_be_published.packet_identifier == 0) message_to_be_published.packet_identifier = 1;
     }
     status = sl_mqtt_client_publish(si91x_mqtt_client->sl_mqtt_client, &message_to_be_published, 0, (void *)topic);
+    SI91X_MQTT_CLIENT_FUNC_END();
     if (status != SL_STATUS_IN_PROGRESS) {
         LOG_DRV_ERROR("[SI91X MQTT]client publish failed: 0x%08X\r\n", status);
-        SI91X_MQTT_CLIENT_FUNC_END();
         return MQTT_ERR_RESPONSE;
     }
-    SI91X_MQTT_CLIENT_FUNC_END();
     return MQTT_ERR_OK;
 }
 
@@ -497,7 +499,11 @@ int si91x_mqtt_client_publish_sync(const char *topic, const char *data, int data
     }
     status = sl_mqtt_client_publish(si91x_mqtt_client->sl_mqtt_client, &message_to_be_published, timeout_ms, (void *)topic);
     SI91X_MQTT_CLIENT_FUNC_END();
-    return status;
+    if (status != SL_STATUS_OK) {
+        LOG_DRV_ERROR("[SI91X MQTT]client sync publish failed: 0x%08X\r\n", status);
+        return MQTT_ERR_RESPONSE;
+    }
+    return MQTT_ERR_OK;
 }
 
 int si91x_mqtt_client_subscribe(const char *topic, int qos)
@@ -507,12 +513,11 @@ int si91x_mqtt_client_subscribe(const char *topic, int qos)
     SI91X_MQTT_CLIENT_FUNC_START(false);
     if (qos >= 2) qos = 1;  // SI91X MQTT only support QoS 0 and 1
     status = sl_mqtt_client_subscribe(si91x_mqtt_client->sl_mqtt_client, (const uint8_t *)topic, strlen(topic), qos, 0, si91x_mqtt_client_message_handler, (void *)topic);
+    SI91X_MQTT_CLIENT_FUNC_END();
     if (status != SL_STATUS_IN_PROGRESS) {
         LOG_DRV_ERROR("[SI91X MQTT]client subscribe failed: 0x%08X\r\n", status);
-        SI91X_MQTT_CLIENT_FUNC_END();
         return MQTT_ERR_RESPONSE;
     }
-    SI91X_MQTT_CLIENT_FUNC_END();
     return MQTT_ERR_OK;
 }
 
@@ -524,7 +529,11 @@ int si91x_mqtt_client_subscribe_sync(const char *topic, int qos, uint32_t timeou
     if (qos >= 2) qos = 1;  // SI91X MQTT only support QoS 0 and 1
     status = sl_mqtt_client_subscribe(si91x_mqtt_client->sl_mqtt_client, (const uint8_t *)topic, strlen(topic), qos, timeout_ms, si91x_mqtt_client_message_handler, (void *)topic);
     SI91X_MQTT_CLIENT_FUNC_END();
-    return status;
+    if (status != SL_STATUS_OK) {
+        LOG_DRV_ERROR("[SI91X MQTT]client sync subscribe failed: 0x%08X\r\n", status);
+        return MQTT_ERR_RESPONSE;
+    }
+    return MQTT_ERR_OK;
 }
 
 int si91x_mqtt_client_unsubscribe(const char *topic)
@@ -533,12 +542,11 @@ int si91x_mqtt_client_unsubscribe(const char *topic)
     
     SI91X_MQTT_CLIENT_FUNC_START(false);        
     status = sl_mqtt_client_unsubscribe(si91x_mqtt_client->sl_mqtt_client, (const uint8_t *)topic, strlen(topic), 0, (void *)topic);
+    SI91X_MQTT_CLIENT_FUNC_END();
     if (status != SL_STATUS_IN_PROGRESS) {
         LOG_DRV_ERROR("[SI91X MQTT]client unsubscribe failed: 0x%08X\r\n", status);
-        SI91X_MQTT_CLIENT_FUNC_END();
         return MQTT_ERR_RESPONSE;
     }
-    SI91X_MQTT_CLIENT_FUNC_END();
     return MQTT_ERR_OK;
 }
 
@@ -549,11 +557,16 @@ int si91x_mqtt_client_unsubscribe_sync(const char *topic, uint32_t timeout_ms)
     SI91X_MQTT_CLIENT_FUNC_START(false);        
     status = sl_mqtt_client_unsubscribe(si91x_mqtt_client->sl_mqtt_client, (const uint8_t *)topic, strlen(topic), timeout_ms, (void *)topic);
     SI91X_MQTT_CLIENT_FUNC_END();
-    return status;
+    if (status != SL_STATUS_OK) {
+        LOG_DRV_ERROR("[SI91X MQTT]client sync unsubscribe failed: 0x%08X\r\n", status);
+        return MQTT_ERR_RESPONSE;
+    }
+    return MQTT_ERR_OK;
 }
 
 int si91x_mqtt_client_disconnect(void)
 {
+    int ret = MQTT_ERR_OK;
     sl_status_t status = SL_STATUS_OK;
 
     SI91X_MQTT_CLIENT_FUNC_START(false);
@@ -561,12 +574,13 @@ int si91x_mqtt_client_disconnect(void)
         status = sl_mqtt_client_disconnect(si91x_mqtt_client->sl_mqtt_client, 0);
         if (status != SL_STATUS_IN_PROGRESS) {
             LOG_DRV_ERROR("[SI91X MQTT]client disconnect failed: 0x%08X\r\n", status);
-            SI91X_MQTT_CLIENT_FUNC_END();
-            return MQTT_ERR_RESPONSE;
+            ret = MQTT_ERR_RESPONSE;
         }
+    } else {
+        ret = MQTT_ERR_INVALID_STATE;
     }
     SI91X_MQTT_CLIENT_FUNC_END();
-    return MQTT_ERR_OK;
+    return ret;
 }
 
 int si91x_mqtt_client_disconnect_sync(uint32_t timeout_ms)
@@ -576,7 +590,11 @@ int si91x_mqtt_client_disconnect_sync(uint32_t timeout_ms)
     SI91X_MQTT_CLIENT_FUNC_START(false);
     status = sl_mqtt_client_disconnect(si91x_mqtt_client->sl_mqtt_client, timeout_ms);
     SI91X_MQTT_CLIENT_FUNC_END();
-    return status;
+    if (status != SL_STATUS_OK) {
+        LOG_DRV_ERROR("[SI91X MQTT]client sync disconnect failed: 0x%08X\r\n", status);
+        return MQTT_ERR_RESPONSE;
+    }
+    return MQTT_ERR_OK;
 }
 
 int si91x_mqtt_client_deinit(void)

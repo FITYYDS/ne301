@@ -430,7 +430,7 @@ export default function DeviceTool() {
                                       <p className="text-sm text-text-primary">
                                         {i18n._('sys.device_tool.video_stream_url')}
                                       </p>
-                                      <Tooltip>
+                                      <Tooltip mbEnhance>
                                         <TooltipTrigger>
                                           <div className="w-4 mr-2 ml-1 flex justify-center items-center">
                                             <SvgIcon
@@ -439,8 +439,8 @@ export default function DeviceTool() {
                                             />
                                           </div>
                                         </TooltipTrigger>
-                                        <TooltipContent>
-                                          <div className="max-w-[200px]">
+                                        <TooltipContent className="max-w-80 text-pretty">
+                                          <div>
                                             <p>
                                               {i18n._(
                                                 'sys.device_tool.dynamic_adjust_note'

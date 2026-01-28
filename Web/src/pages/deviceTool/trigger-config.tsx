@@ -105,7 +105,6 @@ export default function TriggerConfig({ childeRef }: TriggerConfigProps) {
     try {
       setPIRLoading(true)
       const res = await getTriggerConfigReq();
-      console.log('getPirConfig', res.data)
       setTriggerConfig(res.data)
     } catch (error) {
       console.error('getPirConfig', error)
@@ -216,7 +215,8 @@ export default function TriggerConfig({ childeRef }: TriggerConfigProps) {
       throw error
     }
   }
-  const handlePirTriggerSensitivityLevelChange = (e: Event) => {
+
+  const handlePirTriggerSensitivityLevelBlur = (e: Event) => {
     // 10-255
     const target = e.target as HTMLInputElement;
     const value = Number(target.value);
@@ -349,13 +349,13 @@ export default function TriggerConfig({ childeRef }: TriggerConfigProps) {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Label className="text-sm text-text-primary"> {i18n._('sys.device_tool.trigger_pir')}</Label>
-                <Tooltip>
+                <Tooltip mbEnhance>
                   <TooltipTrigger>
-                    <div className="w-4 flex justify-center items-center">
+                    <div className="flex justify-center items-center">
                       <SvgIcon className="w-4 h-4" icon="info" />
                     </div>
                   </TooltipTrigger>
-                  <TooltipContent>
+                  <TooltipContent className="max-w-80 text-pretty">
                     <p>{i18n._('sys.device_tool.pir_note')}</p>
                   </TooltipContent>
                 </Tooltip>
@@ -380,31 +380,64 @@ export default function TriggerConfig({ childeRef }: TriggerConfigProps) {
                         <SelectContent>
                           <SelectItem value="rising_edge">{i18n._('sys.device_tool.rising_edge')}</SelectItem>
                           <SelectItem value="falling_edge">{i18n._('sys.device_tool.falling_edge')}</SelectItem>
-                          {/* <SelectItem value="both_edges">{i18n._('sys.device_tool.both_edges')}</SelectItem>
-                          <SelectItem value="high_level">{i18n._('sys.device_tool.high_level')}</SelectItem>
-                          <SelectItem value="low_level">{i18n._('sys.device_tool.low_level')}</SelectItem> */}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="flex justify-between gap-2 flex-1 pr-0">
-                      <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.sensitivity_level')}</Label>
-                      <Input type="number" min={10} max={255} className="w-20" value={triggerConfig.pir_trigger?.sensitivity_level || 10} onChange={(e) => handlePirTriggerSensitivityLevelChange(e)} />
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.sensitivity_level')}</Label>
+                        <Tooltip mbEnhance>
+                          <TooltipTrigger>
+                            <div className="w-4 flex justify-center items-center">
+                              <SvgIcon className="w-4 h-4" icon="info" />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-80 text-pretty">
+                            <p className="max-w-80 text-pretty">{i18n._('sys.device_tool.sensitivity_level_note')}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <Input type="number" min={1} max={255} className="w-20" value={triggerConfig.pir_trigger?.sensitivity_level || 10}  onBlur={(e) => handlePirTriggerSensitivityLevelBlur(e)} />
                     </div>
                     <div className="flex justify-between gap-2 flex-1 pr-0">
-                      <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.ignore_time')}</Label>
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.ignore_time')}</Label>
+                        <Tooltip mbEnhance>
+                          <TooltipTrigger>
+                            <div className="w-4 flex justify-center items-center">
+                              <SvgIcon className="w-4 h-4" icon="info" />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-80 text-pretty">
+                            <p className="max-w-80 text-pretty">{i18n._('sys.device_tool.ignore_time_note')}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                       <Select value={(triggerConfig.pir_trigger?.ignore_time_s || 0).toString()} onValueChange={(value) => setTriggerConfig({ ...triggerConfig, pir_trigger: { ...triggerConfig.pir_trigger, ignore_time_s: Number(value) } })}>
                         <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent">
                           <SelectValue placeholder={i18n._('sys.device_tool.trigger_in')} />
                         </SelectTrigger>
                         <SelectContent>
                           {Array.from({ length: 16 }).map((_, index) => (
-                            <SelectItem key={index} value={index.toString()}>{index}s</SelectItem>
+                            <SelectItem key={index} value={index.toString()}>{index}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="flex justify-between gap-2 flex-1 pr-0">
-                      <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.pulse_count')}</Label>
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.pulse_count')}</Label>
+                        <Tooltip mbEnhance>
+                          <TooltipTrigger>
+                            <div className="w-4 flex justify-center items-center">
+                              <SvgIcon className="w-4 h-4" icon="info" />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-80 text-pretty">
+                            <p className="max-w-80 text-pretty">{i18n._('sys.device_tool.pulse_count_note')}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                       <Select value={(triggerConfig.pir_trigger?.pulse_count || 1).toString()} onValueChange={(value) => setTriggerConfig({ ...triggerConfig, pir_trigger: { ...triggerConfig.pir_trigger, pulse_count: Number(value) } })}>
                         <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent">
                           <SelectValue placeholder={i18n._('sys.device_tool.trigger_in')} />
@@ -417,28 +450,40 @@ export default function TriggerConfig({ childeRef }: TriggerConfigProps) {
                       </Select>
                     </div>
                     <div className="flex justify-between gap-2 flex-1 pr-0">
-                      <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.window_time')}</Label>
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm text-text-primary shrink-0"> {i18n._('sys.device_tool.window_time')}</Label>
+                        <Tooltip mbEnhance>
+                          <TooltipTrigger>
+                            <div className="w-4 flex justify-center items-center">
+                              <SvgIcon className="w-4 h-4" icon="info" />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-80 text-pretty">
+                            <p>{i18n._('sys.device_tool.window_time_note')}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                       <Select value={(triggerConfig.pir_trigger?.window_time_s || 0).toString()} onValueChange={(value) => setTriggerConfig({ ...triggerConfig, pir_trigger: { ...triggerConfig.pir_trigger, window_time_s: Number(value) } })}>
                         <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent">
                           <SelectValue placeholder={i18n._('sys.device_tool.trigger_in')} />
                         </SelectTrigger>
                         <SelectContent>
                           {Array.from({ length: 4 }).map((_, index) => (
-                            <SelectItem key={index} value={index.toString()}>{index}s</SelectItem>
+                            <SelectItem key={index} value={index.toString()}>{index}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="flex justify-end mt-2">
-                    <Button variant="primary" disabled={savePirTriggerLoading} onClick={handlePirTriggerSave}>
-                                {savePirTriggerLoading ? (
-                                    <div className="w-full h-full flex items-center justify-center">
-                                        <div className="w-4 h-4 rounded-full border-2 border-[#f24a00] border-t-transparent animate-spin" aria-label="loading" />
-                                    </div>
-                                ) : (
-                                    i18n._('common.save')
-                                )}
-                    </Button>
+                      <Button variant="primary" disabled={savePirTriggerLoading} onClick={handlePirTriggerSave}>
+                        {savePirTriggerLoading ? (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <div className="w-4 h-4 rounded-full border-2 border-[#f24a00] border-t-transparent animate-spin" aria-label="loading" />
+                          </div>
+                        ) : (
+                          i18n._('common.save')
+                        )}
+                      </Button>
                     </div>
                   </>
                 )}
@@ -450,13 +495,13 @@ export default function TriggerConfig({ childeRef }: TriggerConfigProps) {
               <div className="flex items-center  justify-between">
                 <div className="flex items-center gap-2">
                   <Label className="text-sm text-text-primary"> {i18n._('sys.device_tool.remote_control')}</Label>
-                  <Tooltip>
+                  <Tooltip mbEnhance>
                     <TooltipTrigger>
                       <div className="w-4 flex justify-center items-center">
                         <SvgIcon className="w-4 h-4" icon="info" />
                       </div>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                       <p>{i18n._('sys.device_tool.remote_control_note')}</p>
                     </TooltipContent>
                   </Tooltip>
@@ -474,13 +519,13 @@ export default function TriggerConfig({ childeRef }: TriggerConfigProps) {
               <div className="flex items-center  justify-between">
                 <div className="flex items-center gap-2">
                   <Label className="text-sm text-text-primary"> {i18n._('sys.device_tool.schedule')}</Label>
-                  <Tooltip>
+                  <Tooltip mbEnhance>
                     <TooltipTrigger>
                       <div className="w-4 flex justify-center items-center">
                         <SvgIcon className="w-4 h-4" icon="info" />
                       </div>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                       <p>{i18n._('sys.device_tool.timing_capture_note')}</p>
                     </TooltipContent>
                   </Tooltip>

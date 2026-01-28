@@ -73,7 +73,7 @@ export default function PlayerPanel({ handleReload, isFullscreen, snapshot, full
                             <SvgIcon className="w-full !h-full flex-1" icon="reload" />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                         {i18n._('sys.device_tool.reload')}
                     </TooltipContent>
                 </Tooltip>
@@ -88,7 +88,7 @@ export default function PlayerPanel({ handleReload, isFullscreen, snapshot, full
                         </div>
 
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                         {i18n._('sys.device_tool.photo_capture')}
                     </TooltipContent>
                 </Tooltip>
@@ -101,7 +101,7 @@ export default function PlayerPanel({ handleReload, isFullscreen, snapshot, full
                         </div>
 
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                         {i18n._('sys.device_tool.ai')}
                     </TooltipContent>
                 </Tooltip>
@@ -114,7 +114,7 @@ export default function PlayerPanel({ handleReload, isFullscreen, snapshot, full
                             </Button>
                         </div>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                         {i18n._('sys.device_tool.fps')}
                     </TooltipContent>
                 </Tooltip>
@@ -127,7 +127,7 @@ export default function PlayerPanel({ handleReload, isFullscreen, snapshot, full
                             </Button>
                         </div>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                         {i18n._('sys.device_tool.snapshot')}
                     </TooltipContent>
                 </Tooltip>
@@ -140,7 +140,7 @@ export default function PlayerPanel({ handleReload, isFullscreen, snapshot, full
                             </Button>
                         </div>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-80 text-pretty">
                         {i18n._('sys.device_tool.fullscreen')}
                     </TooltipContent>
                 </Tooltip>

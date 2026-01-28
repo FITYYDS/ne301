@@ -28,15 +28,18 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
-static pd_pp_box_t *pd_pp_buffer = NULL;
-static pd_pp_point_t *pd_keypoints_buffer = NULL;
-static mpe_detect_t *mpe_detect_buffer = NULL;
-static pd_model_pp_static_param_t static_params = {0};
-static char **static_class_names = NULL;
-static pd_pp_point_t *anchors = NULL;
-static char **static_kp_names = NULL;
-static uint8_t *keypoint_connections = NULL;
-static uint8_t num_connections = 0;
+/* Per-instance parameters for Palm Detector UF postprocess */
+typedef struct {
+    pd_model_pp_static_param_t core;     /* original static params, now per-instance */
+    pd_pp_box_t *pd_pp_buffer;          /* per-instance pd buffer */
+    pd_pp_point_t *pd_keypoints_buffer; /* per-instance keypoints buffer */
+    mpe_detect_t *mpe_detect_buffer;    /* per-instance mpe detect buffer */
+    char **class_names;                 /* per-instance class name array */
+    pd_pp_point_t *anchors;             /* per-instance anchors */
+    char **kp_names;                    /* per-instance keypoint names */
+    uint8_t *keypoint_connections;      /* per-instance keypoint connections */
+    uint8_t num_connections;            /* per-instance number of connections */
+} pp_mpe_pd_uf_params_t;
 
 /*
 Example JSON configuration:
@@ -60,7 +63,13 @@ Example JSON configuration:
 */
 static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
 {
-    pd_model_pp_static_param_t *params = (pd_model_pp_static_param_t *)&static_params;
+    pp_mpe_pd_uf_params_t *pp_ctx = (pp_mpe_pd_uf_params_t *)hal_mem_alloc_any(sizeof(pp_mpe_pd_uf_params_t));
+    if (!pp_ctx) {
+        return AI_PD_POSTPROCESS_ERROR_NO;
+    }
+    memset(pp_ctx, 0, sizeof(pp_mpe_pd_uf_params_t));
+
+    pd_model_pp_static_param_t *params = &pp_ctx->core;
 
     params->width = 256;
     params->height = 256;
@@ -89,13 +98,13 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
                 if (cJSON_IsArray(class_names)) {
                     int num_classes = cJSON_GetArraySize(class_names);
                     if (num_classes > 0) {
-                        static_class_names = (char **)hal_mem_alloc_any(sizeof(char *) * num_classes);
+                        pp_ctx->class_names = (char **)hal_mem_alloc_any(sizeof(char *) * num_classes);
                         for (int i = 0; i < num_classes; i++) {
                             cJSON *name = cJSON_GetArrayItem(class_names, i);
                             if (cJSON_IsString(name)) {
                                 uint8_t len = strlen(name->valuestring) + 1;
-                                static_class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
-                                memcpy(static_class_names[i], name->valuestring, len);
+                                pp_ctx->class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
+                                memcpy(pp_ctx->class_names[i], name->valuestring, len);
                             }
                         }
                     }
@@ -141,20 +150,16 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
                 if (cJSON_IsArray(anchors_array)) {
                     int count = cJSON_GetArraySize(anchors_array);
                     if (count > 0) {
-                        if (anchors != NULL) {
-                            hal_mem_free(anchors);
-                            anchors = NULL;
-                        }
-                        anchors = (pd_pp_point_t *)hal_mem_alloc_any(sizeof(pd_pp_point_t) * (size_t)count);
-                        if (anchors != NULL) {
+                        pp_ctx->anchors = (pd_pp_point_t *)hal_mem_alloc_any(sizeof(pd_pp_point_t) * (size_t)count);
+                        if (pp_ctx->anchors != NULL) {
                             for (int k = 0; k < count; ++k) {
                                 cJSON *anchor_pair = cJSON_GetArrayItem(anchors_array, k);
                                 if (cJSON_IsArray(anchor_pair) && cJSON_GetArraySize(anchor_pair) >= 2) {
-                                    anchors[k].x = (float32_t)cJSON_GetArrayItem(anchor_pair, 0)->valuedouble;
-                                    anchors[k].y = (float32_t)cJSON_GetArrayItem(anchor_pair, 1)->valuedouble;
+                                    pp_ctx->anchors[k].x = (float32_t)cJSON_GetArrayItem(anchor_pair, 0)->valuedouble;
+                                    pp_ctx->anchors[k].y = (float32_t)cJSON_GetArrayItem(anchor_pair, 1)->valuedouble;
                                 }
                             }
-                            params->pAnchors = anchors;
+                            params->pAnchors = pp_ctx->anchors;
                         }
                     }
                 }
@@ -163,15 +168,15 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
                 cJSON *kp_names = cJSON_GetObjectItemCaseSensitive(pp, "keypoint_names");
                 if (cJSON_IsArray(kp_names)) {
                     if (params->nb_keypoints > 0) {
-                        static_kp_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_keypoints);
+                        pp_ctx->kp_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_keypoints);
                         for (int i = 0; i < params->nb_keypoints; i++) {
                             cJSON *name = cJSON_GetArrayItem(kp_names, i);
                             if (cJSON_IsString(name)) {
                                 uint8_t len = strlen(name->valuestring) + 1;
-                                static_kp_names[i] = (char *)hal_mem_alloc_any(len);
-                                memcpy(static_kp_names[i], name->valuestring, len);
+                                pp_ctx->kp_names[i] = (char *)hal_mem_alloc_any(len);
+                                memcpy(pp_ctx->kp_names[i], name->valuestring, len);
                             } else {
-                                static_kp_names[i] = NULL;
+                                pp_ctx->kp_names[i] = NULL;
                             }
                         }
                     }
@@ -180,14 +185,14 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
                 // Parse keypoint connections
                 cJSON *connections = cJSON_GetObjectItemCaseSensitive(pp, "keypoint_connections");
                 if (cJSON_IsArray(connections)) {
-                    num_connections = cJSON_GetArraySize(connections);
-                    if (num_connections > 0) {
-                        keypoint_connections = (uint8_t *)hal_mem_alloc_any(sizeof(uint8_t) * num_connections * 2);
-                        for (int i = 0; i < num_connections; i++) {
+                    pp_ctx->num_connections = cJSON_GetArraySize(connections);
+                    if (pp_ctx->num_connections > 0) {
+                        pp_ctx->keypoint_connections = (uint8_t *)hal_mem_alloc_any(sizeof(uint8_t) * pp_ctx->num_connections * 2);
+                        for (int i = 0; i < pp_ctx->num_connections; i++) {
                             cJSON *connection = cJSON_GetArrayItem(connections, i);
                             if (cJSON_IsArray(connection) && cJSON_GetArraySize(connection) == 2) {
-                                keypoint_connections[i * 2 + 0] = (uint8_t)cJSON_GetArrayItem(connection, 0)->valuedouble;
-                                keypoint_connections[i * 2 + 1] = (uint8_t)cJSON_GetArrayItem(connection, 1)->valuedouble;
+                                pp_ctx->keypoint_connections[i * 2 + 0] = (uint8_t)cJSON_GetArrayItem(connection, 0)->valuedouble;
+                                pp_ctx->keypoint_connections[i * 2 + 1] = (uint8_t)cJSON_GetArrayItem(connection, 1)->valuedouble;
                             }
                         }
                     }
@@ -205,83 +210,92 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
         return -1;
     }
     
-    // Allocate output buffers
-    pd_pp_buffer = (pd_pp_box_t *)hal_mem_alloc_large(sizeof(pd_pp_box_t) * params->max_boxes_limit);
-    pd_keypoints_buffer = (pd_pp_point_t *)hal_mem_alloc_large(sizeof(pd_pp_point_t) * params->max_boxes_limit * params->nb_keypoints);
-    mpe_detect_buffer = (mpe_detect_t *)hal_mem_alloc_large(sizeof(mpe_detect_t) * params->max_boxes_limit);
+    // Allocate per-instance output buffers
+    pp_ctx->pd_pp_buffer = (pd_pp_box_t *)hal_mem_alloc_large(sizeof(pd_pp_box_t) * params->max_boxes_limit);
+    pp_ctx->pd_keypoints_buffer = (pd_pp_point_t *)hal_mem_alloc_large(sizeof(pd_pp_point_t) * params->max_boxes_limit * params->nb_keypoints);
+    pp_ctx->mpe_detect_buffer = (mpe_detect_t *)hal_mem_alloc_large(sizeof(mpe_detect_t) * params->max_boxes_limit);
     
-    assert(pd_pp_buffer != NULL && pd_keypoints_buffer != NULL && mpe_detect_buffer != NULL);
+    assert(pp_ctx->pd_pp_buffer != NULL && pp_ctx->pd_keypoints_buffer != NULL && pp_ctx->mpe_detect_buffer != NULL);
     
     // Initialize keypoints pointers
     for (size_t i = 0; i < params->max_boxes_limit; i++) {
-        pd_pp_buffer[i].pKps = &pd_keypoints_buffer[i * params->nb_keypoints];
+        pp_ctx->pd_pp_buffer[i].pKps = &pp_ctx->pd_keypoints_buffer[i * params->nb_keypoints];
     }
     
     pd_model_pp_reset(params);
-    *pp_params = (void *)params;
+    *pp_params = (void *)pp_ctx;
     return AI_PD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t deinit(void *pp_params)
 {
-    (void)pp_params;  // Unused parameter
-    
-    if (pd_pp_buffer != NULL) {
-        hal_mem_free(pd_pp_buffer);
-        pd_pp_buffer = NULL;
-    }
-    
-    if (pd_keypoints_buffer != NULL) {
-        hal_mem_free(pd_keypoints_buffer);
-        pd_keypoints_buffer = NULL;
-    }
-    
-    if (mpe_detect_buffer != NULL) {
-        hal_mem_free(mpe_detect_buffer);
-        mpe_detect_buffer = NULL;
-    }
-    
-    if (static_class_names != NULL) {
-        // Free class names (assuming single class "palm")
-        for (int i = 0; i < 1; i++) {
-            if (static_class_names[i] != NULL) {
-                hal_mem_free(static_class_names[i]);
-            }
-        }
-        hal_mem_free(static_class_names);
-        static_class_names = NULL;
-    }
-    
-    if (static_kp_names != NULL) {
-        for (int i = 0; i < static_params.nb_keypoints; i++) {
-            if (static_kp_names[i] != NULL) {
-                hal_mem_free(static_kp_names[i]);
-            }
-        }
-        hal_mem_free(static_kp_names);
-        static_kp_names = NULL;
+    pp_mpe_pd_uf_params_t *pp = (pp_mpe_pd_uf_params_t *)pp_params;
+    if (!pp) {
+        return AI_PD_POSTPROCESS_ERROR_NO;
     }
 
-    if (keypoint_connections != NULL) {
-        hal_mem_free(keypoint_connections);
-        keypoint_connections = NULL;
-        num_connections = 0;
+    pd_model_pp_static_param_t *params = &pp->core;
+    
+    if (pp->pd_pp_buffer != NULL) {
+        hal_mem_free(pp->pd_pp_buffer);
+        pp->pd_pp_buffer = NULL;
     }
     
-    if (anchors != NULL) {
-        hal_mem_free(anchors);
-        anchors = NULL;
+    if (pp->pd_keypoints_buffer != NULL) {
+        hal_mem_free(pp->pd_keypoints_buffer);
+        pp->pd_keypoints_buffer = NULL;
     }
     
+    if (pp->mpe_detect_buffer != NULL) {
+        hal_mem_free(pp->mpe_detect_buffer);
+        pp->mpe_detect_buffer = NULL;
+    }
+    
+    if (pp->class_names != NULL) {
+        // Free class names
+        int num_classes = 1;  // Palm detector typically has 1 class
+        for (int i = 0; i < num_classes; i++) {
+            if (pp->class_names[i] != NULL) {
+                hal_mem_free(pp->class_names[i]);
+            }
+        }
+        hal_mem_free(pp->class_names);
+        pp->class_names = NULL;
+    }
+    
+    if (pp->kp_names != NULL) {
+        for (int i = 0; i < params->nb_keypoints; i++) {
+            if (pp->kp_names[i] != NULL) {
+                hal_mem_free(pp->kp_names[i]);
+            }
+        }
+        hal_mem_free(pp->kp_names);
+        pp->kp_names = NULL;
+    }
+
+    if (pp->keypoint_connections != NULL) {
+        hal_mem_free(pp->keypoint_connections);
+        pp->keypoint_connections = NULL;
+        pp->num_connections = 0;
+    }
+    
+    if (pp->anchors != NULL) {
+        hal_mem_free(pp->anchors);
+        pp->anchors = NULL;
+    }
+    
+    hal_mem_free(pp);
     return AI_PD_POSTPROCESS_ERROR_NO;
 }
 
-static void pd_pp_out_t_to_pp_result_t(pd_pp_out_t *pPdOutput, pp_result_t *result)
+static void pd_pp_out_t_to_pp_result_t(pd_pp_out_t *pPdOutput,
+                                       pp_result_t *result,
+                                       const pp_mpe_pd_uf_params_t *pp)
 {
     result->type = PP_TYPE_MPE;  // Use MPE type as Palm Detector outputs similar format
     result->is_valid = pPdOutput->box_nb > 0;
     result->mpe.nb_detect = (uint8_t)pPdOutput->box_nb;
-    result->mpe.detects = mpe_detect_buffer;
+    result->mpe.detects = pp->mpe_detect_buffer;
     
     // Convert detection format
     for (int i = 0; i < pPdOutput->box_nb; i++) {
@@ -291,33 +305,34 @@ static void pd_pp_out_t_to_pp_result_t(pd_pp_out_t *pPdOutput, pp_result_t *resu
         result->mpe.detects[i].width = MAX(0.0f, MIN(1.0f, pPdOutput->pOutData[i].width));
         result->mpe.detects[i].height = MAX(0.0f, MIN(1.0f, pPdOutput->pOutData[i].height));
         result->mpe.detects[i].conf = pPdOutput->pOutData[i].prob;
-        result->mpe.detects[i].class_name = (static_class_names != NULL && static_class_names[0] != NULL) ? static_class_names[0] : "palm";
+        result->mpe.detects[i].class_name = (pp->class_names != NULL && pp->class_names[0] != NULL) ? pp->class_names[0] : "palm";
         
         // Convert keypoints
-        for (int j = 0; j < static_params.nb_keypoints && j < 33; j++) {
+        for (int j = 0; j < pp->core.nb_keypoints && j < 33; j++) {
             if (pPdOutput->pOutData[i].pKps != NULL) {
                 result->mpe.detects[i].keypoints[j].x = MAX(0.0f, MIN(1.0f, pPdOutput->pOutData[i].pKps[j].x));
                 result->mpe.detects[i].keypoints[j].y = MAX(0.0f, MIN(1.0f, pPdOutput->pOutData[i].pKps[j].y));
                 result->mpe.detects[i].keypoints[j].conf = 1.0f;  // Palm keypoints don't have confidence
             }
         }
-        result->mpe.detects[i].nb_keypoints = static_params.nb_keypoints;
-        result->mpe.detects[i].num_connections = num_connections;
-        result->mpe.detects[i].keypoint_connections = keypoint_connections;
-        result->mpe.detects[i].keypoint_names = static_kp_names;
+        result->mpe.detects[i].nb_keypoints = pp->core.nb_keypoints;
+        result->mpe.detects[i].num_connections = pp->num_connections;
+        result->mpe.detects[i].keypoint_connections = pp->keypoint_connections;
+        result->mpe.detects[i].keypoint_names = pp->kp_names;
     }
 }
 
 static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_params, void *nn_inst)
 {
     assert(nb_input == 2);
+    pp_mpe_pd_uf_params_t *pp = (pp_mpe_pd_uf_params_t *)pp_params;
+    pd_model_pp_static_param_t *params = &pp->core;
     int32_t error = AI_PD_POSTPROCESS_ERROR_NO;
-    pd_model_pp_static_param_t *params = (pd_model_pp_static_param_t *)pp_params;
 
     memset(pResult, 0, sizeof(pp_result_t));
 
     pd_pp_out_t pd_pp_out;
-    pd_pp_out.pOutData = pd_pp_buffer;
+    pd_pp_out.pOutData = pp->pd_pp_buffer;
     
     // Palm Detector expects: probs, boxes
     pd_model_pp_in_t pp_input = {
@@ -327,32 +342,36 @@ static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_pa
     
     error = pd_model_pp_process(&pp_input, &pd_pp_out, params);
     if (error == AI_PD_POSTPROCESS_ERROR_NO) {
-        pd_pp_out_t_to_pp_result_t(&pd_pp_out, (pp_result_t *)pResult);
+        pd_pp_out_t_to_pp_result_t(&pd_pp_out, (pp_result_t *)pResult, pp);
     }
     return error;
 }
 
 static int32_t set_confidence_threshold(void *params, float threshold)
 {
-    ((pd_model_pp_static_param_t *)params)->conf_threshold = threshold;
+    pp_mpe_pd_uf_params_t *pp = (pp_mpe_pd_uf_params_t *)params;
+    pp->core.conf_threshold = threshold;
     return AI_PD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t set_nms_threshold(void *params, float threshold)
 {
-    ((pd_model_pp_static_param_t *)params)->iou_threshold = threshold;
+    pp_mpe_pd_uf_params_t *pp = (pp_mpe_pd_uf_params_t *)params;
+    pp->core.iou_threshold = threshold;
     return AI_PD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t get_confidence_threshold(void *params, float *threshold)
 {
-    *threshold = ((pd_model_pp_static_param_t *)params)->conf_threshold;
+    pp_mpe_pd_uf_params_t *pp = (pp_mpe_pd_uf_params_t *)params;
+    *threshold = pp->core.conf_threshold;
     return AI_PD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t get_nms_threshold(void *params, float *threshold)
 {
-    *threshold = ((pd_model_pp_static_param_t *)params)->iou_threshold;
+    pp_mpe_pd_uf_params_t *pp = (pp_mpe_pd_uf_params_t *)params;
+    *threshold = pp->core.iou_threshold;
     return AI_PD_POSTPROCESS_ERROR_NO;
 }
 

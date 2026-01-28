@@ -351,20 +351,18 @@ export default function CellularNetworkPage() {
                             <div className="flex justify-between gap-2 flex-1 pr-0">
                                 <div className="flex items-center gap-2">
                                     <Label className="text-sm text-text-primary shrink-0">{i18n._('sys.system_management.pin_code')}</Label>
-                                    <Tooltip>
-                                        <Tooltip>
-                                            <TooltipTrigger>
-                                                <div className="w-4 mr-2 ml-1 flex justify-center items-center">
-                                                    <SvgIcon
-                                                      className="w-4 h-4"
-                                                      icon="info"
-                                                    />
-                                                </div>
-                                            </TooltipTrigger>
-                                            <TooltipContent className="max-w-[300px] text-pretty">
-                                                <p>{i18n._('sys.system_management.cellular_pin_code_note')}</p>
-                                            </TooltipContent>
-                                        </Tooltip>
+                                    <Tooltip mbEnhance>
+                                        <TooltipTrigger>
+                                            <div className="w-4 mr-2 ml-1 flex justify-center items-center">
+                                                <SvgIcon
+                                                  className="w-4 h-4"
+                                                  icon="info"
+                                                />
+                                            </div>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-80 text-pretty">
+                                            <p>{i18n._('sys.system_management.cellular_pin_code_note')}</p>
+                                        </TooltipContent>
                                     </Tooltip>
                                 </div>
                                 <Input variant="ghost" onChange={(e) => setSaveCellularData((prev) => ({ ...prev, pin_code: (e.target as HTMLInputElement).value }))} placeholder={i18n._('common.please_enter')} value={saveCellularData?.pin_code} className="text-sm text-text-primary" />

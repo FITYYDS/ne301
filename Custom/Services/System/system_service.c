@@ -76,6 +76,7 @@
     uint32_t last_wakeup_flag;             // Last wakeup flag from U0
     bool task_completed;                   // Task completion flag for sleep decision
     bool sleep_pending;                    // Sleep operation pending flag
+    uint32_t pending_sleep_duration;       // Pending sleep duration in seconds (0 = use config)
 };
 
 
@@ -1615,12 +1616,12 @@ static aicam_result_t unregister_pir_runtime_callback(void)
      // Low power mode: turn off all power (Standby mode)
      if (power_mode == POWER_MODE_LOW_POWER) {
         // Check if PIR is enabled and needs 3V3 power
-        if (controller->work_config.pir_trigger.enable &&
-            controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
-            controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
-            switch_bits |= PWR_3V3_SWITCH_BIT;
-            LOG_SVC_INFO("Keeping 3V3 power for PIR in low power mode");
-        }
+        // if (controller->work_config.pir_trigger.enable &&
+        //     controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
+        //     controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
+        //     switch_bits |= PWR_3V3_SWITCH_BIT;
+        //     LOG_SVC_INFO("Keeping 3V3 power for PIR in low power mode");
+        // }
 
          if (controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].enabled &&
              controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].low_power_supported &&
@@ -2686,17 +2687,39 @@ aicam_bool_t system_service_requires_only_essential_services(wakeup_source_type_
      if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
          return AICAM_ERROR_NOT_INITIALIZED;
      }
-     
+
      if (!g_system_service_ctx.sleep_pending) {
          return AICAM_OK; // No pending sleep
      }
-     
-     LOG_SVC_INFO("Executing pending sleep operation");
+
+     LOG_SVC_INFO("Executing pending sleep operation with duration: %u seconds",
+                  g_system_service_ctx.pending_sleep_duration);
      g_system_service_ctx.sleep_pending = false;
-     
-     return enter_sleep_mode(0);
+     uint32_t duration = g_system_service_ctx.pending_sleep_duration;
+     g_system_service_ctx.pending_sleep_duration = 0;
+
+     return enter_sleep_mode(duration);
  }
- 
+
+/**
+ * @brief Request async sleep (for use in callbacks to avoid deadlock)
+ * @param duration_sec Sleep duration in seconds (0 = use timer config)
+ * @return AICAM_OK on success, error code otherwise
+ * @note This sets sleep_pending flag, actual sleep is executed by main loop
+ */
+aicam_result_t system_service_request_sleep(uint32_t duration_sec)
+{
+    if (!g_system_service_ctx.is_initialized) {
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+
+    LOG_SVC_INFO("Sleep requested with duration: %u seconds", duration_sec);
+    g_system_service_ctx.pending_sleep_duration = duration_sec;
+    g_system_service_ctx.sleep_pending = true;
+
+    return AICAM_OK;
+}
+
  /**
   * @brief Get last wakeup flag from U0 module
   * @param wakeup_flag Pointer to store wakeup flag
@@ -3319,13 +3342,22 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     if (upload_result == AICAM_OK) {
         step_start_time = rtc_get_uptime_ms();
         LOG_SVC_INFO("[TIMING] Step 6: Waiting for publish confirmation...");
-        if(mqtt_service_wait_for_event(MQTT_EVENT_PUBLISHED, AICAM_TRUE, 10000) != AICAM_OK){
+
+        // Calculate dynamic timeout based on message size
+        // Base timeout: 5s + 2s per 10KB of data
+        uint32_t puback_timeout = 5000 + (jpeg_size / 10240) * 2000;
+        if (puback_timeout > 60000) {
+            puback_timeout = 60000;  // Cap at 60 seconds max
+        }
+        LOG_SVC_DEBUG("[TIMING] PUBACK timeout: %u ms (based on %u bytes)", puback_timeout, jpeg_size);
+
+        if(mqtt_service_wait_for_event(MQTT_EVENT_PUBLISHED, AICAM_TRUE, puback_timeout) != AICAM_OK){
             LOG_SVC_ERROR("[TIMING] Step 6 FAILED: Wait for published event failed");
             upload_result = AICAM_ERROR;
         } else {
             step_end_time = rtc_get_uptime_ms();
             step_duration = step_end_time - step_start_time;
-            LOG_SVC_INFO("[TIMING] Step 6 COMPLETED: Publish confirmation received (duration: %lu ms)", 
+            LOG_SVC_INFO("[TIMING] Step 6 COMPLETED: Publish confirmation received (duration: %lu ms)",
                          (unsigned long)step_duration);
         }
     }

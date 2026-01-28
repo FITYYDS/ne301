@@ -501,6 +501,17 @@ struct mg_connection *mg_mdns_listen(struct mg_mgr *mgr, char *name) {
 
 
 
+// Check if pointer is in valid code region (AXISRAM or Flash)
+static inline bool mg_is_valid_code_ptr(void *ptr) {
+  uint32_t addr = (uint32_t)ptr;
+  // Flash code region: 0x70000000 - 0x77FFFFFF
+  // AXISRAM code region: 0x90000000 - 0x9027FFFF
+  // Clear thumb bit for comparison
+  addr &= ~1U;
+  return ((addr >= 0x70000000U && addr < 0x78000000U) ||
+          (addr >= 0x90000000U && addr < 0x90280000U));
+}
+
 void mg_call(struct mg_connection *c, int ev, void *ev_data) {
 #if MG_ENABLE_PROFILE
   const char *names[] = {
@@ -513,9 +524,23 @@ void mg_call(struct mg_connection *c, int ev, void *ev_data) {
     MG_PROF_ADD(c, names[ev]);
   }
 #endif
-  // Fire protocol handler first, user handler second. See #2559
-  if (c->pfn != NULL) c->pfn(c, ev, ev_data);
-  if (c->fn != NULL) c->fn(c, ev, ev_data);
+  // Validate function pointers before calling - detect corruption early
+  if (c->pfn != NULL) {
+    if (!mg_is_valid_code_ptr((void*)c->pfn)) {
+      MG_ERROR(("mg_call: corrupted pfn=%p c=%p ev=%d", (void*)c->pfn, (void*)c, ev));
+      c->is_closing = 1;
+      return;
+    }
+    c->pfn(c, ev, ev_data);
+  }
+  if (c->fn != NULL) {
+    if (!mg_is_valid_code_ptr((void*)c->fn)) {
+      MG_ERROR(("mg_call: corrupted fn=%p c=%p ev=%d", (void*)c->fn, (void*)c, ev));
+      c->is_closing = 1;
+      return;
+    }
+    c->fn(c, ev, ev_data);
+  }
 }
 
 void mg_error(struct mg_connection *c, const char *fmt, ...) {
@@ -2592,7 +2617,9 @@ struct mg_connection *mg_http_connect(struct mg_mgr *mgr, const char *url,
 struct mg_connection *mg_http_listen(struct mg_mgr *mgr, const char *url,
                                      mg_event_handler_t fn, void *fn_data) {
   struct mg_connection *c = mg_listen(mgr, url, fn, fn_data);
-  if (c != NULL) c->pfn = http_cb;
+  if (c != NULL) {
+    c->pfn = http_cb;
+  }
   return c;
 }
 
@@ -4064,6 +4091,12 @@ struct mg_connection *mg_alloc_conn(struct mg_mgr *mgr) {
 }
 
 void mg_close_conn(struct mg_connection *c) {
+  // Safety check: detect invalid connection being closed
+  if (c->mgr == NULL) {
+    MG_ERROR(("mg_close_conn: invalid conn c=%p with NULL mgr, ignored", (void*)c));
+    return;
+  }
+
   mg_resolve_cancel(c);  // Close any pending DNS query
   LIST_DELETE(struct mg_connection, &c->mgr->conns, c);
   if (c == c->mgr->dns4.c) c->mgr->dns4.c = NULL;

@@ -726,6 +726,7 @@ sl_status_t sl_si91x_driver_deinit(void)
 #endif
 
   // Deinitialize the buffer manager
+  // TODO: When the WiFi chip malfunctions and cannot communicate, there is a probability of failure on this side
   status = sli_si91x_host_deinit_buffer_manager();
   VERIFY_STATUS_AND_RETURN(status);
 

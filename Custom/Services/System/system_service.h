@@ -605,6 +605,14 @@ aicam_result_t system_service_is_sleep_pending(aicam_bool_t *pending);
 aicam_result_t system_service_execute_pending_sleep(void);
 
 /**
+ * @brief Request async sleep (for use in callbacks to avoid deadlock)
+ * @param duration_sec Sleep duration in seconds (0 = use timer config)
+ * @return AICAM_OK on success, error code otherwise
+ * @note This sets sleep_pending flag, actual sleep is executed by main loop
+ */
+aicam_result_t system_service_request_sleep(uint32_t duration_sec);
+
+/**
  * @brief Get last wakeup flag from U0 module
  * @param wakeup_flag Pointer to store wakeup flag
  * @return AICAM_OK on success, error code otherwise

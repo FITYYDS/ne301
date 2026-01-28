@@ -19,6 +19,8 @@
 #define NN_MAX_INPUT_BUFFER 3
 #define NN_MAX_OUTPUT_BUFFER 5
 
+#define NN_MAX_INSTANCES 2
+
 typedef pp_result_t nn_result_t;
 
 /* callback function type */
@@ -29,7 +31,7 @@ typedef enum {
     NN_STATE_UNINIT = 0,      // uninitialized
     NN_STATE_INIT,            // initialized
     NN_STATE_READY,           // ready
-    NN_STATE_RUNNING,         // running
+    NN_STATE_RUNNING = NN_STATE_READY,         // running
     NN_STATE_ERROR,           // error state
 } nn_state_t;
 
@@ -62,13 +64,9 @@ typedef struct {
     uintptr_t metadata_ptr;           // metadata pointer
 } nn_model_info_t;
 
-// AI neural network module structure
+// AI neural network module structure (single instance)
 typedef struct {
-    bool is_init;                     // init state
-    device_t *dev;                    // device handle
     osMutexId_t mtx_id;              // mutex id
-    osSemaphoreId_t sem_id;          // semaphore id
-    osThreadId_t nn_processId;        // nn process thread id
 
     // AI model related
     nn_state_t state;                 // current state
@@ -99,6 +97,9 @@ typedef struct {
     nn_callback_t callback;
     void *callback_user_data;
 } nn_t;
+
+// Instance handle type for multi-instance support
+typedef nn_t* nn_handle_t;
 
 /* ==================== model file header definition ==================== */
 typedef struct {
@@ -136,7 +137,112 @@ typedef struct {
 void nn_register(void);
 void nn_unregister(void);
 
-// AI model management
+/* ==================== multi-instance API (preferred for new code) ==================== */
+
+/**
+ * @brief Create a new NN instance (not registered as a device).
+ * @return nn_handle_t Instance handle or NULL on failure.
+ */
+nn_handle_t nn_instance_create(void);
+
+/**
+ * @brief Destroy an NN instance created by nn_instance_create.
+ * @param handle Instance handle.
+ * @return 0 success, -1 failed
+ */
+int nn_instance_destroy(nn_handle_t handle);
+
+// AI model management (per instance)
+/*
+* description: load model from file
+* input: file pointer
+* output: 0 success, -1 failed
+*/
+int nn_instance_load_model(nn_handle_t handle, const uintptr_t file_ptr);
+/*
+* description: unload model
+* input: none
+* output: 0 success, -1 failed
+*/
+int nn_instance_unload_model(nn_handle_t handle);
+/*
+* description: get model input buffer
+* input: buffer pointer, buffer size
+* output: 0 success, -1 failed
+*/
+int nn_instance_get_model_input_buffer(nn_handle_t handle, uint8_t **buffer, uint32_t *size);
+/*
+* description: get model output buffer
+* input: buffer pointer, buffer size
+* output: 0 success, -1 failed
+*/
+int nn_instance_get_model_output_buffer(nn_handle_t handle, uint8_t **buffer, uint32_t *size);
+/*
+* description: get model info
+* input: model info pointer
+* output: 0 success, -1 failed
+*/
+int nn_instance_get_model_info(nn_handle_t handle, nn_model_info_t *model_info);
+
+// AI inference control (per instance)
+/*
+* description: inference one frame
+* input: input data, input size, result pointer
+* output: 0 success, -1 failed
+*/
+int nn_instance_inference_frame(nn_handle_t handle, uint8_t *input_data, uint32_t input_size, nn_result_t *result);
+
+// Thresholds (per instance)
+/*
+* description: set confidence threshold
+* input: threshold
+* output: 0 success, -1 failed
+*/
+int nn_instance_set_confidence_threshold(nn_handle_t handle, float threshold);
+/*
+* description: get confidence threshold
+* input: threshold pointer
+* output: 0 success, -1 failed
+*/
+int nn_instance_get_confidence_threshold(nn_handle_t handle, float *threshold);
+/*
+* description: set nms threshold
+* input: threshold
+* output: 0 success, -1 failed
+*/
+int nn_instance_set_nms_threshold(nn_handle_t handle, float threshold);
+/*
+* description: get nms threshold
+* input: threshold pointer
+* output: 0 success, -1 failed
+*/
+int nn_instance_get_nms_threshold(nn_handle_t handle, float *threshold);
+
+// State & statistics (per instance)
+/*
+* description: get state
+* input: none
+* output: nn state
+*/
+nn_state_t nn_instance_get_state(nn_handle_t handle);
+/*
+* description: get inference stats
+* input: count pointer, total time pointer
+* output: 0 success, -1 failed
+*/
+int nn_instance_get_inference_stats(nn_handle_t handle, uint32_t *count, uint32_t *total_time);
+
+// Callback (per instance)
+/*
+* description: set callback function for inference result before nn_start_inference
+* input: callback function pointer, user data pointer
+* output: 0 success, -1 failed
+*/
+int nn_instance_set_callback(nn_handle_t handle, nn_callback_t callback, void *user_data);
+
+/* ==================== legacy single-instance API (kept for compatibility) ==================== */
+
+// AI model management (default instance)
 /*
 * description: load model from file
 * input: file pointer
@@ -172,7 +278,7 @@ int nn_get_model_output_buffer(uint8_t **buffer, uint32_t *size);
 */
 int nn_get_model_info(nn_model_info_t *model_info);
 
-// AI inference control
+// AI inference control (default instance)
 
 /*
 * description: start inference after model loaded with async mode
@@ -225,7 +331,7 @@ int nn_set_nms_threshold(float threshold);
 */
 int nn_get_nms_threshold(float *threshold);
 
-// AI state query
+// AI state query (default instance)
 
 /*
 * description: get nn state
@@ -241,7 +347,7 @@ nn_state_t nn_get_state(void);
 */
 int nn_get_inference_stats(uint32_t *count, uint32_t *total_time);
 
-// callback function
+// callback function (default instance)
 /*
 * description: set callback function for inference result before nn_start_inference
 * input: callback function pointer, user data pointer
@@ -249,14 +355,6 @@ int nn_get_inference_stats(uint32_t *count, uint32_t *total_time);
 * note: the callback function will be called in the nn_process thread
 */
 int nn_set_callback(nn_callback_t callback, void *user_data);
-
-// model update
-/*
-* description: update model
-* input: file pointer
-* output: 0 success, -1 failed
-*/
-int nn_update_model(const uintptr_t file_ptr);
 
 /*
 * description: validate model

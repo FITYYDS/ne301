@@ -57,6 +57,8 @@ FLASH_ADDR_AI_3_BASE = 0x71800000
 FLASH_ADDR_AI_3_END = 0x71FFFFFF
 FLASH_ADDR_LITTLEFS_BASE = 0x72000000
 FLASH_ADDR_LITTLEFS_END = 0x75FFFFFF
+FLASH_ADDR_WIFI_FW_BASE = 0x77C00000
+FLASH_ADDR_WIFI_FW_END = 0x77FFFFFF
 
 
 # Parallel build (auto-detect CPU cores)
@@ -228,6 +230,35 @@ $(eval $(call pkg_project,model,model,$(MODEL_NAME),ai_model,NE301_MODEL,$(MODEL
 pkg: $(foreach proj, fsbl app web model,pkg-$(proj))
 	@echo "========================================="
 	@echo "Package Complete!"
+	@echo "========================================="
+
+######################################
+# Pack to HEX
+######################################
+.PHONY: pack-hex
+pack-hex: wakecore
+	@echo "========================================="
+	@echo "Packing firmware to HEX files..."
+	@echo "========================================="
+	@python $(PKG_SCRIPT_DIR)/pack_to_hex.py
+	@echo ""
+	@echo "Packing WakeCore..."
+	@python $(PKG_SCRIPT_DIR)/pack_to_hex.py --wakecore || echo "Warning: WakeCore not found, skipping..."
+	@echo "========================================="
+	@echo "HEX files created:"
+	@echo "  - $(BUILD_DIR)/ne301_Main.hex (Main firmware, without WiFi)"
+	@echo "  - $(BUILD_DIR)/ne301_Main_WiFi.hex (Main firmware, with WiFi)"
+	@echo "  - $(BUILD_DIR)/ne301_WakeCore.hex (WakeCore)"
+	@echo "========================================="
+
+.PHONY: pack-hex-wakecore
+pack-hex-wakecore: wakecore
+	@echo "========================================="
+	@echo "Packing WakeCore to HEX file..."
+	@echo "========================================="
+	@python $(PKG_SCRIPT_DIR)/pack_to_hex.py --wakecore
+	@echo "========================================="
+	@echo "HEX file created: $(BUILD_DIR)/ne301_WakeCore.hex"
 	@echo "========================================="
 
 ######################################
@@ -409,6 +440,8 @@ help:
 	@echo "Sign:     make sign[-fsbl|-app]"
 	@echo "Flash:    make flash[-fsbl|-app|-web|-model|-wakecore]"
 	@echo "Package:  make pkg[-fsbl|-app|-web|-model]"
+	@echo "Pack HEX: make pack-hex  # Pack all firmware (Main, Main+WiFi, WakeCore) to HEX files"
+	@echo "          make pack-hex-wakecore  # Pack WakeCore to separate HEX file only"
 	@echo "Erase:    make erase-[nvs|ota|app1|app2|ai-default|ai-1|ai-2|ai-3|littlefs]"
 	@echo "          make erase-all  # Erase all partitions (except FSBL)"
 	@echo "          make erase-chip           # Erase entire chip (WARNING!)"
@@ -424,6 +457,8 @@ help:
 	@echo "  make wakecore     # Build STM32U0 WakeCore"
 	@echo "  make flash        # Flash all to device"
 	@echo "  make pkg          # Package all for OTA"
+	@echo "  make pack-hex     # Pack all firmware (Main, Main+WiFi, WakeCore) to HEX files"
+	@echo "  make pack-hex-wakecore  # Pack WakeCore to separate HEX file only"
 	@echo "  make sign         # Sign all for app and fsbl"
 	@echo "  make sign-fsbl    # Sign FSBL only"
 	@echo "  make pkg-fsbl 	   # Package signed FSBL only"

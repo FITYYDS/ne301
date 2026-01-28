@@ -73,9 +73,9 @@ endif
 # Format: MAJOR.MINOR.PATCH.BUILD or empty
 FSBL_VERSION_OVERRIDE    := 1.0.0.2
 APP_VERSION_OVERRIDE     := $(VERSION)
-WEB_VERSION_OVERRIDE     := 1.3.0.0
+WEB_VERSION_OVERRIDE     := 1.3.1.0
 MODEL_VERSION_OVERRIDE   := 1.0.0.0
-WAKECORE_VERSION_OVERRIDE := 0.2.7.1
+WAKECORE_VERSION_OVERRIDE := 0.2.7.3
 
 # Set component-specific version suffixes
 # - Leave undefined (commented or not set) to inherit main suffix

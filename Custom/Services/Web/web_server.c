@@ -408,7 +408,12 @@ aicam_result_t api_response_error(http_handler_context_t* ctx,
      }
 
     // check if the request is for ota upload
-    if (c->fn_data != NULL && c->pfn == NULL) {
+    // IMPORTANT: Do NOT process OTA stream on:
+    // - Listener connections (is_listening = 1)
+    // - During MG_EV_OPEN event (pfn not set yet, would be &g_web_server not ota_ctx)
+    // - When fn_data is the server instance (&g_web_server)
+    if (c->fn_data != NULL && c->pfn == NULL &&
+        !c->is_listening && c->fn_data != &g_web_server) {
         // use POLL or READ event to drive data write
         // most Mongoose versions will trigger callbacks after POLL or each IO
         ota_upload_stream_processor(c, ev, ev_data);

@@ -23,7 +23,8 @@
 | AI_2           | 0x71300000        | 0x717FFFFF        | 5M         |
 | AI_3           | 0x71800000        | 0x71FFFFFF        | 8M         |
 | LittleFS       | 0x72000000        | 0x75FFFFFF        | 64M        |
-| Reserve2       | 0x76000000        | 0x77FFFFFF        | 32M        |
+| Reserve2       | 0x76000000        | 0x77BFFFFFF       | 28M        |
+| WiFi FW        | 0x77C00000        | 0x77FFFFFF        | 4M         |
 */
 
 
@@ -86,7 +87,10 @@
 #define LITTLEFS_END    0x75FFFFFFU
 #define LITTLEFS_SIZE   (0x76000000U - 0x72000000U)   // 64M
 #define RESERVE2_BASE   0x76000000U
-#define RESERVE2_END    0x77FFFFFFU
-#define RESERVE2_SIZE   (0x78000000U - 0x76000000U)   // 32M
+#define RESERVE2_END    0x77BFFFFFU
+#define RESERVE2_SIZE   (0x77C00000U - 0x76000000U)   // 28M
+#define WIFI_FW_BASE    0x77C00000U
+#define WIFI_FW_END     0x77FFFFFFU
+#define WIFI_FW_SIZE    (0x77FFFFFFU - 0x77C00000U)   // 4M
 
 #endif // __MEMORY_MAP_H__

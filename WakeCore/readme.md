@@ -1,3 +1,11 @@
+## V0.2.7.3
+* Add PIR configuration retry logic
+* Optimize PIR code and timing
+* PIR pin change notification no longer requires checking if it has been initialized
+
+## V0.2.7.2
+* System frequency down to 16MHz, power optimization
+
 ## V0.2.7.1
 * Add detection of wake-up events for long and long button presses
 

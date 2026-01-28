@@ -65,6 +65,7 @@ static const osThreadAttr_t w5500_data_comm_attr = {
 #define W5500_BUF_SIZE          (16 * 1024)
 static uint8_t w5500_rbuf[W5500_BUF_SIZE] ALIGN_32 IN_PSRAM = {0};
 static uint16_t w5500_rbuf_len = 0;
+static uint8_t w5500_is_need_reinit = 0; ///< 0: No need to reinitialize W5500, 1: Need to reinitialize W5500
 
 /// @brief Network interface low-level data input processing function
 /// @param netif Network interface
@@ -133,6 +134,7 @@ static err_t w5500_low_level_output(struct netif *netif, struct pbuf *p)
             }
             w5500_send_macraw_data(out_buf, p->tot_len);
             hal_mem_free(out_buf);
+            return ERR_OK;
         }
     }
     for (q = p; q != NULL; q = q->next) {
@@ -221,32 +223,67 @@ static void w5500_net_get_chip_mac(uint8_t *mac)
 	}
 }
 
+extern void netif_manager_change_default_if(void);
 void w5500_isr_thread(void *arg)
 {
-    uint8_t s0_ir = 0;
+    int ret = 0;
+    uint8_t s0_ir = 0x00, phy_cgf = 0x00, ver_reg = 0x00;
     uint32_t event = 0;
+    netif_state_t w5500_state = NETIF_STATE_DEINIT;
 
     while (1) {
         event = osEventFlagsWait(w5500_events, W5500_EVENT_INTERRUPT | W5500_EVENT_ISR_TASK_EXIT_REQ, osFlagsWaitAny, NETIF_ETH_WAN_WAIT_IR_TIMEOUT);
         if (event & osFlagsError) event = 0;
 
-        s0_ir = 0;
-        W5500_Sock_Get_IR(0, &s0_ir);
-        if (s0_ir & Sn_IR_SEND_OK) {
-            W5500_Sock_Set_IR(0, Sn_IR_SEND_OK);
-            osEventFlagsSet(w5500_events, W5500_EVENT_INT_SEND_OK);
-        }
-        if (s0_ir & Sn_IR_TIMEOUT) {
-            W5500_Sock_Set_IR(0, Sn_IR_TIMEOUT);
-            osEventFlagsSet(w5500_events, W5500_EVENT_INT_TIMEOUT);
-        }
-        if (s0_ir & Sn_IR_RECV) {
-            W5500_Sock_Set_IR(0, Sn_IR_RECV);
-            osEventFlagsSet(w5500_events, W5500_EVENT_INT_RECV);
+        s0_ir = 0x00;
+        ret = W5500_Sock_Get_IR(0, &s0_ir);
+        if (ret != W5500_OK) goto isr_thread_exit_check;
+        if (s0_ir == 0x00 || s0_ir == 0xFF) {
+            if (w5500_mutex != NULL) {
+                osMutexAcquire(w5500_mutex, osWaitForever);
+                w5500_state = w5500_netif_state();
+                osMutexRelease(w5500_mutex);
+                if (w5500_state != NETIF_STATE_UP) goto isr_thread_exit_check;
+                phy_cgf = 0x00;
+                ver_reg = 0x00;
+                ret = W5500_Read_Datas(VERSIONR, &ver_reg, 1, W5500_SPI_LESS_10B_TIMEOUT);
+                if (ret < 0) goto isr_thread_exit_check;
+                if (ver_reg == NETIF_ETH_WAN_W5500_FW_VERSION) {
+                    ret = W5500_Read_Datas(PHYCFGR, &phy_cgf, 1, W5500_SPI_LESS_10B_TIMEOUT);
+                    if (ret < 0) goto isr_thread_exit_check;
+                    // W5500_LOGD("W5500 PHYCFGR = 0x%02X", phy_cgf);
+                }
+                if ((ver_reg != NETIF_ETH_WAN_W5500_FW_VERSION) || ((phy_cgf & 0x80) == 0x00) || ((phy_cgf & 0x01) == 0x00)) {
+                    W5500_LOGE("W5500 is disconnected or reset!");
+                    osMutexAcquire(w5500_mutex, osWaitForever);
+                    w5500_netif_down();
+                    w5500_is_need_reinit = 1;
+                    osMutexRelease(w5500_mutex);
+                    netif_manager_change_default_if();
+                    goto isr_thread_exit_check;
+                }
+            }
+        } else {
+            if (s0_ir & Sn_IR_SEND_OK) {
+                ret = W5500_Sock_Set_IR(0, Sn_IR_SEND_OK);
+                if (ret != W5500_OK) goto isr_thread_exit_check;
+                osEventFlagsSet(w5500_events, W5500_EVENT_INT_SEND_OK);
+            }
+            if (s0_ir & Sn_IR_TIMEOUT) {
+                ret = W5500_Sock_Set_IR(0, Sn_IR_TIMEOUT);
+                if (ret != W5500_OK) goto isr_thread_exit_check;
+                osEventFlagsSet(w5500_events, W5500_EVENT_INT_TIMEOUT);
+            }
+            if (s0_ir & Sn_IR_RECV) {
+                ret = W5500_Sock_Set_IR(0, Sn_IR_RECV);
+                if (ret != W5500_OK) goto isr_thread_exit_check;
+                osEventFlagsSet(w5500_events, W5500_EVENT_INT_RECV);
+            }
         }
         if (W5500_GPIO_INTn_READ() == 0) {
             osEventFlagsSet(w5500_events, W5500_EVENT_INTERRUPT);
         }
+    isr_thread_exit_check:
         if (event & W5500_EVENT_ISR_TASK_EXIT_REQ) {
             osEventFlagsSet(w5500_events, W5500_EVENT_ISR_TASK_EXIT_ACK);
             osThreadExit();
@@ -348,6 +385,7 @@ int w5500_netif_init(void)
         goto w5500_netif_init_failed;
     }
 
+    w5500_is_need_reinit = 0;
     return W5500_OK;
 
 w5500_netif_init_failed:
@@ -385,11 +423,37 @@ int w5500_netif_up(void)
     ip_addr_t gateway = { 0 };
     ip_addr_t netmask = { 0 };
     int ret = 0;
+    uint8_t phy_cgf = 0x00, ver_reg = 0x00, try_count = 0;
     uint32_t timeout_ms = 0;
 
     eth = netif_get_by_index(eth_netif.num + 1);
     if (eth == NULL || eth != &eth_netif) return W5500_ERR_INVALID_STATE;
     if (netif_is_link_up(eth)) return W5500_OK;
+
+    ret = W5500_Read_Datas(VERSIONR, &ver_reg, 1, W5500_SPI_LESS_10B_TIMEOUT);
+    if (ret < 0) return ret;
+    if (ver_reg != NETIF_ETH_WAN_W5500_FW_VERSION) {
+        ret = W5500_ERR_UNKNOW;
+        W5500_LOGE("W5500 firmware version error!");
+        return ret;
+    }
+
+    if (w5500_is_need_reinit) {
+        w5500_netif_deinit();
+        ret = w5500_netif_init();
+        if (ret != W5500_OK) return ret;
+    }
+
+    do {
+        ret = W5500_Read_Datas(PHYCFGR, &phy_cgf, 1, W5500_SPI_LESS_10B_TIMEOUT);
+        if (ret < 0) goto w5500_netif_up_end;
+        if (((phy_cgf & 0x01) == 0x00)) osDelay(100);
+    } while (((phy_cgf & 0x01) == 0x00) && (try_count++ < 30));
+    if (((phy_cgf & 0x01) == 0x00)) {
+        ret = W5500_ERR_UNCONNECTED;
+        W5500_LOGE("W5500 is disconnected!");
+        goto w5500_netif_up_end;
+    }
 
     // Config IP
     ret = W5500_Cfg_Net(eth_config.ip_addr, eth_config.gw, eth_config.netmask);
@@ -457,6 +521,7 @@ int w5500_netif_up(void)
 
 w5500_netif_up_end:
     if (ret != ERR_OK) {
+        if (eth_config.ip_mode == NETIF_IP_MODE_DHCP) dhcp_stop(&eth_netif);
         netifapi_netif_set_link_down(&eth_netif);
         netifapi_netif_set_down(&eth_netif);
     }
@@ -544,7 +609,7 @@ int w5500_netif_config(netif_config_t *netif_cfg)
     #endif
     }
 
-    memcpy(&eth_config, netif_cfg, sizeof(eth_config));
+    memcpy(&eth_config, netif_cfg, sizeof(netif_config_t));
     return ret;
 }
 
@@ -594,6 +659,15 @@ netif_state_t w5500_netif_state(void)
 struct netif *w5500_netif_ptr(void)
 {
     return &eth_netif;
+}
+
+int w5500_netif_reset_test(void)
+{
+    W5500_GPIO_RST_LOW();
+    W5500_DELAY_MS(1);
+    W5500_GPIO_RST_HIGH();
+    W5500_DELAY_MS(1);
+    return W5500_OK;
 }
 
 int w5500_netif_ctrl(const char *if_name, netif_cmd_t cmd, void *param)

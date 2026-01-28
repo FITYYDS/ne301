@@ -7,9 +7,10 @@ extern "C" {
 
 #include "sys_config.h"
 
-#define PIT_SERIAL_HIGH         PIR_SERIAL_GPIO_Port->BSRR = (uint32_t)PIR_SERIAL_Pin
-#define PIT_SERIAL_LOW          PIR_SERIAL_GPIO_Port->BRR = (uint32_t)PIR_SERIAL_Pin
-#define PIT_TRIGGER_READ        (PIR_TRIGGER_GPIO_Port->IDR & (uint32_t)PIR_TRIGGER_Pin)
+#define PIR_CONFIG_RETRY_TIMES  10
+#define PIR_SERIAL_HIGH         PIR_SERIAL_GPIO_Port->BSRR = (uint32_t)PIR_SERIAL_Pin
+#define PIR_SERIAL_LOW          PIR_SERIAL_GPIO_Port->BRR = (uint32_t)PIR_SERIAL_Pin
+#define PIR_TRIGGER_READ        (PIR_TRIGGER_GPIO_Port->IDR & (uint32_t)PIR_TRIGGER_Pin)
 
 typedef struct
 {

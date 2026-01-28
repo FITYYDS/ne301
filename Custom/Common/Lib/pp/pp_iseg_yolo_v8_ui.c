@@ -30,14 +30,17 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
-static iseg_pp_outBuffer_t *iseg_pp_buffer = NULL;
-static iseg_detect_t *iseg_detect_buffer = NULL;
-static uint8_t *iseg_mask_buffer = NULL;
-static iseg_yolov8_pp_scratchBuffer_s8_t *scratch_detections_buffer = NULL;
-static float32_t *mask_float_buffer = NULL;
-static int8_t *mask_int8_buffer = NULL;
-static iseg_yolov8_pp_static_param_t static_params = {0};
-static char **static_class_names = NULL;
+/* Per-instance parameters for ISEG YOLOv8 UI postprocess */
+typedef struct {
+    iseg_yolov8_pp_static_param_t core;     /* original static params, now per-instance */
+    iseg_pp_outBuffer_t *iseg_pp_buffer;    /* per-instance output buffer */
+    iseg_detect_t *iseg_detect_buffer;     /* per-instance detection buffer */
+    uint8_t *iseg_mask_buffer;            /* per-instance mask buffer */
+    iseg_yolov8_pp_scratchBuffer_s8_t *scratch_detections_buffer; /* per-instance scratch detections buffer */
+    float32_t *mask_float_buffer;          /* per-instance mask float buffer */
+    int8_t *mask_int8_buffer;               /* per-instance mask int8 buffer */
+    char **class_names;                     /* per-instance class name array */
+} pp_iseg_yolo_v8_ui_params_t;
 
 /*
 Example JSON configuration:
@@ -54,7 +57,13 @@ Example JSON configuration:
 */
 static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
 {
-    iseg_yolov8_pp_static_param_t *params = (iseg_yolov8_pp_static_param_t *)&static_params;
+    pp_iseg_yolo_v8_ui_params_t *pp_ctx = (pp_iseg_yolo_v8_ui_params_t *)hal_mem_alloc_any(sizeof(pp_iseg_yolo_v8_ui_params_t));
+    if (!pp_ctx) {
+        return AI_ISEG_POSTPROCESS_ERROR_NO;
+    }
+    memset(pp_ctx, 0, sizeof(pp_iseg_yolo_v8_ui_params_t));
+
+    iseg_yolov8_pp_static_param_t *params = &pp_ctx->core;
     
     // Get quantization parameters from NN instance (for int8 models)
     NN_Instance_TypeDef *NN_Instance = (NN_Instance_TypeDef *)nn_inst;
@@ -98,13 +107,13 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
 
                 cJSON *class_names = cJSON_GetObjectItemCaseSensitive(pp, "class_names");
                 if (cJSON_IsArray(class_names)) {
-                    static_class_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_classes);
+                    pp_ctx->class_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_classes);
                     for (int i = 0; i < params->nb_classes; i++) {
                         cJSON *name = cJSON_GetArrayItem(class_names, i);
                         if (cJSON_IsString(name)) {
                             uint8_t len = strlen(name->valuestring) + 1;
-                            static_class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
-                            memcpy(static_class_names[i], name->valuestring, len);
+                            pp_ctx->class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
+                            memcpy(pp_ctx->class_names[i], name->valuestring, len);
                         }
                     }
                 }
@@ -144,96 +153,104 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
         }
     }
     
-    // Allocate output buffers
-    iseg_pp_buffer = (iseg_pp_outBuffer_t *)hal_mem_alloc_large(sizeof(iseg_pp_outBuffer_t) * params->max_boxes_limit);
-    iseg_detect_buffer = (iseg_detect_t *)hal_mem_alloc_large(sizeof(iseg_detect_t) * params->max_boxes_limit);
+    // Allocate per-instance output buffers
+    pp_ctx->iseg_pp_buffer = (iseg_pp_outBuffer_t *)hal_mem_alloc_large(sizeof(iseg_pp_outBuffer_t) * params->max_boxes_limit);
+    pp_ctx->iseg_detect_buffer = (iseg_detect_t *)hal_mem_alloc_large(sizeof(iseg_detect_t) * params->max_boxes_limit);
     
     // Allocate mask buffers
     uint32_t mask_size_per_detection = params->size_masks * params->size_masks;
-    iseg_mask_buffer = (uint8_t *)hal_mem_alloc_large(sizeof(uint8_t) * mask_size_per_detection * params->max_boxes_limit);
+    pp_ctx->iseg_mask_buffer = (uint8_t *)hal_mem_alloc_large(sizeof(uint8_t) * mask_size_per_detection * params->max_boxes_limit);
     
     // Allocate scratch buffers for int8 processing
-    scratch_detections_buffer = (iseg_yolov8_pp_scratchBuffer_s8_t *)hal_mem_alloc_large(sizeof(iseg_yolov8_pp_scratchBuffer_s8_t) * params->nb_total_boxes);
-    mask_float_buffer = (float32_t *)hal_mem_alloc_large(sizeof(float32_t) * params->nb_masks);
-    mask_int8_buffer = (int8_t *)hal_mem_alloc_large(sizeof(int8_t) * params->nb_masks * params->nb_total_boxes);
+    pp_ctx->scratch_detections_buffer = (iseg_yolov8_pp_scratchBuffer_s8_t *)hal_mem_alloc_large(sizeof(iseg_yolov8_pp_scratchBuffer_s8_t) * params->nb_total_boxes);
+    pp_ctx->mask_float_buffer = (float32_t *)hal_mem_alloc_large(sizeof(float32_t) * params->nb_masks);
+    pp_ctx->mask_int8_buffer = (int8_t *)hal_mem_alloc_large(sizeof(int8_t) * params->nb_masks * params->nb_total_boxes);
     
-    assert(iseg_pp_buffer != NULL && iseg_detect_buffer != NULL && iseg_mask_buffer != NULL);
-    assert(scratch_detections_buffer != NULL && mask_float_buffer != NULL && mask_int8_buffer != NULL);
+    assert(pp_ctx->iseg_pp_buffer != NULL && pp_ctx->iseg_detect_buffer != NULL && pp_ctx->iseg_mask_buffer != NULL);
+    assert(pp_ctx->scratch_detections_buffer != NULL && pp_ctx->mask_float_buffer != NULL && pp_ctx->mask_int8_buffer != NULL);
     
     // Initialize mask pointers
     for (size_t i = 0; i < params->max_boxes_limit; i++) {
-        iseg_pp_buffer[i].pMask = &iseg_mask_buffer[i * mask_size_per_detection];
-        iseg_detect_buffer[i].mask = &iseg_mask_buffer[i * mask_size_per_detection];
-        iseg_detect_buffer[i].mask_size = mask_size_per_detection;
+        pp_ctx->iseg_pp_buffer[i].pMask = &pp_ctx->iseg_mask_buffer[i * mask_size_per_detection];
+        pp_ctx->iseg_detect_buffer[i].mask = &pp_ctx->iseg_mask_buffer[i * mask_size_per_detection];
+        pp_ctx->iseg_detect_buffer[i].mask_size = mask_size_per_detection;
     }
     
     // Initialize scratch buffer mask pointers
     for (size_t i = 0; i < params->nb_total_boxes; i++) {
-        scratch_detections_buffer[i].pMask = &mask_int8_buffer[i * params->nb_masks];
+        pp_ctx->scratch_detections_buffer[i].pMask = &pp_ctx->mask_int8_buffer[i * params->nb_masks];
     }
     
     // Set scratch buffer pointers
-    params->pMask = mask_float_buffer;
-    params->pTmpBuff = scratch_detections_buffer;
+    params->pMask = pp_ctx->mask_float_buffer;
+    params->pTmpBuff = pp_ctx->scratch_detections_buffer;
     
     iseg_yolov8_pp_reset(params);
-    *pp_params = (void *)params;
+    *pp_params = (void *)pp_ctx;
     return AI_ISEG_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t deinit(void *pp_params)
 {
-    iseg_yolov8_pp_static_param_t *params = (iseg_yolov8_pp_static_param_t *)pp_params;
+    pp_iseg_yolo_v8_ui_params_t *pp = (pp_iseg_yolo_v8_ui_params_t *)pp_params;
+    if (!pp) {
+        return AI_ISEG_POSTPROCESS_ERROR_NO;
+    }
+
+    iseg_yolov8_pp_static_param_t *params = &pp->core;
     
-    if (iseg_pp_buffer != NULL) {
-        hal_mem_free(iseg_pp_buffer);
-        iseg_pp_buffer = NULL;
+    if (pp->iseg_pp_buffer != NULL) {
+        hal_mem_free(pp->iseg_pp_buffer);
+        pp->iseg_pp_buffer = NULL;
     }
     
-    if (iseg_detect_buffer != NULL) {
-        hal_mem_free(iseg_detect_buffer);
-        iseg_detect_buffer = NULL;
+    if (pp->iseg_detect_buffer != NULL) {
+        hal_mem_free(pp->iseg_detect_buffer);
+        pp->iseg_detect_buffer = NULL;
     }
     
-    if (iseg_mask_buffer != NULL) {
-        hal_mem_free(iseg_mask_buffer);
-        iseg_mask_buffer = NULL;
+    if (pp->iseg_mask_buffer != NULL) {
+        hal_mem_free(pp->iseg_mask_buffer);
+        pp->iseg_mask_buffer = NULL;
     }
     
-    if (scratch_detections_buffer != NULL) {
-        hal_mem_free(scratch_detections_buffer);
-        scratch_detections_buffer = NULL;
+    if (pp->scratch_detections_buffer != NULL) {
+        hal_mem_free(pp->scratch_detections_buffer);
+        pp->scratch_detections_buffer = NULL;
     }
     
-    if (mask_float_buffer != NULL) {
-        hal_mem_free(mask_float_buffer);
-        mask_float_buffer = NULL;
+    if (pp->mask_float_buffer != NULL) {
+        hal_mem_free(pp->mask_float_buffer);
+        pp->mask_float_buffer = NULL;
     }
     
-    if (mask_int8_buffer != NULL) {
-        hal_mem_free(mask_int8_buffer);
-        mask_int8_buffer = NULL;
+    if (pp->mask_int8_buffer != NULL) {
+        hal_mem_free(pp->mask_int8_buffer);
+        pp->mask_int8_buffer = NULL;
     }
     
-    if (static_class_names != NULL) {
+    if (pp->class_names != NULL) {
         for (int i = 0; i < params->nb_classes; i++) {
-            if (static_class_names[i] != NULL) {
-                hal_mem_free(static_class_names[i]);
+            if (pp->class_names[i] != NULL) {
+                hal_mem_free(pp->class_names[i]);
             }
         }
-        hal_mem_free(static_class_names);
-        static_class_names = NULL;
+        hal_mem_free(pp->class_names);
+        pp->class_names = NULL;
     }
     
+    hal_mem_free(pp);
     return AI_ISEG_POSTPROCESS_ERROR_NO;
 }
 
-static void iseg_pp_out_t_to_pp_result_t(iseg_pp_out_t *pIsegOutput, pp_result_t *result)
+static void iseg_pp_out_t_to_pp_result_t(iseg_pp_out_t *pIsegOutput,
+                                         pp_result_t *result,
+                                         const pp_iseg_yolo_v8_ui_params_t *pp)
 {
     result->type = PP_TYPE_ISEG;
     result->is_valid = pIsegOutput->nb_detect > 0;
     result->iseg.nb_detect = pIsegOutput->nb_detect;
-    result->iseg.detects = iseg_detect_buffer;
+    result->iseg.detects = pp->iseg_detect_buffer;
     
     // Convert detection format
     for (int i = 0; i < pIsegOutput->nb_detect; i++) {
@@ -242,8 +259,10 @@ static void iseg_pp_out_t_to_pp_result_t(iseg_pp_out_t *pIsegOutput, pp_result_t
         result->iseg.detects[i].width = MAX(0.0f, MIN(1.0f, pIsegOutput->pOutBuff[i].width));
         result->iseg.detects[i].height = MAX(0.0f, MIN(1.0f, pIsegOutput->pOutBuff[i].height));
         result->iseg.detects[i].conf = pIsegOutput->pOutBuff[i].conf;
-        if (pIsegOutput->pOutBuff[i].class_index >= 0 && pIsegOutput->pOutBuff[i].class_index < static_params.nb_classes) {
-            result->iseg.detects[i].class_name = static_class_names[pIsegOutput->pOutBuff[i].class_index];
+        if (pIsegOutput->pOutBuff[i].class_index >= 0 &&
+            pIsegOutput->pOutBuff[i].class_index < pp->core.nb_classes &&
+            pp->class_names) {
+            result->iseg.detects[i].class_name = pp->class_names[pIsegOutput->pOutBuff[i].class_index];
         } else {
             result->iseg.detects[i].class_name = "unknown";
         }
@@ -254,14 +273,15 @@ static void iseg_pp_out_t_to_pp_result_t(iseg_pp_out_t *pIsegOutput, pp_result_t
 static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_params, void *nn_inst)
 {
     assert(nb_input == 2);
+    pp_iseg_yolo_v8_ui_params_t *pp = (pp_iseg_yolo_v8_ui_params_t *)pp_params;
+    iseg_yolov8_pp_static_param_t *params = &pp->core;
     int32_t error = AI_ISEG_POSTPROCESS_ERROR_NO;
-    iseg_yolov8_pp_static_param_t *params = (iseg_yolov8_pp_static_param_t *)pp_params;
     
     params->nb_detect = 0;
     memset(pResult, 0, sizeof(pp_result_t));
 
     iseg_pp_out_t iseg_pp_out;
-    iseg_pp_out.pOutBuff = iseg_pp_buffer;
+    iseg_pp_out.pOutBuff = pp->iseg_pp_buffer;
     
     iseg_yolov8_pp_in_centroid_t pp_input = {
         .pRaw_detections = (int8_t *)pInput[0],
@@ -271,32 +291,36 @@ static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_pa
     // Use int8 processing function for int8 models
     error = iseg_yolov8_pp_process_int8(&pp_input, &iseg_pp_out, params);
     if (error == AI_ISEG_POSTPROCESS_ERROR_NO) {
-        iseg_pp_out_t_to_pp_result_t(&iseg_pp_out, (pp_result_t *)pResult);
+        iseg_pp_out_t_to_pp_result_t(&iseg_pp_out, (pp_result_t *)pResult, pp);
     }
     return error;
 }
 
 static int32_t set_confidence_threshold(void *params, float threshold)
 {
-    ((iseg_yolov8_pp_static_param_t *)params)->conf_threshold = threshold;
+    pp_iseg_yolo_v8_ui_params_t *pp = (pp_iseg_yolo_v8_ui_params_t *)params;
+    pp->core.conf_threshold = threshold;
     return AI_ISEG_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t set_nms_threshold(void *params, float threshold)
 {
-    ((iseg_yolov8_pp_static_param_t *)params)->iou_threshold = threshold;
+    pp_iseg_yolo_v8_ui_params_t *pp = (pp_iseg_yolo_v8_ui_params_t *)params;
+    pp->core.iou_threshold = threshold;
     return AI_ISEG_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t get_confidence_threshold(void *params, float *threshold)
 {
-    *threshold = ((iseg_yolov8_pp_static_param_t *)params)->conf_threshold;
+    pp_iseg_yolo_v8_ui_params_t *pp = (pp_iseg_yolo_v8_ui_params_t *)params;
+    *threshold = pp->core.conf_threshold;
     return AI_ISEG_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t get_nms_threshold(void *params, float *threshold)
 {
-    *threshold = ((iseg_yolov8_pp_static_param_t *)params)->iou_threshold;
+    pp_iseg_yolo_v8_ui_params_t *pp = (pp_iseg_yolo_v8_ui_params_t *)params;
+    *threshold = pp->core.iou_threshold;
     return AI_ISEG_POSTPROCESS_ERROR_NO;
 }
 

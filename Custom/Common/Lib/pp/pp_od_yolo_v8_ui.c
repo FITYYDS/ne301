@@ -30,11 +30,14 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
-static od_pp_outBuffer_t *od_pp_buffer = NULL;
-static od_detect_t *od_detect_buffer = NULL;
-static od_yolov8_pp_static_param_t static_params = {0};
-static char **static_class_names = NULL;
-static int8_t *scratch_buffer = NULL;
+/* Per-instance parameters for YOLOv8 UI postprocess */
+typedef struct {
+    od_yolov8_pp_static_param_t core;   /* original static params, now per-instance */
+    od_pp_outBuffer_t *od_pp_buffer;    /* per-instance output buffer */
+    od_detect_t *od_detect_buffer;      /* per-instance detection buffer */
+    char **class_names;                 /* per-instance class name array */
+    int8_t *scratch_buffer;             /* per-instance scratch buffer */
+} pp_od_yolo_v8_ui_params_t;
 
 /*
 Example JSON configuration for int8 quantized model:
@@ -51,7 +54,13 @@ Example JSON configuration for int8 quantized model:
 */
 static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
 {
-    od_yolov8_pp_static_param_t *params = (od_yolov8_pp_static_param_t *)&static_params;
+    pp_od_yolo_v8_ui_params_t *pp_ctx = (pp_od_yolo_v8_ui_params_t *)hal_mem_alloc_any(sizeof(pp_od_yolo_v8_ui_params_t));
+    if (!pp_ctx) {
+        return AI_OD_POSTPROCESS_ERROR_NO;
+    }
+    memset(pp_ctx, 0, sizeof(pp_od_yolo_v8_ui_params_t));
+
+    od_yolov8_pp_static_param_t *params = &pp_ctx->core;
     
     NN_Instance_TypeDef *NN_Instance = (NN_Instance_TypeDef *)nn_inst;
     const LL_Buffer_InfoTypeDef *buffers_info = ll_aton_reloc_get_output_buffers_info(NN_Instance, 0);
@@ -82,13 +91,13 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
                 
                 cJSON *class_names = cJSON_GetObjectItemCaseSensitive(pp, "class_names");
                 if (cJSON_IsArray(class_names)) {
-                    static_class_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_classes);
+                    pp_ctx->class_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_classes);
                     for (int i = 0; i < params->nb_classes; i++) {
                         cJSON *name = cJSON_GetArrayItem(class_names, i);
                         if (cJSON_IsString(name)) {
                             uint8_t len = strlen(name->valuestring) + 1;
-                            static_class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
-                            memcpy(static_class_names[i], name->valuestring, len);
+                            pp_ctx->class_names[i] = (char *)hal_mem_alloc_any(sizeof(char) * len);
+                            memcpy(pp_ctx->class_names[i], name->valuestring, len);
                         }
                     }
                 }
@@ -118,65 +127,73 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
         }
     }
     
-    // Allocate output buffers (similar to app_postprocess pattern)
-    od_pp_buffer = (od_pp_outBuffer_t *)hal_mem_alloc_large(sizeof(od_pp_outBuffer_t) * params->nb_total_boxes);
-    od_detect_buffer = (od_detect_t *)hal_mem_alloc_large(sizeof(od_detect_t) * params->max_boxes_limit);
+    // Allocate per-instance output buffers (similar to app_postprocess pattern)
+    pp_ctx->od_pp_buffer = (od_pp_outBuffer_t *)hal_mem_alloc_large(sizeof(od_pp_outBuffer_t) * params->nb_total_boxes);
+    pp_ctx->od_detect_buffer = (od_detect_t *)hal_mem_alloc_large(sizeof(od_detect_t) * params->max_boxes_limit);
     
     // Allocate scratch buffer for int8 processing (6 values per box: x,y,w,h,conf,class)
-    scratch_buffer = (int8_t *)hal_mem_alloc_large(sizeof(int8_t) * params->nb_total_boxes * 6);
+    pp_ctx->scratch_buffer = (int8_t *)hal_mem_alloc_large(sizeof(int8_t) * params->nb_total_boxes * 6);
     
-    assert(od_pp_buffer != NULL && od_detect_buffer != NULL && scratch_buffer != NULL);
+    assert(pp_ctx->od_pp_buffer != NULL && pp_ctx->od_detect_buffer != NULL && pp_ctx->scratch_buffer != NULL);
     
     // Set scratch buffer pointer (required for int8 processing)
-    params->pScratchBuff = scratch_buffer;
+    params->pScratchBuff = pp_ctx->scratch_buffer;
     
     od_yolov8_pp_reset(params);
-    *pp_params = (void *)params;
+    *pp_params = (void *)pp_ctx;
     return AI_OD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t deinit(void *pp_params)
 {
-    od_yolov8_pp_static_param_t *params = (od_yolov8_pp_static_param_t *)pp_params;
+    pp_od_yolo_v8_ui_params_t *pp = (pp_od_yolo_v8_ui_params_t *)pp_params;
+    if (!pp) {
+        return AI_OD_POSTPROCESS_ERROR_NO;
+    }
+
+    od_yolov8_pp_static_param_t *params = &pp->core;
     
-    if (od_pp_buffer != NULL) {
-        hal_mem_free(od_pp_buffer);
-        od_pp_buffer = NULL;
+    if (pp->od_pp_buffer != NULL) {
+        hal_mem_free(pp->od_pp_buffer);
+        pp->od_pp_buffer = NULL;
     }
     
-    if (od_detect_buffer != NULL) {
-        hal_mem_free(od_detect_buffer);
-        od_detect_buffer = NULL;
+    if (pp->od_detect_buffer != NULL) {
+        hal_mem_free(pp->od_detect_buffer);
+        pp->od_detect_buffer = NULL;
     }
     
-    if (scratch_buffer != NULL) {
-        hal_mem_free(scratch_buffer);
-        scratch_buffer = NULL;
+    if (pp->scratch_buffer != NULL) {
+        hal_mem_free(pp->scratch_buffer);
+        pp->scratch_buffer = NULL;
     }
     
-    if (static_class_names != NULL) {
+    if (pp->class_names != NULL) {
         for (int i = 0; i < params->nb_classes; i++) {
-            if (static_class_names[i] != NULL) {
-                hal_mem_free(static_class_names[i]);
+            if (pp->class_names[i] != NULL) {
+                hal_mem_free(pp->class_names[i]);
             }
         }
-        hal_mem_free(static_class_names);
-        static_class_names = NULL;
+        hal_mem_free(pp->class_names);
+        pp->class_names = NULL;
     }
     
+    hal_mem_free(pp);
     return AI_OD_POSTPROCESS_ERROR_NO;
 }
 
-static void od_pp_out_t_to_pp_result_t(od_pp_out_t *pObjDetOutput, pp_result_t *result)
+static void od_pp_out_t_to_pp_result_t(od_pp_out_t *pObjDetOutput,
+                                       pp_result_t *result,
+                                       const pp_od_yolo_v8_ui_params_t *pp)
 {
     result->type = PP_TYPE_OD;
     result->is_valid = pObjDetOutput->nb_detect > 0;
     result->od.nb_detect = pObjDetOutput->nb_detect;
-    result->od.detects = od_detect_buffer;
+    result->od.detects = pp->od_detect_buffer;
     
     // Convert detection format
     for (int i = 0; i < pObjDetOutput->nb_detect; i++) {
-        // YOLOv8 outputs pixel coordinates, need to normalize to [0,1] by dividing by input size (256)
+        // YOLOv8 outputs normalized coordinates in [0,1]
         float x_center_norm = pObjDetOutput->pOutBuff[i].x_center;
         float y_center_norm = pObjDetOutput->pOutBuff[i].y_center ;
         float width_norm = pObjDetOutput->pOutBuff[i].width;
@@ -192,8 +209,10 @@ static void od_pp_out_t_to_pp_result_t(od_pp_out_t *pObjDetOutput, pp_result_t *
         result->od.detects[i].conf = MAX(0.0f, MIN(1.0f, pObjDetOutput->pOutBuff[i].conf));
         
         // Ensure class index is valid
-        if (pObjDetOutput->pOutBuff[i].class_index >= 0 && pObjDetOutput->pOutBuff[i].class_index < static_params.nb_classes) {
-            result->od.detects[i].class_name = static_class_names[pObjDetOutput->pOutBuff[i].class_index];
+        if (pObjDetOutput->pOutBuff[i].class_index >= 0 &&
+            pObjDetOutput->pOutBuff[i].class_index < pp->core.nb_classes &&
+            pp->class_names) {
+            result->od.detects[i].class_name = pp->class_names[pObjDetOutput->pOutBuff[i].class_index];
         } else {
             result->od.detects[i].class_name = "unknown";
         }
@@ -204,13 +223,14 @@ static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_pa
 {
     assert(nb_input == 1);
     int32_t error = AI_OD_POSTPROCESS_ERROR_NO;
-    od_yolov8_pp_static_param_t *params = (od_yolov8_pp_static_param_t *)pp_params;
+    pp_od_yolo_v8_ui_params_t *pp = (pp_od_yolo_v8_ui_params_t *)pp_params;
+    od_yolov8_pp_static_param_t *params = &pp->core;
     
     params->nb_detect = 0;
     memset(pResult, 0, sizeof(pp_result_t));
 
     od_pp_out_t od_pp_out;
-    od_pp_out.pOutBuff = od_pp_buffer;
+    od_pp_out.pOutBuff = pp->od_pp_buffer;
     
     od_yolov8_pp_in_centroid_t pp_input = {
         .pRaw_detections = pInput[0],  // int8 data
@@ -220,7 +240,7 @@ static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_pa
     error = od_yolov8_pp_process_int8(&pp_input, &od_pp_out, params);
     
     if (error == AI_OD_POSTPROCESS_ERROR_NO) {
-        od_pp_out_t_to_pp_result_t(&od_pp_out, (pp_result_t *)pResult);
+        od_pp_out_t_to_pp_result_t(&od_pp_out, (pp_result_t *)pResult, pp);
     }
     
     return error;
@@ -228,25 +248,29 @@ static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_pa
 
 static int32_t set_confidence_threshold(void *params, float threshold)
 {
-    ((od_yolov8_pp_static_param_t *)params)->conf_threshold = threshold;
+    pp_od_yolo_v8_ui_params_t *pp = (pp_od_yolo_v8_ui_params_t *)params;
+    pp->core.conf_threshold = threshold;
     return AI_OD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t set_nms_threshold(void *params, float threshold)
 {
-    ((od_yolov8_pp_static_param_t *)params)->iou_threshold = threshold;
+    pp_od_yolo_v8_ui_params_t *pp = (pp_od_yolo_v8_ui_params_t *)params;
+    pp->core.iou_threshold = threshold;
     return AI_OD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t get_confidence_threshold(void *params, float *threshold)
 {
-    *threshold = ((od_yolov8_pp_static_param_t *)params)->conf_threshold;
+    pp_od_yolo_v8_ui_params_t *pp = (pp_od_yolo_v8_ui_params_t *)params;
+    *threshold = pp->core.conf_threshold;
     return AI_OD_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t get_nms_threshold(void *params, float *threshold)
 {
-    *threshold = ((od_yolov8_pp_static_param_t *)params)->iou_threshold;
+    pp_od_yolo_v8_ui_params_t *pp = (pp_od_yolo_v8_ui_params_t *)params;
+    *threshold = pp->core.iou_threshold;
     return AI_OD_POSTPROCESS_ERROR_NO;
 }
 

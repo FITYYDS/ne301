@@ -7,39 +7,23 @@
 #include "common_utils.h"
 #include "generic_math.h"
 #include "debug.h"
-#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include "ll_aton_runtime.h"
 #include "ll_aton_reloc_network.h"
 #include "pp.h"
 #include "nn.h"
 #include "cJSON.h"
-#include "storage.h"
 #include "mpool.h"
 #include "camera.h"
 #include "mem_map.h"
 
 /* ==================== internal data structure ==================== */
 
-// global AI neural network module instance
-static nn_t g_nn = {0};
-// thread attribute configuration
-const osThreadAttr_t nnTask_attributes = {
-    .name = "nnTask",
-    .priority = (osPriority_t) osPriorityHigh,  // AI task priority is high
-    .stack_size = 4 * 1024,
-};
+// global mutex to serialize NPU access across instances
+static osMutexId_t g_npu_mutex = NULL;
 
-const osThreadAttr_t nnCameraTask_attributes = {
-    .name = "nnCameraTask",
-    .priority = (osPriority_t) osPriorityHigh,  // AI task priority is high
-    .stack_size = 2 * 1024,
-};
-/* ==================== internal function declaration ==================== */
-static int model_run(nn_t *nn, nn_result_t *result, bool is_callback);
-/* ==================== main process thread ==================== */
+static nn_t *g_nn_instances[NN_MAX_INSTANCES] = {NULL};
 
 static void invalidate_output_cache(nn_t *nn)
 {
@@ -55,123 +39,41 @@ static void flush_input_cache(nn_t *nn)
     }
 }
 
-static void nnProcess(void *argument)
+static void npu_mutex_acquire(void)
 {
-    nn_t *nn = (nn_t *)argument;
-    nn_result_t result;
-    LOG_DRV_INFO("nnProcess start\r\r\n");
-
-    nn->is_init = true;
-
-    while (nn->is_init) {
-        // check inference state
-        osMutexAcquire(nn->mtx_id, osWaitForever);
-        if (nn->state == NN_STATE_RUNNING) {
-            model_run(nn, &result, true);
-            osMutexRelease(nn->mtx_id);
-        } else {
-            osMutexRelease(nn->mtx_id);
-            osDelay(30);
-        }
+    if (g_npu_mutex) {
+        osMutexAcquire(g_npu_mutex, osWaitForever);
     }
+}
 
-    LOG_DRV_ERROR("nnProcess exit\r\r\n");
-
-    nn->nn_processId = NULL;
-    osThreadExit();
+static void npu_mutex_release(void)
+{
+    if (g_npu_mutex) {
+        osMutexRelease(g_npu_mutex);
+    }
 }
 
 static int nn_init(void *priv)
 {
     LOG_DRV_DEBUG("nn_init\r\r\n");
-
-    nn_t *nn = (nn_t *)priv;
-
-    // create mutex and semaphore
-    nn->mtx_id = osMutexNew(NULL);
-    nn->sem_id = osSemaphoreNew(1, 0, NULL);
-
-    if (!nn->mtx_id || !nn->sem_id) {
-        LOG_DRV_ERROR("Failed to create RTOS objects\r\r\n");
+    LL_ATON_RT_RuntimeInit();
+    memset(g_nn_instances, 0, sizeof(g_nn_instances));
+    g_npu_mutex = osMutexNew(NULL);
+    if (g_npu_mutex == NULL) {
+        LOG_DRV_ERROR("nn_init: Failed to create NPU mutex\r\r\n");
         return -1;
     }
-
-    // create process thread
-    nn->nn_processId = osThreadNew(nnProcess, nn, &nnTask_attributes);
-    if (!nn->nn_processId) {
-        LOG_DRV_ERROR("Failed to create NN process thread\r\r\n");
-        return -1;
-    }
-
-    // set initial state
-    nn->state = NN_STATE_INIT;
-    nn->is_init = true;
-    LOG_DRV_INFO("NN module initialized successfully\r\r\n");
     return 0;
 }
 
 static int nn_deinit(void *priv)
 {
-    nn_t *nn = (nn_t *)priv;
-
     LOG_DRV_DEBUG("nn_deinit\r\r\n");
-
-    // stop process thread
-    nn->is_init = false;
-    if (nn->sem_id) {
-        osSemaphoreRelease(nn->sem_id);
+    LL_ATON_RT_RuntimeDeInit();
+    if (g_npu_mutex) {
+        osMutexDelete(g_npu_mutex);
+        g_npu_mutex = NULL;
     }
-
-    if (nn->nn_processId && osThreadGetId() != nn->nn_processId) {
-        osThreadTerminate(nn->nn_processId);
-        nn->nn_processId = NULL;
-    }
-
-    // clean up RTOS objects
-    if (nn->sem_id) {
-        osSemaphoreDelete(nn->sem_id);
-        nn->sem_id = NULL;
-    }
-
-    if (nn->mtx_id) {
-        osMutexDelete(nn->mtx_id);
-        nn->mtx_id = NULL;
-    }
-
-    // reset state
-    nn->state = NN_STATE_UNINIT;
-
-    LOG_DRV_INFO("NN module deinitialized\r\r\n");
-    return 0;
-}
-
-static int nn_start(nn_t *nn)
-{
-    LOG_DRV_DEBUG("nn_start\r\r\n");
-
-    if (nn->state != NN_STATE_READY) {
-        LOG_DRV_WARN("NN not ready, current state: %d\r\r\n", nn->state);
-        return -1;
-    }
-
-    nn->state = NN_STATE_RUNNING;
-
-    LOG_DRV_INFO("NN inference started\r\r\n");
-    return 0;
-}
-
-static int nn_stop(nn_t *nn)
-{
-    LOG_DRV_DEBUG("nn_stop\r\r\n");
-
-    if (nn->state != NN_STATE_RUNNING) {
-        LOG_DRV_WARN("NN not running, current state: %d\r\r\n", nn->state);
-        return -1;
-    }
-
-    nn->state = NN_STATE_READY;
-
-    LOG_DRV_INFO("NN inference stopped\r\r\n");
     return 0;
 }
 
@@ -283,10 +185,13 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
     return 0;
 }
 
-static void update_inference_stats(uint32_t inference_time)
+static void update_inference_stats(nn_t *nn, uint32_t inference_time)
 {
-    g_nn.inference_count++;
-    g_nn.total_inference_time += inference_time;
+    if (!nn) {
+        return;
+    }
+    nn->inference_count++;
+    nn->total_inference_time += inference_time;
 }
 
 static int model_init(const uintptr_t model_ptr, nn_t *nn)
@@ -305,9 +210,6 @@ static int model_init(const uintptr_t model_ptr, nn_t *nn)
         LOG_DRV_ERROR("ll_aton_reloc_get_info failed %d\r\r\n", res);
         return -1;
     }
-
-    /* Initialize LL_ATON runtime */
-    LL_ATON_RT_RuntimeInit();
     /* Create and install an instance of the relocatable model */
     ll_aton_reloc_config config;
 
@@ -379,7 +281,6 @@ static int model_deinit(nn_t *nn)
 {
     if (nn->nn_inst) {
         LL_ATON_RT_DeInit_Network(nn->nn_inst);
-        LL_ATON_RT_RuntimeDeInit();
         hal_mem_free(nn->nn_inst);
         nn->nn_inst = NULL;
     }
@@ -412,6 +313,8 @@ static int model_deinit(nn_t *nn)
 static int model_run(nn_t *nn, nn_result_t *result, bool is_callback)
 {
     if (nn->nn_inst) {
+        // Serialize NPU access across all instances
+        npu_mutex_acquire();
         /* flush input cache */
         flush_input_cache(nn);
         /* start time */
@@ -432,99 +335,73 @@ static int model_run(nn_t *nn, nn_result_t *result, bool is_callback)
         if (nn->pp_vt && nn->pp_vt->run) {
             if (nn->pp_vt->run((void **)nn->output_buffer, nn->output_buffer_count, result, nn->pp_params, nn->nn_inst) != 0) {
                 LOG_DRV_ERROR("model_run: postprocess run failed\r\r\n");
+                npu_mutex_release();
                 return -1;
             }
             /* end time */
-            update_inference_stats(osKernelGetTickCount() - start_time);
+            update_inference_stats(nn, osKernelGetTickCount() - start_time);
             if (is_callback && nn->callback) {
                 nn->callback(result, nn->callback_user_data);
             }
         }
+        npu_mutex_release();
         return 0;
     }
     return -1;
 }
 
-static int load_model(const uintptr_t file_ptr)
+static int load_model(nn_t *nn, const uintptr_t file_ptr)
 {
     if (!file_ptr) {
         return -1;
     }
-
-    if (g_nn.state != NN_STATE_INIT) {
-        LOG_DRV_ERROR("load_model: model not unloaded\r\r\n");
-        return -1;
-    }
-
     LOG_DRV_INFO("Loading model: 0x%lx\r\r\n", file_ptr);
 
-    /* ensure a clean IO buffer state before initializing a new model */
-    g_nn.input_buffer_count = 0;
-    g_nn.output_buffer_count = 0;
-    for (uint32_t i = 0; i < NN_MAX_INPUT_BUFFER; i++) {
-        g_nn.input_buffer[i] = NULL;
-        g_nn.input_buffer_size[i] = 0;
-    }
-    for (uint32_t i = 0; i < NN_MAX_OUTPUT_BUFFER; i++) {
-        g_nn.output_buffer[i] = NULL;
-        g_nn.output_buffer_size[i] = 0;
-    }
-
     /* load model information */
-    if (load_info(file_ptr, &g_nn.model) != 0) {
+    if (load_info(file_ptr, &nn->model) != 0) {
         LOG_DRV_ERROR("load_model: load model info failed\r\r\n");
         return -1;
     }
 
     /* initialize model */
-    if (model_init(g_nn.model.model_ptr, &g_nn) != 0) {
+    if (model_init(nn->model.model_ptr, nn) != 0) {
         LOG_DRV_ERROR("load_model: model init failed\r\r\n");
         return -1;
     }
     
     /* load postprocess */
-    const pp_vtable_t *pp_vt = pp_find((const char *)g_nn.model.postprocess_type);
+    const pp_vtable_t *pp_vt = pp_find((const char *)nn->model.postprocess_type);
     if (pp_vt == NULL) {
-        LOG_DRV_ERROR("load_model: postprocess type[%s] not found\r\r\n", g_nn.model.postprocess_type);
+        LOG_DRV_ERROR("load_model: postprocess type[%s] not found\r\r\n", nn->model.postprocess_type);
         return -1;
     }
 
     /* initialize postprocess */
-    if (pp_vt->init && pp_vt->init((const char *)g_nn.model.config_ptr, &g_nn.pp_params, g_nn.nn_inst) != 0) {
+    if (pp_vt->init && pp_vt->init((const char *)nn->model.config_ptr, &nn->pp_params, nn->nn_inst) != 0) {
         LOG_DRV_ERROR("load_model: postprocess init failed\r\r\n");
         return -1;
     }
 
-    g_nn.pp_vt = pp_vt;
-    // update state
-    g_nn.state = NN_STATE_READY;
+    nn->pp_vt = pp_vt;
 
     LOG_DRV_INFO("Model loaded successfully\r\r\n");
     return 0;
 }
 
-static int unload_model(void)
+static int unload_model(nn_t *nn)
 {
-    if (g_nn.state != NN_STATE_READY) {
-        LOG_DRV_ERROR("unload_model: model has not been loaded\r\r\n");
-        return -1;
-    }
-
     LOG_DRV_INFO("Unloading model\r\r\n");
 
     // deinit postprocess
-    if (g_nn.pp_vt && g_nn.pp_vt->deinit) {
-        g_nn.pp_vt->deinit(g_nn.pp_params);
+    if (nn->pp_vt && nn->pp_vt->deinit) {
+        nn->pp_vt->deinit(nn->pp_params);
     }
-    g_nn.pp_vt = NULL;
-    g_nn.pp_params = NULL;
+    nn->pp_vt = NULL;
+    nn->pp_params = NULL;
     // unload model
-    model_deinit(&g_nn);
+    model_deinit(nn);
     // clear model information
-    memset(&g_nn.model, 0, sizeof(nn_model_info_t));
-
-    // update state
-    g_nn.state = NN_STATE_INIT;
+    memset(&nn->model, 0, sizeof(nn_model_info_t));
 
     LOG_DRV_INFO("Model unloaded successfully\r\r\n");
     return 0;
@@ -588,141 +465,293 @@ static int validate_model(const uintptr_t file_ptr)
     return NN_ERROR_OK;
 }
 
-static void nn_camera_process(void *argument)
+/* ==================== multi-instance public API implementation ==================== */
+
+static int add_new_instance(nn_handle_t handle)
 {
-    uint8_t *task_state = (uint8_t *)argument;
-    int fb_len = 0;
-    uint8_t *fb = NULL;
-    nn_result_t result;
-    device_t *camera_dev = device_find_pattern(CAMERA_DEVICE_NAME, DEV_TYPE_VIDEO);
-
-    LOG_DRV_INFO("nn_camera_process start\r\r\n");
-
-    while (*task_state == 1) {
-        fb_len = device_ioctl(camera_dev, CAM_CMD_GET_PIPE2_BUFFER, (uint8_t *)&fb, 0);
-        if (fb_len > 0) {
-            if (nn_inference_frame(fb, fb_len, &result) == 0) {
-                if (result.type == PP_TYPE_OD && result.is_valid) {
-                    LOG_SIMPLE("---------------start-----------------\r\n");
-                    LOG_SIMPLE("result.od.nb_detect: %d\r\n", result.od.nb_detect);
-                    for (size_t i = 0; i < result.od.nb_detect; i++) {
-                        LOG_SIMPLE("result.od.index: %d\r\n", i);
-                        LOG_SIMPLE("result.od.class_name: %s\r\n", result.od.detects[i].class_name);
-                        LOG_SIMPLE("result.od.confidence: %f\r\n", result.od.detects[i].conf);
-                        LOG_SIMPLE("result.od.bbox.x: %f\r\n", result.od.detects[i].x);
-                        LOG_SIMPLE("result.od.bbox.y: %f\r\n", result.od.detects[i].y);
-                        LOG_SIMPLE("result.od.bbox.width: %f\r\n", result.od.detects[i].width);
-                        LOG_SIMPLE("result.od.bbox.height: %f\r\n", result.od.detects[i].height);
-                    }
-                    LOG_SIMPLE("---------------end-----------------\r\n");
-                } else if (result.type == PP_TYPE_MPE && result.is_valid) {
-                    LOG_SIMPLE("---------------start-----------------\r\n");
-                    LOG_SIMPLE("result.mpe.nb_detect: %d\r\n", result.mpe.nb_detect);
-                    for (size_t i = 0; i < result.mpe.nb_detect; i++) {
-                        LOG_SIMPLE("result.mpe.index: %d\r\n", i);
-                        LOG_SIMPLE("result.mpe.class_name: %s\r\n", result.mpe.detects[i].class_name);
-                        LOG_SIMPLE("result.mpe.confidence: %f\r\n", result.mpe.detects[i].conf);
-                        LOG_SIMPLE("result.mpe.bbox.x: %f\r\n", result.mpe.detects[i].x);
-                        LOG_SIMPLE("result.mpe.bbox.y: %f\r\n", result.mpe.detects[i].y);
-                        LOG_SIMPLE("result.mpe.bbox.width: %f\r\n", result.mpe.detects[i].width);
-                        LOG_SIMPLE("result.mpe.bbox.height: %f\r\n", result.mpe.detects[i].height);
-                        LOG_SIMPLE("result.mpe.nb_keypoints: %d\r\n", result.mpe.detects[i].nb_keypoints);
-                        LOG_SIMPLE("result.mpe.num_connections: %d\r\n", result.mpe.detects[i].num_connections);
-                        for (size_t j = 0; j < result.mpe.detects[i].nb_keypoints; j++) {
-                            LOG_SIMPLE("result.mpe.keypoint_names: %s\r\n", result.mpe.detects[i].keypoint_names[j]);
-                            LOG_SIMPLE("result.mpe.keypoints[%d].x: %f\r\n", j, result.mpe.detects[i].keypoints[j].x);
-                            LOG_SIMPLE("result.mpe.keypoints[%d].y: %f\r\n", j, result.mpe.detects[i].keypoints[j].y);
-                            LOG_SIMPLE("result.mpe.keypoints[%d].confidence: %f\r\n", j, result.mpe.detects[i].keypoints[j].conf);
-                        }
-                    }
-                    LOG_SIMPLE("---------------end-----------------\r\n");
-                }
-            }
-            device_ioctl(camera_dev, CAM_CMD_RETURN_PIPE2_BUFFER, fb, 0);
-        }
-        osDelay(1);
+    nn_t *nn = (nn_t *)handle;
+    if (!nn) {
+        return -1;
     }
-    
-    LOG_DRV_INFO("nn_camera_process exit\r\r\n");
-    *task_state = 2;
-    osThreadExit();
+    for (int i = 0; i < NN_MAX_INSTANCES; i++) {
+        if (g_nn_instances[i] == NULL) {
+            g_nn_instances[i] = nn;
+            return 0;
+        }
+    }
+    return -1;
 }
 
-static uint8_t task_stat = 0; // 0: stop, 1: start, 2:exit
-static osThreadId_t nnCameraTask_id = NULL;
-static int nn_camera_start(void)
+static int remove_instance(nn_handle_t handle)
 {
-    int ret;
-    pipe_params_t pipe_param = {0};
-    nn_model_info_t model_info = {0};
-    device_t *camera_dev = device_find_pattern(CAMERA_DEVICE_NAME, DEV_TYPE_VIDEO);
+    nn_t *nn = (nn_t *)handle;
+    if (!nn) {
+        return -1;
+    }
+    for (int i = 0; i < NN_MAX_INSTANCES; i++) {
+        if (g_nn_instances[i] == nn) {
+            g_nn_instances[i] = NULL;
+            return 0;
+        }
+    }
+    return -1;
+}
 
-    if (camera_dev == NULL) {
-        LOG_SIMPLE("camera device not found\r\n");
+static nn_t *get_instance(int index)
+{
+    if (index < 0 || index >= NN_MAX_INSTANCES) {
+        return NULL;
+    }
+    return g_nn_instances[index];
+}
+
+nn_handle_t nn_instance_create(void)
+{
+    nn_t *nn = (nn_t *)hal_mem_alloc_fast(sizeof(nn_t));
+    if (!nn) {
+        return NULL;
+    }
+    memset(nn, 0, sizeof(nn_t));
+
+    // Create mutex
+    nn->mtx_id = osMutexNew(NULL);
+    if (nn->mtx_id == NULL) {
+        hal_mem_free(nn);
+        return NULL;
+    }
+
+    nn->state = NN_STATE_INIT;
+    // Add instance
+    add_new_instance(nn);
+
+    return nn;
+}
+
+int nn_instance_destroy(nn_handle_t handle)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn) {
         return -1;
     }
 
-    uint8_t camera_ctrl_pipe = CAMERA_CTRL_PIPE1_BIT | CAMERA_CTRL_PIPE2_BIT;
-    // uint8_t camera_ctrl_pipe = CAMERA_CTRL_PIPE2_BIT;
-    ret = device_ioctl(camera_dev, CAM_CMD_SET_PIPE_CTRL, &camera_ctrl_pipe, 0);//set pipe ctrl
-    if (ret != 0) {
-        LOG_SIMPLE("PIPE ctrl failed :%d\r\n", ret);
+    if (nn->state == NN_STATE_READY) {
+        LOG_DRV_ERROR("model is still loaded, please unload it first\r\r\n");
+        return -1;
+    }
+    // Delete mutex
+    if (nn->mtx_id) {
+        osMutexDelete(nn->mtx_id);
+        nn->mtx_id = NULL;
+    }
+
+    nn->state = NN_STATE_UNINIT;
+    // Remove instance
+    remove_instance(nn);
+
+    // Free instance memory
+    hal_mem_free(nn);
+    return 0;
+}
+
+int nn_instance_load_model(nn_handle_t handle, const uintptr_t file_ptr)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state == NN_STATE_READY) {
+        LOG_DRV_ERROR("model already loaded\r\r\n");
         return -1;
     }
 
-    ret = nn_load_model(AI_DEFAULT_BASE); //test model
-    if (ret != 0) {
-        LOG_SIMPLE("nn load model failed :%d\r\n", ret);
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    if (load_model(nn, file_ptr) != 0) {
+        osMutexRelease(nn->mtx_id);
+        return -1;
+    }
+    nn->state = NN_STATE_READY;
+    osMutexRelease(nn->mtx_id);
+    return 0;
+}
+
+int nn_instance_unload_model(nn_handle_t handle)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY) {
+        LOG_DRV_ERROR("model already unloaded\r\r\n");
         return -1;
     }
 
-    nn_get_model_info(&model_info);
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    if (unload_model(nn) != 0) {
+        osMutexRelease(nn->mtx_id);
+        return -1;
+    }
+    nn->state = NN_STATE_INIT;
+    osMutexRelease(nn->mtx_id);
+    return 0;
+}
 
-    device_ioctl(camera_dev, CAM_CMD_GET_PIPE2_PARAM, (uint8_t *)&pipe_param, sizeof(pipe_params_t));
-    //if need to change pipe param
-    pipe_param.width = model_info.input_width;
-    pipe_param.height = model_info.input_height;
-    pipe_param.fps = 30;
-    pipe_param.bpp = 3;
-    pipe_param.format = DCMIPP_PIXEL_PACKER_FORMAT_RGB888_YUV444_1;
-    device_ioctl(camera_dev, CAM_CMD_SET_PIPE2_PARAM, (uint8_t *)&pipe_param, sizeof(pipe_params_t));
-    ret = device_start(camera_dev);
-    if (ret != 0) {
-        LOG_SIMPLE("camera start failed :%d\r\n", ret);
+int nn_instance_get_model_input_buffer(nn_handle_t handle, uint8_t **buffer, uint32_t *size)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY || !buffer || !size) {
+        LOG_DRV_ERROR("model not loaded or buffer or size is NULL\r\r\n");
         return -1;
     }
 
-    task_stat = 1;
-    nnCameraTask_id = osThreadNew(nn_camera_process, &task_stat, &nnCameraTask_attributes);
-    if (nnCameraTask_id == NULL) {
-        LOG_SIMPLE("nn camera task create failed\r\n");
-        return -1;
-    }
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    *buffer = (uint8_t *)nn->input_buffer[0];
+    *size = nn->input_buffer_size[0];
+    osMutexRelease(nn->mtx_id);
 
     return 0;
 }
 
-static int nn_camera_stop(void)
+int nn_instance_get_model_output_buffer(nn_handle_t handle, uint8_t **buffer, uint32_t *size)
 {
-    int ret;
-    device_t *camera_dev = device_find_pattern(CAMERA_DEVICE_NAME, DEV_TYPE_VIDEO);
-    if (camera_dev == NULL) {
-        LOG_SIMPLE("camera device not found\r\n");
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY || !buffer || !size) {
+        LOG_DRV_ERROR("model not loaded or buffer or size is NULL\r\r\n");
         return -1;
     }
 
-    if (nnCameraTask_id) {
-        task_stat = 0;
-        while (task_stat != 2) { osDelay(1);}
-        // osDelay(100);
-        ret = device_stop(camera_dev);
-        if (ret != 0) {
-            LOG_SIMPLE("camera stop failed :%d\r\n", ret);
-        }
-        osThreadTerminate(nnCameraTask_id);
-        nnCameraTask_id = NULL;
-    }   
-    nn_unload_model();
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    *buffer = (uint8_t *)nn->output_buffer[0];
+    *size = nn->output_buffer_size[0];
+    osMutexRelease(nn->mtx_id);
+
+    return 0;
+}
+
+int nn_instance_get_model_info(nn_handle_t handle, nn_model_info_t *info)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY || !info) {
+        LOG_DRV_ERROR("model not loaded or info is NULL\r\r\n");
+        return -1;
+    }
+
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    memcpy(info, &nn->model, sizeof(nn_model_info_t));
+    osMutexRelease(nn->mtx_id);
+
+    return 0;
+}
+
+int nn_instance_inference_frame(nn_handle_t handle, uint8_t *input_data, uint32_t input_size, nn_result_t *result)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY || !input_data || !result) {
+        LOG_DRV_ERROR("model not loaded or input_data or result is NULL\r\r\n");
+        return -1;
+    }
+
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    if (nn->input_buffer_size[0] != input_size) {
+        LOG_DRV_ERROR("input_buffer_size[0] != input_size\r\r\n");
+        osMutexRelease(nn->mtx_id);
+        return -1;
+    }
+    memcpy(nn->input_buffer[0], input_data, input_size);
+    int ret = model_run(nn, result, false);
+    osMutexRelease(nn->mtx_id);
+
+    return ret;
+}
+
+int nn_instance_set_confidence_threshold(nn_handle_t handle, float threshold)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY) {
+        LOG_DRV_ERROR("model not loaded\r\r\n");
+        return -1;
+    }
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    if (nn->pp_vt && nn->pp_vt->set_confidence_threshold) {
+        nn->pp_vt->set_confidence_threshold(nn->pp_params, threshold);
+    }
+    osMutexRelease(nn->mtx_id);
+
+    return 0;
+}
+
+int nn_instance_get_confidence_threshold(nn_handle_t handle, float *threshold)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY || !threshold) {
+        LOG_DRV_ERROR("model not loaded or threshold is NULL\r\r\n");
+        return -1;
+    }
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    if (nn->pp_vt && nn->pp_vt->get_confidence_threshold) {
+        nn->pp_vt->get_confidence_threshold(nn->pp_params, threshold);
+    }
+    osMutexRelease(nn->mtx_id);
+
+    return 0;
+}
+
+int nn_instance_set_nms_threshold(nn_handle_t handle, float threshold)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY) {
+        LOG_DRV_ERROR("model not loaded\r\r\n");
+        return -1;
+    }
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    if (nn->pp_vt && nn->pp_vt->set_nms_threshold) {
+        nn->pp_vt->set_nms_threshold(nn->pp_params, threshold);
+    }
+    osMutexRelease(nn->mtx_id);
+
+    return 0;
+}
+
+int nn_instance_get_nms_threshold(nn_handle_t handle, float *threshold)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY || !threshold) {
+        LOG_DRV_ERROR("model not loaded or threshold is NULL\r\r\n");
+        return -1;
+    }
+    osMutexAcquire(nn->mtx_id, osWaitForever);
+    if (nn->pp_vt && nn->pp_vt->get_nms_threshold) {
+        nn->pp_vt->get_nms_threshold(nn->pp_params, threshold);
+    }
+    osMutexRelease(nn->mtx_id);
+
+    return 0;
+}
+
+nn_state_t nn_instance_get_state(nn_handle_t handle)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn) {
+        return NN_STATE_UNINIT;
+    }
+    return nn->state;
+}
+
+int nn_instance_get_inference_stats(nn_handle_t handle, uint32_t *count, uint32_t *total_time)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn || nn->state != NN_STATE_READY || !count || !total_time) {
+        LOG_DRV_ERROR("model not loaded or count or total_time is NULL\r\r\n");
+        return -1;
+    }
+
+    *count = nn->inference_count;
+    *total_time = nn->total_inference_time;
+
+    return 0;
+}
+
+int nn_instance_set_callback(nn_handle_t handle, nn_callback_t callback, void *user_data)
+{
+    nn_t *nn = (nn_t *)handle;
+    if (!nn) {
+        return -1;
+    }
+    nn->callback = callback;
+    nn->callback_user_data = user_data;
     return 0;
 }
 
@@ -906,104 +935,100 @@ cJSON* nn_create_ai_result_json(const nn_result_t* ai_result) {
 
 static int nn_cmd(int argc, char *argv[])
 {
-    if (argc < 2) {
-        LOG_SIMPLE("Usage: nn <command> [args...]\r\n");
+    if (argc < 3) {
+        LOG_SIMPLE("Usage: nn <model_index> <command> [args...]\r\n");
         LOG_SIMPLE("Commands:\r\n");
+        LOG_SIMPLE("  create          - Create a new NN instance\r\n");
+        LOG_SIMPLE("  destroy         - Destroy a NN instance\r\n");
         LOG_SIMPLE("  status          - Show NN status\r\n");
         LOG_SIMPLE("  load <path>     - Load model from path\r\n");
         LOG_SIMPLE("  unload          - Unload current model\r\n");
-        LOG_SIMPLE("  start           - Start inference\r\n");
-        LOG_SIMPLE("  stop            - Stop inference\r\n");
         LOG_SIMPLE("  stats           - Show inference statistics\r\n");
-        LOG_SIMPLE("  validate        - Validate model file\r\n");
-        LOG_SIMPLE("  camera          - sample : camera inference\r\n");
+        LOG_SIMPLE("  set <key> <value> - Set configuration\r\n");
         return 0;
     }
 
-    const char *cmd = argv[1];
+    const char *model_index = argv[1];
+    const char *cmd = argv[2];
+
+    if (strcmp(cmd, "create") == 0) {
+        // create a new NN instance
+        nn_handle_t handle = nn_instance_create();
+        if (handle) {
+            LOG_SIMPLE("NN instance created successfully\r\n");
+        } else {
+            LOG_SIMPLE("Failed to create NN instance\r\n");
+        }
+        return 0;
+    } 
+    nn_t *nn = get_instance(atoi(model_index));
+    if (!nn) {
+        LOG_SIMPLE("Error: Invalid model index\r\n");
+        return -1;
+    }
 
     if (strcmp(cmd, "status") == 0) {
         // show state
-        nn_state_t state = nn_get_state();
+        nn_state_t state = nn_instance_get_state(nn);
         const char *state_str[] = {"UNINIT", "INIT", "READY", "RUNNING", "ERROR"};
         LOG_SIMPLE("NN Status: %s\r\n", state_str[state]);
 
-        if (g_nn.model.name[0] != '\0') {
-            LOG_SIMPLE("Current Model: %s (v%s)\r\n", g_nn.model.name, g_nn.model.version);
-            LOG_SIMPLE("Model Description: %s\r\n", g_nn.model.description);
-            LOG_SIMPLE("Model Author: %s\r\n", g_nn.model.author);
-            LOG_SIMPLE("Model Created At: %s\r\n", g_nn.model.created_at);
-            LOG_SIMPLE("Model Color Format: %s\r\n", g_nn.model.color_format);
-            LOG_SIMPLE("Model Input Data Type: %s\r\n", g_nn.model.input_data_type);
-            LOG_SIMPLE("Model Output Data Type: %s\r\n", g_nn.model.output_data_type);
-            LOG_SIMPLE("Input: %lux%lux%lu\r\n",
-                       g_nn.model.input_width, g_nn.model.input_height,
-                       g_nn.model.input_channels);
+        if (nn->model.name[0] != '\0') {
+            LOG_SIMPLE("Current Model: %s (v%s)\r\n", nn->model.name, nn->model.version);
+            LOG_SIMPLE("Model Description: %s\r\n", nn->model.description);
+            LOG_SIMPLE("Model Author: %s\r\n", nn->model.author);
+            LOG_SIMPLE("Model Created At: %s\r\n", nn->model.created_at);
+            LOG_SIMPLE("Model Color Format: %s\r\n", nn->model.color_format);
+            LOG_SIMPLE("Model Input Data Type: %s\r\n", nn->model.input_data_type);
+            LOG_SIMPLE("Model Output Data Type: %s\r\n", nn->model.output_data_type);
+            LOG_SIMPLE("Input: %lux%lux%lu\r\n", nn->model.input_width, nn->model.input_height, nn->model.input_channels);
         }
 
         LOG_SIMPLE("Inference Count: %ld, Total Time: %ld ms, Average Time: %ld ms\r\n",
-                   g_nn.inference_count, g_nn.total_inference_time,
-                   g_nn.inference_count > 0 ? g_nn.total_inference_time / g_nn.inference_count : 0);
+                   nn->inference_count, nn->total_inference_time,
+                   nn->inference_count > 0 ? nn->total_inference_time / nn->inference_count : 0);
 
     } else if (strcmp(cmd, "load") == 0) {
         // load model
-        if (argc < 2) {
+        if (argc < 4) {
             LOG_SIMPLE("Error: Please specify model path\r\n");
             return -1;
         }
-        uintptr_t model_ptr = strtoul(argv[2], NULL, 16);
+        uintptr_t model_ptr = strtoul(argv[3], NULL, 16);
         if (model_ptr < AI_DEFAULT_BASE || model_ptr > AI_3_END) {
             LOG_SIMPLE("Error: model path is not in [0x%lx, 0x%lx]\r\n", AI_DEFAULT_BASE, AI_3_END);
             return -1;
         }
-        int ret = nn_load_model(model_ptr);
+        int ret = nn_instance_load_model(nn, model_ptr);
         if (ret == 0) {
-            LOG_SIMPLE("Model loaded successfully: %s\r\n", argv[1]);
+            LOG_SIMPLE("Model loaded successfully: %s\r\n", argv[3]);
         } else {
             LOG_SIMPLE("Failed to load model: %d\r\n", ret);
         }
 
     } else if (strcmp(cmd, "unload") == 0) {
         // unload model
-        int ret = nn_unload_model();
+        int ret = nn_instance_unload_model(nn);
         if (ret == 0) {
             LOG_SIMPLE("Model unloaded successfully\r\n");
         } else {
             LOG_SIMPLE("Failed to unload model: %d\r\n", ret);
         }
 
-    } else if (strcmp(cmd, "start") == 0) {
-        // start inference
-        int ret = nn_start_inference();
-        if (ret == 0) {
-            LOG_SIMPLE("Inference started\r\n");
-        } else {
-            LOG_SIMPLE("Failed to start inference: %d\r\n", ret);
-        }
-
-    } else if (strcmp(cmd, "stop") == 0) {
-        // stop inference
-        int ret = nn_stop_inference();
-        if (ret == 0) {
-            LOG_SIMPLE("Inference stopped\r\n");
-        } else {
-            LOG_SIMPLE("Failed to stop inference: %d\r\n", ret);
-        }
-
     } else if (strcmp(cmd, "set") == 0) {
         // set configuration
-        if (argc < 3) {
+        if (argc < 5) {
             LOG_SIMPLE("Error: Please specify key and value\r\n");
             return -1;
         }
 
-        const char *key = argv[2];
-        const char *value = argv[3];
+        const char *key = argv[3];
+        const char *value = argv[4];
 
         if (strcmp(key, "confidence") == 0) {
-            nn_set_confidence_threshold(atof(value));
+            nn_instance_set_confidence_threshold(nn, atof(value));
         } else if (strcmp(key, "nms") == 0) {
-            nn_set_nms_threshold(atof(value));
+            nn_instance_set_nms_threshold(nn, atof(value));
         } else {
             LOG_SIMPLE("Unknown configuration key: %s\r\n", key);
             return -1;
@@ -1012,7 +1037,7 @@ static int nn_cmd(int argc, char *argv[])
     } else if (strcmp(cmd, "stats") == 0) {
         // show statistics
         uint32_t count, total_time;
-        if (nn_get_inference_stats(&count, &total_time) == 0) {
+        if (nn_instance_get_inference_stats(nn, &count, &total_time) == 0) {
             LOG_SIMPLE("Inference Statistics:\r\n");
             LOG_SIMPLE("  Total Inferences: %lu\r\n", count);
             LOG_SIMPLE("  Total Time: %lu ms\r\n", total_time);
@@ -1020,31 +1045,13 @@ static int nn_cmd(int argc, char *argv[])
                 LOG_SIMPLE("  Average Time: %.2f ms\r\n", (float)total_time / count);
             }
         }
-
-    } else if (strcmp(cmd, "validate") == 0) {
-        // validate model file
-        if (argc < 3) {
-            LOG_SIMPLE("Error: Please specify model path\r\n");
-            return -1;
-        }
-        uintptr_t model_ptr = strtoul(argv[2], NULL, 16);
-        int ret = validate_model(model_ptr);
+    } else if (strcmp(cmd, "destroy") == 0) {
+        // destroy a NN instance
+        int ret = nn_instance_destroy(nn);
         if (ret == 0) {
-            LOG_SIMPLE("Model file is valid\r\n");
+            LOG_SIMPLE("NN instance destroyed successfully\r\n");
         } else {
-            LOG_SIMPLE("Model file is invalid: %d\r\n", ret);
-        }
-
-    } else if (strcmp(cmd, "camera") == 0) {
-        // camera inference
-        if (argc < 3) {
-            LOG_SIMPLE("Error: Please specify start or stop\r\n");
-            return -1;
-        }
-        if (strcmp(argv[2], "start") == 0) {
-            nn_camera_start();
-        } else if (strcmp(argv[2], "stop") == 0) {
-            nn_camera_stop();
+            LOG_SIMPLE("Failed to destroy NN instance: %d\r\n", ret);
         }
     }
 
@@ -1074,262 +1081,165 @@ void nn_register(void)
         .ioctl = NULL
     };
 
-    memset(&g_nn, 0, sizeof(g_nn));
-
     // create device instance
     device_t *dev = hal_mem_alloc_fast(sizeof(device_t));
-    g_nn.dev = dev;
 
     // set device information
-    strcpy(dev->name, "nn");
+    strcpy(dev->name, NN_DEVICE_NAME);
     dev->type = DEV_TYPE_AI;  // use AI device type
     dev->ops = &nn_ops;
-    dev->priv_data = &g_nn;
+    dev->priv_data = NULL;
 
     // register device
-    device_register(g_nn.dev);
+    device_register(dev);
 
     // register command
-    driver_cmd_register_callback("nn", nn_cmd_register);
+    driver_cmd_register_callback(NN_DEVICE_NAME, nn_cmd_register);
 
     LOG_DRV_INFO("NN module registered successfully\r\r\n");
 }
 
 void nn_unregister(void)
 {
-    if (g_nn.dev) {
-        device_unregister(g_nn.dev);
-        hal_mem_free(g_nn.dev);
-        g_nn.dev = NULL;
+    device_t *dev = device_find_pattern(NN_DEVICE_NAME, DEV_TYPE_AI);
+    if (dev) {
+        device_unregister(dev);
+        hal_mem_free(dev);
     }
 
     LOG_DRV_INFO("NN module unregistered\r\r\n");
 }
 
+
+/* ==================== single-instance API implementation ==================== */
+static nn_handle_t g_nn_single_instance = NULL;
+
 int nn_load_model(const uintptr_t file_ptr)
 {
-    if (!g_nn.is_init) {
-        return -1;
+    if (!g_nn_single_instance) {
+        g_nn_single_instance = nn_instance_create();
     }
-
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    int ret = load_model(file_ptr);
-    osMutexRelease(g_nn.mtx_id);
-
-    return ret;
+    return nn_instance_load_model(g_nn_single_instance, file_ptr);
 }
 
 int nn_unload_model(void)
 {
-    if (!g_nn.is_init) {
+    if (!g_nn_single_instance) {
         return -1;
     }
-
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    int ret = unload_model();
-    osMutexRelease(g_nn.mtx_id);
-
-    return ret;
-}
-
-int nn_get_model_info(nn_model_info_t *info)
-{
-    if (!g_nn.is_init || !info) {
-        return -1;
-    }
-
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    memcpy(info, &g_nn.model, sizeof(nn_model_info_t));
-    osMutexRelease(g_nn.mtx_id);
-
-    return 0;
+    return nn_instance_unload_model(g_nn_single_instance);
 }
 
 int nn_get_model_input_buffer(uint8_t **buffer, uint32_t *size)
 {
-    if (!g_nn.is_init || !buffer || !size) {
+    if (!g_nn_single_instance) {
         return -1;
     }
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    *buffer = (uint8_t *)g_nn.input_buffer[0];
-    *size = g_nn.input_buffer_size[0];
-    osMutexRelease(g_nn.mtx_id);
+    return nn_instance_get_model_input_buffer(g_nn_single_instance, buffer, size);
+}
 
-    return 0;
+int nn_get_model_output_buffer(uint8_t **buffer, uint32_t *size)
+{
+    if (!g_nn_single_instance) {
+        return -1;
+    }
+    return nn_instance_get_model_output_buffer(g_nn_single_instance, buffer, size);
+}
+
+int nn_get_model_info(nn_model_info_t *model_info)
+{
+    if (!g_nn_single_instance) {
+        return -1;
+    }
+    return nn_instance_get_model_info(g_nn_single_instance, model_info);
 }
 
 int nn_start_inference(void)
 {
-    if (!g_nn.is_init) {
+    if (!g_nn_single_instance) {
         return -1;
     }
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    int ret = nn_start(&g_nn);
-    osMutexRelease(g_nn.mtx_id);
-    return ret;
+    // Note: start/stop inference is not implemented in instance API
+    // This is a placeholder that maintains API compatibility
+    nn_t *nn = (nn_t *)g_nn_single_instance;
+    nn->state = NN_STATE_RUNNING;
+    return 0;
 }
 
 int nn_stop_inference(void)
 {
-    if (!g_nn.is_init) {
+    if (!g_nn_single_instance) {
         return -1;
     }
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    int ret = nn_stop(&g_nn);
-    osMutexRelease(g_nn.mtx_id);
-    return ret;
+    // Note: start/stop inference is not implemented in instance API
+    // This is a placeholder that maintains API compatibility
+    nn_t *nn = (nn_t *)g_nn_single_instance;
+    nn->state = NN_STATE_READY;
+    return 0;
 }
 
 int nn_inference_frame(uint8_t *input_data, uint32_t input_size, nn_result_t *result)
 {
-    if (!g_nn.is_init || !input_data || !result) {
+    if (!g_nn_single_instance) {
         return -1;
     }
-
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    // process inference
-    if (g_nn.input_buffer_size[0] != input_size) {
-        LOG_DRV_ERROR("input_buffer_size[0] != input_size\r\r\n");
-        osMutexRelease(g_nn.mtx_id);
-        return -1;
-    }
-    memcpy(g_nn.input_buffer[0], input_data, input_size);
-    int ret = 0;
-    ret = model_run(&g_nn, result, false);
-    osMutexRelease(g_nn.mtx_id);
-
-    return ret;
+    return nn_instance_inference_frame(g_nn_single_instance, input_data, input_size, result);
 }
 
 int nn_set_confidence_threshold(float threshold)
 {
-
-    if (g_nn.state != NN_STATE_RUNNING && g_nn.state != NN_STATE_READY) {
-        LOG_DRV_ERROR("NN not running or ready\r\r\n");
+    if (!g_nn_single_instance) {
         return -1;
     }
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    if (g_nn.pp_vt && g_nn.pp_vt->set_confidence_threshold) {
-        g_nn.pp_vt->set_confidence_threshold(g_nn.pp_params, threshold);
-    }
-    osMutexRelease(g_nn.mtx_id);
-
-    return 0;
+    return nn_instance_set_confidence_threshold(g_nn_single_instance, threshold);
 }
 
 int nn_get_confidence_threshold(float *threshold)
 {
-    if (g_nn.state != NN_STATE_RUNNING && g_nn.state != NN_STATE_READY) {
-        LOG_DRV_ERROR("NN not running or ready\r\r\n");
+    if (!g_nn_single_instance) {
         return -1;
     }
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    if (g_nn.pp_vt && g_nn.pp_vt->get_confidence_threshold) {
-        g_nn.pp_vt->get_confidence_threshold(g_nn.pp_params, threshold);
-    }
-    osMutexRelease(g_nn.mtx_id);
-
-    return 0;
+    return nn_instance_get_confidence_threshold(g_nn_single_instance, threshold);
 }
 
 int nn_set_nms_threshold(float threshold)
 {
-
-    if (g_nn.state != NN_STATE_RUNNING && g_nn.state != NN_STATE_READY) {
-        LOG_DRV_ERROR("NN not running or ready\r\r\n");
+    if (!g_nn_single_instance) {
         return -1;
     }
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    if (g_nn.pp_vt && g_nn.pp_vt->set_nms_threshold) {
-        g_nn.pp_vt->set_nms_threshold(g_nn.pp_params, threshold);
-    }
-    osMutexRelease(g_nn.mtx_id);
-
-    return 0;
-
+    return nn_instance_set_nms_threshold(g_nn_single_instance, threshold);
 }
 
 int nn_get_nms_threshold(float *threshold)
 {
-    if (g_nn.state != NN_STATE_RUNNING && g_nn.state != NN_STATE_READY) {
-        LOG_DRV_ERROR("NN not running or ready\r\r\n");
+    if (!g_nn_single_instance) {
         return -1;
     }
-    osMutexAcquire(g_nn.mtx_id, osWaitForever);
-    if (g_nn.pp_vt && g_nn.pp_vt->get_nms_threshold) {
-        g_nn.pp_vt->get_nms_threshold(g_nn.pp_params, threshold);
-    }
-    osMutexRelease(g_nn.mtx_id);
-
-    return 0;
+    return nn_instance_get_nms_threshold(g_nn_single_instance, threshold);
 }
 
 nn_state_t nn_get_state(void)
 {
-    return g_nn.state;
+    if (!g_nn_single_instance) {
+        return NN_STATE_UNINIT;
+    }
+    return nn_instance_get_state(g_nn_single_instance);
 }
 
 int nn_get_inference_stats(uint32_t *count, uint32_t *total_time)
 {
-    if (!count || !total_time) {
+    if (!g_nn_single_instance) {
         return -1;
     }
-
-    *count = g_nn.inference_count;
-    *total_time = g_nn.total_inference_time;
-
-    return 0;
+    return nn_instance_get_inference_stats(g_nn_single_instance, count, total_time);
 }
-
 
 int nn_set_callback(nn_callback_t callback, void *user_data)
 {
-    g_nn.callback = callback;
-    g_nn.callback_user_data = user_data;
-    return 0;
-}
-
-int nn_update_model(const uintptr_t file_ptr)
-{
-    if (!file_ptr) {
+    if (!g_nn_single_instance) {
         return -1;
     }
-
-    LOG_DRV_INFO("Updating model to: 0x%lx\r\r\n", file_ptr);
-
-    // validate new model
-    if (validate_model(file_ptr) != 0) {
-        LOG_DRV_ERROR("New model validation failed\r\r\n");
-        return -1;
-    }
-
-    // stop current inference
-    nn_state_t state = g_nn.state;
-    if (state == NN_STATE_RUNNING) {
-        nn_stop_inference();
-    }
-
-    // unload current model
-    int ret = nn_unload_model();
-    if (ret != 0) {
-        LOG_DRV_ERROR("Failed to unload current model\r\r\n");
-        return ret;
-    }
-
-    // load new model
-    ret = nn_load_model(file_ptr);
-    if (ret != 0) {
-        LOG_DRV_ERROR("Failed to load new model\r\r\n");
-        return ret;
-    }
-
-    // start inference
-    if (state == NN_STATE_RUNNING) {
-        nn_start_inference();
-    }
-
-    LOG_DRV_INFO("Model updated successfully\r\r\n");
-    return 0;
+    return nn_instance_set_callback(g_nn_single_instance, callback, user_data);
 }
 
 int nn_validate_model(const uintptr_t file_ptr)

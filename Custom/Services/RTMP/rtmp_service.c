@@ -103,6 +103,8 @@ typedef struct {
     
     // Timestamp
     uint32_t stream_start_time;
+    uint64_t first_frame_timestamp;      // First frame's encoder timestamp (for relative DTS)
+    aicam_bool_t first_frame_received;   // Flag to track if first frame timestamp is captured
     
     // Async send queue
     rtmp_send_queue_t send_queue;
@@ -283,7 +285,8 @@ static aicam_result_t send_queue_push(rtmp_send_queue_t *queue, const video_hub_
     // Copy frame data
     memcpy(entry->data, frame->data, frame->size);
     entry->size = frame->size;
-    entry->timestamp_ms = (uint32_t)(rtc_get_uptime_ms());
+    // timestamp_ms will be calculated at send time (not at enqueue time)
+    entry->timestamp_ms = 0;
     entry->is_keyframe = frame->is_keyframe;
     entry->valid = AICAM_TRUE;
     
@@ -424,14 +427,15 @@ static void rtmp_send_task(void *argument)
             }
         }
         
-        // Send frame - measure actual send time
+        // Send frame - use send time as timestamp (ensures monotonic DTS even with dropped frames)
         uint32_t send_start = osKernelGetTickCount();
+        uint32_t timestamp_ms = send_start - g_rtmp_ctx.stream_start_time;
         int ret = rtmp_publisher_send_video_frame(
             g_rtmp_ctx.publisher,
             frame.data,
             frame.size,
             frame.is_keyframe,
-            frame.timestamp_ms
+            timestamp_ms
         );
         uint32_t send_time = osKernelGetTickCount() - send_start;
         
@@ -564,8 +568,8 @@ static aicam_result_t rtmp_on_frame(const video_hub_frame_t *frame, void *user_d
         }
     }
     
-    // Send frame directly
-    uint32_t timestamp = frame->timestamp - g_rtmp_ctx.stream_start_time;
+    // Send frame directly - use send time as timestamp (ensures monotonic DTS)
+    uint32_t timestamp = osKernelGetTickCount() - g_rtmp_ctx.stream_start_time;
     int ret = rtmp_publisher_send_video_frame(
         g_rtmp_ctx.publisher,
         frame->data,
@@ -623,6 +627,7 @@ static aicam_result_t try_reconnect(void)
         g_rtmp_ctx.stream_state = RTMP_STREAM_STATE_STREAMING;
         g_rtmp_ctx.reconnect_attempts = 0;
         g_rtmp_ctx.sps_pps_sent = AICAM_FALSE;  // need to resend SPS/PPS
+        g_rtmp_ctx.stream_start_time = osKernelGetTickCount();  // reset timestamp baseline for new stream
         notify_event(RTMP_EVENT_CONNECTED, 0, NULL);
         g_rtmp_ctx.stats.reconnect_count++;
         return AICAM_OK;
@@ -826,18 +831,21 @@ aicam_result_t rtmp_service_start_stream(void)
     rtmp_publisher_get_default_config(&pub_config);
     strncpy(pub_config.url, full_url, sizeof(pub_config.url) - 1);
     
-    // Get actual camera configuration
-    camera_config_t camera_config;
-    aicam_result_t camera_result = device_service_camera_get_config(&camera_config);
-    if (camera_result == AICAM_OK) {
-        pub_config.width = camera_config.width;
-        pub_config.height = camera_config.height;
-        pub_config.fps = camera_config.fps;
-        LOG_SVC_INFO("Using camera config: %dx%d@%dfps", 
-                     pub_config.width, pub_config.height, pub_config.fps);
-    } else {
-        LOG_SVC_WARN("Failed to get camera config, using default: %d", camera_result);
+    // Get actual camera configuration from pipe1 param
+    pipe_params_t pipe_param = {0};
+    device_t *camera_device = device_find_pattern(CAMERA_DEVICE_NAME, DEV_TYPE_VIDEO);
+    if (camera_device) {
+        aicam_result_t pipe_result = device_ioctl(camera_device, CAM_CMD_GET_PIPE1_PARAM, 
+                                                  (uint8_t *)&pipe_param, sizeof(pipe_params_t));
+        if (pipe_result == AICAM_OK) {
+            pub_config.width = pipe_param.width;
+            pub_config.height = pipe_param.height;
+            pub_config.fps = pipe_param.fps;
+        }
     }
+    LOG_SVC_INFO("Creating RTMP publisher with config: %dx%d@%dfps", 
+                 pub_config.width, pub_config.height, pub_config.fps);
+
 
     g_rtmp_ctx.publisher = rtmp_publisher_create(&pub_config);
     if (!g_rtmp_ctx.publisher) {
@@ -935,6 +943,8 @@ aicam_result_t rtmp_service_start_stream(void)
     g_rtmp_ctx.last_reconnect_time = 0;
     g_rtmp_ctx.pending_reconnect = AICAM_FALSE;
     g_rtmp_ctx.stream_start_time = osKernelGetTickCount();
+    g_rtmp_ctx.first_frame_timestamp = 0;
+    g_rtmp_ctx.first_frame_received = AICAM_FALSE;
     memset(&g_rtmp_ctx.stats, 0, sizeof(rtmp_service_stats_t));
     g_rtmp_ctx.stats.stream_start_time = g_rtmp_ctx.stream_start_time;
 

@@ -2,15 +2,21 @@ import * as React from "preact/compat"
 import { createPortal } from 'preact/compat'
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'preact/hooks'
 import { cn } from "@/lib/utils"
+import { Dialog, DialogContent } from './dialog'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 interface TooltipContextValue {
   open: boolean
   setOpen: (open: boolean) => void
+  dialogOpen: boolean
+  setDialogOpen: (open: boolean) => void
   triggerRef: React.RefObject<HTMLElement>
   contentRef: React.RefObject<HTMLDivElement>
   side: 'top' | 'bottom' | 'left' | 'right'
   setSide: (side: 'top' | 'bottom' | 'left' | 'right') => void
   sideOffset: number
+  isMobile: boolean
+  mbEnhance: boolean
 }
 
 const TooltipContext = React.createContext<TooltipContextValue | null>(null)
@@ -26,15 +32,18 @@ function useTooltipContext() {
 function Tooltip({
   delayDuration = 0,
   side: defaultSide = 'top',
+  mbEnhance = false,
   children,
   ...props
-}: React.ComponentProps<'div'> & { delayDuration?: number; side?: 'top' | 'bottom' | 'left' | 'right' }) {
+}: React.ComponentProps<'div'> & { delayDuration?: number; side?: 'top' | 'bottom' | 'left' | 'right'; mbEnhance?: boolean }) {
   const [open, setOpen] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [side, setSide] = useState<'top' | 'bottom' | 'left' | 'right'>(defaultSide)
   const [sideOffset] = useState(0)
   const triggerRef = useRef<HTMLElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const timeoutRef = useRef<NodeJS.Timeout>()
+  const isMobile = useIsMobile()
 
   const handleOpenChange = useCallback((newOpen: boolean) => {
     if (delayDuration > 0 && newOpen) {
@@ -51,12 +60,16 @@ function Tooltip({
   const contextValue = useMemo<TooltipContextValue>(() => ({
     open,
     setOpen: handleOpenChange,
+    dialogOpen,
+    setDialogOpen,
     triggerRef,
     contentRef,
     side,
     setSide,
-    sideOffset
-  }), [open, handleOpenChange, side, setSide, sideOffset])
+    sideOffset,
+    isMobile,
+    mbEnhance
+  }), [open, handleOpenChange, dialogOpen, setDialogOpen, side, setSide, sideOffset, isMobile, mbEnhance])
 
   return (
     <TooltipContext.Provider value={contextValue}>
@@ -75,12 +88,33 @@ function TooltipTrigger({
   asChild = false,
   ...props
 }: React.ComponentProps<'div'> & { asChild?: boolean }) {
-  const { setOpen, triggerRef } = useTooltipContext()
+  const { setOpen, setDialogOpen, isMobile, mbEnhance, triggerRef } = useTooltipContext()
 
-  const handleMouseEnter = () => setOpen(true)
-  const handleMouseLeave = () => setOpen(false)
-  const handleFocus = () => setOpen(true)
-  const handleBlur = () => setOpen(false)
+  const handleMouseEnter = () => {
+    if (!isMobile || !mbEnhance) {
+      setOpen(true)
+    }
+  }
+  const handleMouseLeave = () => {
+    if (!isMobile || !mbEnhance) {
+      setOpen(false)
+    }
+  }
+  const handleFocus = () => {
+    if (!isMobile || !mbEnhance) {
+      setOpen(true)
+    }
+  }
+  const handleBlur = () => {
+    if (!isMobile || !mbEnhance) {
+      setOpen(false)
+    }
+  }
+  const handleClick = () => {
+    if (isMobile && mbEnhance) {
+      setDialogOpen(true)
+    }
+  }
 
   if (asChild && React.isValidElement(children)) {
     return React.cloneElement(children as React.ReactElement<any>, {
@@ -89,6 +123,7 @@ function TooltipTrigger({
       onMouseLeave: handleMouseLeave,
       onFocus: handleFocus,
       onBlur: handleBlur,
+      onClick: handleClick,
       ...props
     })
   }
@@ -101,6 +136,7 @@ function TooltipTrigger({
       onMouseLeave={handleMouseLeave}
       onFocus={handleFocus}
       onBlur={handleBlur}
+      onClick={handleClick}
       {...props}
     >
       {children}
@@ -114,9 +150,24 @@ function TooltipContent({
   children,
   ...props
 }: React.ComponentProps<'div'> & { sideOffset?: number }) {
-  const { open, triggerRef, contentRef, side, setSide } = useTooltipContext()
+  const { open, dialogOpen, setDialogOpen, triggerRef, contentRef, side, setSide, isMobile, mbEnhance } = useTooltipContext()
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [arrowColor, setArrowColor] = useState<string>('rgba(0,0,0,0.9)')
+
+  // mobile display Dialog
+  if (isMobile && mbEnhance && dialogOpen) {
+    return (
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+
+        <DialogContent className="max-w-md" showCloseButton>
+          <div className="text-sm pt-8">{children}</div>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  // desktop display Tooltip
+  if (!open) return null
 
   const updatePosition = useCallback(() => {
     // if (!triggerRef.current || !contentRef.current) return
@@ -214,7 +265,6 @@ function TooltipContent({
     }
     return undefined
   }, [open, updatePosition])
-  if (!open) return null
 
   const content = (
     <div

@@ -27,8 +27,10 @@
     * 3. This notice may not be removed or altered from any source distribution.
     *
   ******************************************************************************/
+#include <stdint.h>
 #include <string.h>
 #include "main.h"
+#include "misc.h"
 #include "sl_wifi_callback_framework.h"
 #include "sl_net_wifi_types.h"
 #include "sl_wifi.h"
@@ -43,6 +45,7 @@
 #include <errno.h>  // For ENOBUFS
 #include "mem.h"
 #include "storage.h"
+#include "crc.h"
 
 
 /******************************************************
@@ -103,7 +106,9 @@ static const sl_wifi_device_configuration_t transmit_test_configuration = {
                    .config_feature_bit_map     = SL_SI91X_FEAT_SLEEP_GPIO_SEL_BITMAP }
 };
 
-int wifi_ant_flag = 0;
+static int wifi_ant_flag = 0;
+static int wifi_update_flag = 0;
+static uint32_t wifi_update_times = 0;
 const sl_wifi_data_rate_t rate               = SL_WIFI_DATA_RATE_6;
 const sl_si91x_request_tx_test_info_t default_tx_test_info = {
   .enable      = 1,
@@ -476,6 +481,170 @@ static int firmware_upgrade_from_file(const char *file_path)
     return -1;
 }
 
+static int firmware_upgrade_from_flash(void)
+{
+    flash_header_t *flash_header;
+    fwreq_t *fw_header;
+    const uint8_t *flash_addr;
+    uint32_t calculated_crc;
+    uint32_t total_chunks;
+    uint32_t remaining_bytes;
+    uint32_t progress_percent = 0;
+    uint32_t last_reported_percent = 0;
+    int32_t status = SL_STATUS_OK;
+    uint32_t total_size;
+    uint32_t crc_data_size;
+    const uint8_t *crc_data_ptr;
+
+    printf("\n[FW UPGRADE] Starting firmware upgrade from flash\r\n");
+
+    // Direct memory access via memory mapping
+    flash_addr = (const uint8_t *)WIFI_FLASH_BASE_ADDR;
+    
+    printf("[FLASH] WiFi FW base address: 0x%08lX\r\n", (unsigned long)WIFI_FLASH_BASE_ADDR);
+
+    // Step 1: Read flash header (direct memory access)
+    flash_header = (flash_header_t *)flash_addr;
+
+    printf("[FLASH HEADER] Valid flags: 0x%08lX, Total size: %lu, CRC: 0x%08lX\r\n",
+           (unsigned long)flash_header->valid_flags,
+           (unsigned long)flash_header->fw_total_size,
+           (unsigned long)flash_header->fw_crc);
+
+    // Step 2: Check if flash header is valid
+    if (flash_header->valid_flags != WIFI_FLASH_VALID_FLAGS) {
+        printf("[ERROR] Invalid flash header flags: 0x%08lX (expected: 0x%08lX)\r\n",
+               (unsigned long)flash_header->valid_flags,
+               (unsigned long)WIFI_FLASH_VALID_FLAGS);
+        return -1;
+    }
+
+    // Step 3: Validate total size
+    if (flash_header->fw_total_size == 0 || flash_header->fw_total_size > (4 * 1024 * 1024)) {
+        printf("[ERROR] Invalid firmware total size: %lu\r\n", flash_header->fw_total_size);
+        return -1;
+    }
+
+    // Step 4: Read WiFi firmware header (direct memory access, after WiFi flash header)
+    fw_header = (fwreq_t *)(flash_addr + WIFI_FLASH_HEADER_SIZE);
+
+    printf("[WIFI HEADER] Image size: %lu, FW version: 0x%08lX\r\n",
+           fw_header->image_size, fw_header->fw_version);
+
+    // Step 5: Verify total size matches (FW_HEADER_SIZE + image_size == fw_total_size)
+    total_size = FW_HEADER_SIZE + fw_header->image_size;
+    if (total_size != flash_header->fw_total_size) {
+        printf("[ERROR] Size mismatch: FW header+image=%lu, Flash header=%lu\r\n",
+               total_size, flash_header->fw_total_size);
+        return -1;
+    }
+
+    // Step 6: Calculate CRC using hardware CRC (for data from WIFI_FLASH_HEADER_SIZE to fw_total_size)
+    printf("[CRC] Calculating CRC32 for %lu bytes using hardware CRC...\r\n", flash_header->fw_total_size);
+    
+    // Get pointer to data starting from WIFI_FLASH_HEADER_SIZE
+    crc_data_ptr = (const uint8_t *)(flash_addr + WIFI_FLASH_HEADER_SIZE);
+    crc_data_size = flash_header->fw_total_size;
+    
+    // Use hardware CRC to calculate (byte-wise, InputDataFormat is configured as BYTES)
+    calculated_crc = HAL_CRC_Calculate(&hcrc, (uint32_t *)crc_data_ptr, crc_data_size);
+
+    printf("[CRC] Calculated CRC: 0x%08lX, Expected CRC: 0x%08lX\r\n",
+           calculated_crc, flash_header->fw_crc);
+
+    // Step 7: Verify CRC
+    if (calculated_crc != flash_header->fw_crc) {
+        printf("[ERROR] CRC mismatch! Calculated: 0x%08lX, Expected: 0x%08lX\r\n",
+               calculated_crc, flash_header->fw_crc);
+        return -1;
+    }
+
+    printf("[SUCCESS] Flash header and CRC validation passed\r\n");
+
+    // Step 8: Start firmware upgrade
+    chunk_cnt = 0;
+    offset = 0;
+    one_time = 1;
+    si91x_wlan_app_cb.state = SI91X_WLAN_FW_UPGRADE;
+
+    t_start = osKernelGetTickCount();
+    printf("[TIMER] Firmware upgrade started at tick: %lu\r\n", t_start);
+
+    fw_image_size = fw_header->image_size;
+    total_size = fw_image_size + FW_HEADER_SIZE;
+    printf("\n[FIRMWARE] Firmware details:\r\n");
+    printf("  - Header size: %ld bytes\r\n", FW_HEADER_SIZE);
+    printf("  - Payload size: %lu bytes\r\n", fw_image_size);
+    printf("  - Total size: %lu bytes\r\n", total_size);
+    printf("  - Chunk size: %ld bytes\r\n", SI91X_CHUNK_SIZE);
+
+    total_chunks = (total_size + SI91X_CHUNK_SIZE - 1) / SI91X_CHUNK_SIZE;
+    remaining_bytes = total_size;
+    printf("  - Total chunks: %lu\r\n", total_chunks);
+    printf("\r\n[PROGRESS] Starting firmware transmission from flash...\r\n");
+
+    // Read and send firmware in chunks (direct memory access)
+    for (uint32_t i = 0; i < total_chunks; i++) {
+        uint32_t chunk_read_size = (remaining_bytes > SI91X_CHUNK_SIZE) ? 
+                                   SI91X_CHUNK_SIZE : remaining_bytes;
+        
+        memset(recv_buffer, 0, SI91X_CHUNK_SIZE);
+        
+        // Read chunk from flash (direct memory copy)
+        const uint8_t *chunk_src = flash_addr + WIFI_FLASH_HEADER_SIZE + (i * SI91X_CHUNK_SIZE);
+        memcpy(recv_buffer, chunk_src, chunk_read_size);
+
+        remaining_bytes -= chunk_read_size;
+        
+        progress_percent = ((i + 1) * 100) / total_chunks;
+        if (progress_percent != last_reported_percent && 
+            (progress_percent % 10 == 0 || i == total_chunks - 1)) {
+            printf("\n[PROGRESS] %ld%% complete (%lu/%lu chunks)\r\n", 
+                   progress_percent, i + 1, total_chunks);
+            last_reported_percent = progress_percent;
+        }
+
+        if (i == 0) {
+            printf("\r\n[BLOCK 0] Sending header block (START_OF_FILE)\r\n");
+        } else if (i == (total_chunks - 1)) {
+            printf("\n[BLOCK %lu] Sending final block (END_OF_FILE, %lu bytes)\r\n", i, chunk_read_size);
+        } else {
+            printf("\n[BLOCK %lu] Sending data block (%lu bytes)\r\n", i, chunk_read_size);
+        }
+
+        status = sl_si91x_app_task_fw_update_via_xmodem(recv_buffer, SI91X_CHUNK_SIZE);
+        if (status != SL_STATUS_OK) {
+            printf("[ERROR] Chunk %lu processing failed: 0x%lx\r\n", i, status);
+            return -1;
+        }
+        
+        printf("[SUCCESS] Block %lu processed\r\n", i);
+        osDelay(10);
+    }
+
+    printf("[FLASH] Firmware upgrade from flash completed\r\n");
+
+    // Check if completion state needs to be triggered
+    if (si91x_wlan_app_cb.state == SI91X_WLAN_FW_UPGRADE_DONE) {
+        printf("\n[UPGRADE] Triggering final upgrade state\r\n");
+        status = sl_si91x_app_task_fw_update_via_xmodem(NULL, 0);
+        return (status == SL_STATUS_OK) ? 0 : -1;
+    }
+    
+    // If all chunks were sent successfully but state not updated yet, wait a bit and check again
+    if (chunk_cnt >= total_chunks) {
+        printf("[INFO] All chunks sent, waiting for upgrade completion...\r\n");
+        osDelay(100);
+        if (si91x_wlan_app_cb.state == SI91X_WLAN_FW_UPGRADE_DONE) {
+            printf("\n[UPGRADE] Triggering final upgrade state\r\n");
+            status = sl_si91x_app_task_fw_update_via_xmodem(NULL, 0);
+            return (status == SL_STATUS_OK) ? 0 : -1;
+        }
+    }
+    
+    return -1;
+}
+
 /**
  * @brief Upgrade the firmware of the Wi-Fi module.
  *
@@ -490,11 +659,19 @@ static int firmware_upgrade_from_file(const char *file_path)
 static void wifi_update_process(void) 
 {
     int32_t status = SL_STATUS_OK;
+    device_t *misc = NULL;
+    blink_params_t blink_params = {0};
     // PowerHandle wifi_handle = pwr_manager_get_handle(PWR_WIFI);
     // pwr_manager_acquire(wifi_handle);
     // osDelay(100);
     storage_nvs_write(NVS_FACTORY, NVS_KEY_WIFI_MODE, WIFI_MODE_NORMAL, strlen(WIFI_MODE_NORMAL));
     
+    misc = device_find_pattern(IND_DEVICE_NAME, DEV_TYPE_MISC);
+    if (misc != NULL) {
+        blink_params.blink_times = INT32_MAX;
+        blink_params.interval_ms = 50;
+        device_ioctl(misc, MISC_CMD_LED_SET_BLINK, (uint8_t *)&blink_params, 0);
+    }
     status = sl_net_init(SL_NET_WIFI_CLIENT_INTERFACE, &firmware_update_configuration, NULL, NULL);
     if (status == SL_STATUS_OK) {
         printf("wifi_update sl_net_init ok \r\n");
@@ -502,18 +679,29 @@ static void wifi_update_process(void)
     }
     
     status = firmware_upgrade_from_file(WIFI_FIR_NAME);
-    if(status == 0) {
-        printf("wifi_update ok \r\n");
-        storage_nvs_flush_all();
-        osDelay(200);
-#if ENABLE_U0_MODULE
-        u0_module_clear_wakeup_flag();
-        u0_module_reset_chip_n6();
-#endif
-        HAL_NVIC_SystemReset();
+    if (status != 0) {
+        status = firmware_upgrade_from_flash();
     }
+    
+    sl_net_deinit(SL_NET_WIFI_CLIENT_INTERFACE);
+    if (status == 0) {
+        printf("wifi_update ok \r\n");
+//         storage_nvs_flush_all();
+//         osDelay(200);
+// #if ENABLE_U0_MODULE
+//         u0_module_clear_wakeup_flag();
+//         u0_module_reset_chip_n6();
+// #endif
+//         HAL_NVIC_SystemReset();
+    } else {
+        printf("wifi_update failed \r\n");
+    }
+    if (misc != NULL) {
+        device_ioctl(misc, MISC_CMD_LED_ON, 0, 0);
+    }
+    wifi_update_times++;
+    storage_nvs_write(NVS_FACTORY, NVS_KEY_WIFI_UPDATE_TIMES, &wifi_update_times, sizeof(wifi_update_times));
     // pwr_manager_release(wifi_handle);
-    printf("wifi_update failed \r\n");
     return;
 }
 
@@ -530,7 +718,8 @@ static void wifi_ant_process(void)
     }
     printf("\r\nWi-Fi Init Done \r\n");
 }
-static int wifi_update_cmd(int argc, char* argv[]) 
+
+void wifi_enter_update_mode(void)
 {
     storage_nvs_write(NVS_FACTORY, NVS_KEY_WIFI_MODE, WIFI_MODE_UPDATE, strlen(WIFI_MODE_UPDATE));
     LOG_SIMPLE("wifi update, System reset...\r\n");
@@ -541,6 +730,11 @@ static int wifi_update_cmd(int argc, char* argv[])
     u0_module_reset_chip_n6();
 #endif
     HAL_NVIC_SystemReset();
+}
+
+static int wifi_update_cmd(int argc, char* argv[]) 
+{
+    wifi_enter_update_mode();
     return 0;
 }
 
@@ -822,20 +1016,34 @@ int is_wifi_ant(void)
 {
     return wifi_ant_flag;
 }
+
+int is_wifi_update(void)
+{
+    return wifi_update_flag;
+}
+
+uint32_t get_wifi_update_times(void)
+{
+    return wifi_update_times;
+}
+
 void wifi_mode_process(void)
 {
     char wifi_mode[16] = {0};
 
-    if(storage_nvs_read(NVS_FACTORY, NVS_KEY_WIFI_MODE, &wifi_mode, sizeof(wifi_mode)) < 0) {
-        return;
+    if (storage_nvs_read(NVS_FACTORY, NVS_KEY_WIFI_MODE, &wifi_mode, sizeof(wifi_mode)) < 0) {
+        strcpy(wifi_mode, WIFI_MODE_NORMAL);
+    }
+    if (storage_nvs_read(NVS_FACTORY, NVS_KEY_WIFI_UPDATE_TIMES, &wifi_update_times, sizeof(wifi_update_times)) < 0) {
+        wifi_update_times = 0;
     }
 
-    printf("\r\n wifi_mode: %s \r\n", wifi_mode);
+    printf("\r\n wifi_mode: %s , wifi_update_times: %ld \r\n", wifi_mode, wifi_update_times);
 
     if (strcmp(WIFI_MODE_UPDATE, wifi_mode) == 0) {
         printf("\r\n wifi_update_process \r\n");
         wifi_update_process();
-        wifi_ant_flag = 1;
+        wifi_update_flag = 1;
         return;
     }
 

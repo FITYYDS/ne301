@@ -30,12 +30,15 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
-static spe_pp_outBuffer_t *spe_pp_buffer = NULL;
-static spe_keypoint_t *spe_keypoints_buffer = NULL;
-static spe_movenet_pp_static_param_t static_params = {0};
-static char **static_kp_names = NULL;
-static uint8_t *keypoint_connections = NULL;
-static uint8_t num_connections = 0;
+/* Per-instance parameters for SPE MoveNet UI postprocess */
+typedef struct {
+    spe_movenet_pp_static_param_t core;     /* original static params, now per-instance */
+    spe_pp_outBuffer_t *spe_pp_buffer;     /* per-instance output buffer */
+    spe_keypoint_t *spe_keypoints_buffer;   /* per-instance keypoints buffer */
+    char **kp_names;                        /* per-instance keypoint names */
+    uint8_t *keypoint_connections;         /* per-instance keypoint connections */
+    uint8_t num_connections;                /* per-instance number of connections */
+} pp_spe_movenet_ui_params_t;
 
 /*
 Example JSON configuration:
@@ -59,7 +62,13 @@ Example JSON configuration:
 */
 static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
 {
-    spe_movenet_pp_static_param_t *params = (spe_movenet_pp_static_param_t *)&static_params;
+    pp_spe_movenet_ui_params_t *pp_ctx = (pp_spe_movenet_ui_params_t *)hal_mem_alloc_any(sizeof(pp_spe_movenet_ui_params_t));
+    if (!pp_ctx) {
+        return AI_SPE_POSTPROCESS_ERROR_NO;
+    }
+    memset(pp_ctx, 0, sizeof(pp_spe_movenet_ui_params_t));
+
+    spe_movenet_pp_static_param_t *params = &pp_ctx->core;
     
     // Get quantization parameters from NN instance (for int8 models)
     NN_Instance_TypeDef *NN_Instance = (NN_Instance_TypeDef *)nn_inst;
@@ -105,15 +114,15 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
                 cJSON *kp_names = cJSON_GetObjectItemCaseSensitive(pp, "keypoint_names");
                 if (cJSON_IsArray(kp_names)) {
                     if (params->nb_keypoints > 0) {
-                        static_kp_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_keypoints);
+                        pp_ctx->kp_names = (char **)hal_mem_alloc_any(sizeof(char *) * params->nb_keypoints);
                         for (int i = 0; i < params->nb_keypoints; i++) {
                             cJSON *name = cJSON_GetArrayItem(kp_names, i);
                             if (cJSON_IsString(name)) {
                                 uint8_t len = strlen(name->valuestring) + 1;
-                                static_kp_names[i] = (char *)hal_mem_alloc_any(len);
-                                memcpy(static_kp_names[i], name->valuestring, len);
+                                pp_ctx->kp_names[i] = (char *)hal_mem_alloc_any(len);
+                                memcpy(pp_ctx->kp_names[i], name->valuestring, len);
                             } else {
-                                static_kp_names[i] = NULL;
+                                pp_ctx->kp_names[i] = NULL;
                             }
                         }
                     }
@@ -122,14 +131,14 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
                 // Parse keypoint connections
                 cJSON *connections = cJSON_GetObjectItemCaseSensitive(pp, "keypoint_connections");
                 if (cJSON_IsArray(connections)) {
-                    num_connections = cJSON_GetArraySize(connections);
-                    if (num_connections > 0) {
-                        keypoint_connections = (uint8_t *)hal_mem_alloc_any(sizeof(uint8_t) * num_connections * 2);
-                        for (int i = 0; i < num_connections; i++) {
+                    pp_ctx->num_connections = cJSON_GetArraySize(connections);
+                    if (pp_ctx->num_connections > 0) {
+                        pp_ctx->keypoint_connections = (uint8_t *)hal_mem_alloc_any(sizeof(uint8_t) * pp_ctx->num_connections * 2);
+                        for (int i = 0; i < pp_ctx->num_connections; i++) {
                             cJSON *connection = cJSON_GetArrayItem(connections, i);
                             if (cJSON_IsArray(connection) && cJSON_GetArraySize(connection) == 2) {
-                                keypoint_connections[i * 2 + 0] = (uint8_t)cJSON_GetArrayItem(connection, 0)->valuedouble;
-                                keypoint_connections[i * 2 + 1] = (uint8_t)cJSON_GetArrayItem(connection, 1)->valuedouble;
+                                pp_ctx->keypoint_connections[i * 2 + 0] = (uint8_t)cJSON_GetArrayItem(connection, 0)->valuedouble;
+                                pp_ctx->keypoint_connections[i * 2 + 1] = (uint8_t)cJSON_GetArrayItem(connection, 1)->valuedouble;
                             }
                         }
                     }
@@ -140,61 +149,69 @@ static int32_t init(const char *json_str, void **pp_params, void *nn_inst)
         }
     }
     
-    // Allocate output buffers
-    spe_pp_buffer = (spe_pp_outBuffer_t *)hal_mem_alloc_large(sizeof(spe_pp_outBuffer_t) * params->nb_keypoints);
-    spe_keypoints_buffer = (spe_keypoint_t *)hal_mem_alloc_large(sizeof(spe_keypoint_t) * params->nb_keypoints);
-    assert(spe_pp_buffer != NULL && spe_keypoints_buffer != NULL);
+    // Allocate per-instance output buffers
+    pp_ctx->spe_pp_buffer = (spe_pp_outBuffer_t *)hal_mem_alloc_large(sizeof(spe_pp_outBuffer_t) * params->nb_keypoints);
+    pp_ctx->spe_keypoints_buffer = (spe_keypoint_t *)hal_mem_alloc_large(sizeof(spe_keypoint_t) * params->nb_keypoints);
+    assert(pp_ctx->spe_pp_buffer != NULL && pp_ctx->spe_keypoints_buffer != NULL);
     
     spe_movenet_pp_reset(params);
-    *pp_params = (void *)params;
+    *pp_params = (void *)pp_ctx;
     return AI_SPE_POSTPROCESS_ERROR_NO;
 }
 
 static int32_t deinit(void *pp_params)
 {
-    (void)pp_params;  // Unused parameter
-    
-    if (spe_pp_buffer != NULL) {
-        hal_mem_free(spe_pp_buffer);
-        spe_pp_buffer = NULL;
-    }
-    
-    if (spe_keypoints_buffer != NULL) {
-        hal_mem_free(spe_keypoints_buffer);
-        spe_keypoints_buffer = NULL;
-    }
-    
-    if (static_kp_names != NULL) {
-        for (int i = 0; i < static_params.nb_keypoints; i++) {
-            if (static_kp_names[i] != NULL) {
-                hal_mem_free(static_kp_names[i]);
-            }
-        }
-        hal_mem_free(static_kp_names);
-        static_kp_names = NULL;
+    pp_spe_movenet_ui_params_t *pp = (pp_spe_movenet_ui_params_t *)pp_params;
+    if (!pp) {
+        return AI_SPE_POSTPROCESS_ERROR_NO;
     }
 
-    if (keypoint_connections != NULL) {
-        hal_mem_free(keypoint_connections);
-        keypoint_connections = NULL;
-        num_connections = 0;
+    spe_movenet_pp_static_param_t *params = &pp->core;
+    
+    if (pp->spe_pp_buffer != NULL) {
+        hal_mem_free(pp->spe_pp_buffer);
+        pp->spe_pp_buffer = NULL;
     }
     
+    if (pp->spe_keypoints_buffer != NULL) {
+        hal_mem_free(pp->spe_keypoints_buffer);
+        pp->spe_keypoints_buffer = NULL;
+    }
+    
+    if (pp->kp_names != NULL) {
+        for (int i = 0; i < params->nb_keypoints; i++) {
+            if (pp->kp_names[i] != NULL) {
+                hal_mem_free(pp->kp_names[i]);
+            }
+        }
+        hal_mem_free(pp->kp_names);
+        pp->kp_names = NULL;
+    }
+
+    if (pp->keypoint_connections != NULL) {
+        hal_mem_free(pp->keypoint_connections);
+        pp->keypoint_connections = NULL;
+        pp->num_connections = 0;
+    }
+    
+    hal_mem_free(pp);
     return AI_SPE_POSTPROCESS_ERROR_NO;
 }
 
-static void spe_pp_out_t_to_pp_result_t(spe_pp_out_t *pSpeOutput, pp_result_t *result)
+static void spe_pp_out_t_to_pp_result_t(spe_pp_out_t *pSpeOutput,
+                                       pp_result_t *result,
+                                       const pp_spe_movenet_ui_params_t *pp)
 {
     result->type = PP_TYPE_SPE;
     result->is_valid = (pSpeOutput->pOutBuff != NULL);
-    result->spe.nb_keypoints = static_params.nb_keypoints;
-    result->spe.keypoints = spe_keypoints_buffer;
-    result->spe.keypoint_names = static_kp_names;
-    result->spe.num_connections = num_connections;
-    result->spe.keypoint_connections = keypoint_connections;
+    result->spe.nb_keypoints = pp->core.nb_keypoints;
+    result->spe.keypoints = pp->spe_keypoints_buffer;
+    result->spe.keypoint_names = pp->kp_names;
+    result->spe.num_connections = pp->num_connections;
+    result->spe.keypoint_connections = pp->keypoint_connections;
     
     // Convert keypoint format
-    for (int i = 0; i < static_params.nb_keypoints; i++) {
+    for (int i = 0; i < pp->core.nb_keypoints; i++) {
         result->spe.keypoints[i].x = MAX(0.0f, MIN(1.0f, pSpeOutput->pOutBuff[i].x_center));
         result->spe.keypoints[i].y = MAX(0.0f, MIN(1.0f, pSpeOutput->pOutBuff[i].y_center));
         result->spe.keypoints[i].conf = MAX(0.0f, MIN(1.0f, pSpeOutput->pOutBuff[i].proba));
@@ -204,13 +221,14 @@ static void spe_pp_out_t_to_pp_result_t(spe_pp_out_t *pSpeOutput, pp_result_t *r
 static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_params, void *nn_inst)
 {
     assert(nb_input == 1);
+    pp_spe_movenet_ui_params_t *pp = (pp_spe_movenet_ui_params_t *)pp_params;
+    spe_movenet_pp_static_param_t *params = &pp->core;
     int32_t error = AI_SPE_POSTPROCESS_ERROR_NO;
-    spe_movenet_pp_static_param_t *params = (spe_movenet_pp_static_param_t *)pp_params;
 
     memset(pResult, 0, sizeof(pp_result_t));
 
     spe_pp_out_t spe_pp_out;
-    spe_pp_out.pOutBuff = spe_pp_buffer;
+    spe_pp_out.pOutBuff = pp->spe_pp_buffer;
     
     // Note: MoveNet UI uses float32 input but int8 processing function
     spe_movenet_pp_in_t pp_input = {
@@ -220,7 +238,7 @@ static int32_t run(void *pInput[], uint32_t nb_input, void *pResult, void *pp_pa
     // Use int8 processing function for int8 models
     error = spe_movenet_pp_process_int8(&pp_input, &spe_pp_out, params);
     if (error == AI_SPE_POSTPROCESS_ERROR_NO) {
-        spe_pp_out_t_to_pp_result_t(&spe_pp_out, (pp_result_t *)pResult);
+        spe_pp_out_t_to_pp_result_t(&spe_pp_out, (pp_result_t *)pResult, pp);
     }
     return error;
 }

@@ -61,17 +61,17 @@ static void W_DATA(uint8_t num)
 {
     char i;
     for (i=num; i>0; i--) {   
-        PIT_SERIAL_LOW;
+        PIR_SERIAL_LOW;
         pir_delay_us(2); // Delay must be accurate, total 2us
-        PIT_SERIAL_HIGH;
+        PIR_SERIAL_HIGH;
         pir_delay_us(2); // Delay must be accurate, total 2us
 
         if (BUF1 & 0x80) {
-            PIT_SERIAL_HIGH;
+            PIR_SERIAL_HIGH;
         }else{
-            PIT_SERIAL_LOW;
+            PIR_SERIAL_LOW;
         }
-        pir_delay_us(100); // Delay must be accurate, total 100us
+        pir_delay_us(75); // Delay must be accurate, total 75us
         BUF1 = BUF1 << 1;
     }
 }
@@ -119,8 +119,8 @@ static void CONFIG_W()
     BUF1 = BUF1 << 0x07;
     W_DATA(1);
 
-    PIT_SERIAL_LOW;
-    pir_delay_ms(1);
+    PIR_SERIAL_LOW;
+    pir_delay_ms(2);
 }
 
 //======= Initialize sensor configuration parameters ==============================
@@ -146,16 +146,18 @@ static void RD_NBIT(uint8_t num)
     for (i=0; i<num; i++) {
         pir_trigger_set(0);
         pir_delay_us(2);
-        // __NOP();  __NOP();  __NOP(); 
 
         pir_trigger_set(1);
         pir_delay_us(2);
-        // __NOP();  __NOP();  __NOP(); 
         pir_trigger_in();
-        __NOP();  __NOP();  __NOP(); 
+        pir_delay_us(2);
+
         BUF1 = BUF1 << 1;
-        if (PIT_TRIGGER_READ != 0x00u) {
-            BUF1 = BUF1 + 1;
+        if (PIR_TRIGGER_READ != 0x00u) {
+            pir_delay_us(2);
+            if (PIR_TRIGGER_READ != 0x00u) {
+                BUF1 = BUF1 + 1;
+            }
         }
     }
     return;
@@ -237,6 +239,8 @@ static void RD_DOCI()
 
 int pir_config(pir_config_t *config)
 {
+    int retry_times = 0, result = 0;
+
     if (config != NULL) {
         SENS_C = config->SENS;
         BLIND_C = config->BLIND & 0x0F;
@@ -247,40 +251,47 @@ int pir_config(pir_config_t *config)
         VOLT_C = config->VOLT & 0x03;
         SUPP_C = config->SUPP & 0x01;
     }
-    PIT_SERIAL_LOW;
-    pir_trigger_set(0);
-    pir_delay_ms(1);    // Delay must be accurate, total 1000us
-    CONFIG_INI();       // Initialize sensor configuration parameters
-    CONFIG_W();         // Write config to IC
-    pir_delay_ms(25);   // Delay
-    RD_DOCI();          // Read data
-    // Check if the write is correct
-    if(SENS_W != SENS_R)
-    { return 1; }
-    else if(BLIND_W != BLIND_R)
-    { return 2; }
-    else if(PULSE_W != PULSE_R)
-    { return 3; }
-    else if(WINDOW_W != WINDOW_R)
-    { return 4; }
-    else if(MOTION_W != MOTION_R)
-    { return 5; }
-    else if(INT_W != INT_R)
-    { return 6; }
-    else if(VOLT_W != VOLT_R)
-    { return 7; }
-    else if(SUPP_W != SUPP_R)
-    { return 8; }
-    // else if(RSV_W != RSV_R)
-    // { return 9; }
-    pir_trigger_set(0);
-    pir_trigger_in();
-    return 0;
+    // Retry to config the sensor if the write is not correct
+    do {
+        PIR_SERIAL_LOW;
+        pir_trigger_set(0);
+        CONFIG_INI();       // Initialize sensor configuration parameters
+        CONFIG_W();         // Write config to IC
+        // pir_delay_ms(25);   // Delay
+        RD_DOCI();          // Read data
+        // Check if the write is correct
+        if(SENS_W != SENS_R)
+        { result = 1; }
+        else if(BLIND_W != BLIND_R)
+        { result = 2; }
+        else if(PULSE_W != PULSE_R)
+        { result = 3; }
+        else if(WINDOW_W != WINDOW_R)
+        { result = 4; }
+        else if(MOTION_W != MOTION_R)
+        { result = 5; }
+        else if(INT_W != INT_R)
+        { result = 6; }
+        else if(VOLT_W != VOLT_R)
+        { result = 7; }
+        else if(SUPP_W != SUPP_R)
+        { result = 8; }
+        // else if(RSV_W != RSV_R)
+        // { result = 9; }
+        else 
+        { result = 0; break;}
+    } while (++retry_times < PIR_CONFIG_RETRY_TIMES);
+
+    if (result == 0) {
+        pir_trigger_set(0);
+        pir_trigger_in();
+    }
+    return result;
 }
 
 void pir_trigger_reset(void)
 {
-    if (PIT_TRIGGER_READ != 0x00u) {
+    if (PIR_TRIGGER_READ != 0x00u) {
         pir_delay_ms(10);
         pir_trigger_set(0);
         pir_delay_ms(10);

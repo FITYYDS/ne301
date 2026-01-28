@@ -129,6 +129,7 @@ static int mqtt_status_cmd(int argc, char* argv[]);
 static void auto_subscribe_topics(void);
 static void mqtt_control_cmd_handle_message(ms_mqtt_event_data_t *event_data);
 static void mqtt_connect_task(void *argument);
+static ms_mqtt_state_t mqtt_client_get_state_si91x(void);
 
 
 /* ==================== API Type Management ==================== */
@@ -211,14 +212,74 @@ static aicam_result_t mqtt_client_start_ms(void)
  */
 static aicam_result_t mqtt_client_start_si91x(void)
 {
-    int result = si91x_mqtt_client_connnect_sync(5000);
-    if (result != 0) {
-        LOG_SVC_ERROR("Failed to start SI91X MQTT client: %d", result);
+    const int MAX_CONNECT_RETRIES = 3;
+    const int CONNECT_RETRY_DELAY_MS = 1000;
+    const int CONNECT_TIMEOUT_MS = 10000;
+
+    int result = 0;
+    ms_mqtt_state_t state;
+
+    LOG_SVC_INFO("SI91X MQTT client connecting...");
+
+    // Retry connect
+    for (int retry = 0; retry < MAX_CONNECT_RETRIES; retry++) {
+        if (retry > 0) {
+            LOG_SVC_WARN("SI91X MQTT connect retry %d/%d after %dms delay",
+                        retry + 1, MAX_CONNECT_RETRIES, CONNECT_RETRY_DELAY_MS);
+            osDelay(CONNECT_RETRY_DELAY_MS);
+        }
+
+        result = si91x_mqtt_client_connnect_sync(CONNECT_TIMEOUT_MS);
+        state = mqtt_client_get_state_si91x();
+
+        LOG_SVC_INFO("SI91X MQTT connect result: %d (0x%X), state: %d", result, result, state);
+
+        if (result == 0 && state == MQTT_STATE_CONNECTED) {
+            LOG_SVC_INFO("SI91X MQTT client connected successfully");
+            break;
+        }
+
+        LOG_SVC_ERROR("SI91X MQTT connect failed: result=%d, state=%d (expected %d)",
+                     result, state, MQTT_STATE_CONNECTED);
+    }
+
+    // Final state check
+    state = mqtt_client_get_state_si91x();
+    if (state != MQTT_STATE_CONNECTED) {
+        LOG_SVC_ERROR("SI91X MQTT client not connected after %d retries, final state: %d",
+                     MAX_CONNECT_RETRIES, state);
         return AICAM_ERROR;
     }
-    auto_subscribe_topics();
 
-    LOG_SVC_INFO("SI91X MQTT client started");
+    // Subscribe with retry
+    const int MAX_SUBSCRIBE_RETRIES = 3;
+    const int SUBSCRIBE_RETRY_DELAY_MS = 500;
+
+    for (int retry = 0; retry < MAX_SUBSCRIBE_RETRIES; retry++) {
+        if (retry > 0) {
+            LOG_SVC_WARN("SI91X MQTT subscribe retry %d/%d", retry + 1, MAX_SUBSCRIBE_RETRIES);
+            osDelay(SUBSCRIBE_RETRY_DELAY_MS);
+
+            // Re-check state before retry
+            state = mqtt_client_get_state_si91x();
+            if (state != MQTT_STATE_CONNECTED) {
+                LOG_SVC_ERROR("SI91X MQTT state changed to %d before subscribe, aborting", state);
+                return AICAM_ERROR;
+            }
+        }
+
+        auto_subscribe_topics();
+
+        // Check if subscribe succeeded by checking the flag
+        if (g_mqtt_service.receive_topic_subscribed) {
+            LOG_SVC_INFO("SI91X MQTT client started and subscribed successfully");
+            return AICAM_OK;
+        }
+    }
+
+    // Subscribe failed but connect succeeded, still return OK
+    LOG_SVC_WARN("SI91X MQTT client started but subscribe failed after %d retries",
+                MAX_SUBSCRIBE_RETRIES);
     return AICAM_OK;
 }
 
@@ -3705,9 +3766,12 @@ aicam_result_t mqtt_service_execute_control_cmd(const mqtt_control_cmd_t *cmd)
         
         case MQTT_CMD_SLEEP: {
             LOG_SVC_INFO("Executing sleep command: duration=%u seconds", cmd->params.sleep.duration_sec);
-            
-            result = system_service_enter_sleep(cmd->params.sleep.duration_sec);
-            
+
+            // Use request_sleep to trigger async sleep via main loop
+            // This avoids deadlock when mqtt_service_stop() is called from MQTT callback
+            // The sleep will be executed by system_service_execute_pending_sleep() in main loop
+            result = system_service_request_sleep(cmd->params.sleep.duration_sec);
+
             if (result != AICAM_OK) {
                 LOG_SVC_ERROR("Sleep command failed: %d", result);
             }

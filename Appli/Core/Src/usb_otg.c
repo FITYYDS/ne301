@@ -271,12 +271,12 @@ void HAL_HCD_MspInit(HCD_HandleTypeDef* hcdHandle)
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
 
-    LL_AHB5_GRP1_ForceReset(0x00800000);
+    LL_AHB5_GRP1_ForceReset(0x01000000);
     __HAL_RCC_USB2_OTG_HS_FORCE_RESET();
     __HAL_RCC_USB2_OTG_HS_PHY_FORCE_RESET();
 
     LL_RCC_HSE_SelectHSEDiv2AsDiv2Clock();
-    LL_AHB5_GRP1_ReleaseReset(0x00800000);
+    LL_AHB5_GRP1_ReleaseReset(0x01000000);
 
     /* Peripheral clock enable */
     __HAL_RCC_USB2_OTG_HS_CLK_ENABLE();

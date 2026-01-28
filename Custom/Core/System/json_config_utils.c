@@ -68,8 +68,8 @@
          }
      }
      
-     // Validate network service configuration
-     if (config->network_service.ap_sleep_time < 60 || config->network_service.ap_sleep_time > 86400) {
+     // Validate network service configuration,can be 0 to disable AP sleep timer
+     if ((config->network_service.ap_sleep_time != 0) && (config->network_service.ap_sleep_time < 60 || config->network_service.ap_sleep_time > 86400)) {
          LOG_CORE_INFO("Invalid AP sleep time: %u (must be 60-86400 seconds)", config->network_service.ap_sleep_time);
          return AICAM_ERROR_INVALID_PARAM;
      }

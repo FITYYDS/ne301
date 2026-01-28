@@ -40,6 +40,7 @@ C_SOURCES += $(wildcard Core/Src/rng.c Core/Src/rtc.c Core/Src/sai.c)
 C_SOURCES += $(wildcard Core/Src/sdmmc.c Core/Src/spi.c Core/Src/tim.c)
 C_SOURCES += $(wildcard Core/Src/usart.c Core/Src/usb_otg.c Core/Src/venc.c)
 C_SOURCES += $(wildcard Core/Src/wwdg.c Core/Src/xspim.c Core/Src/secure_nsc.c)
+C_SOURCES += $(wildcard Core/Src/crc.c)
 
 # Custom - Core
 C_SOURCES += ../Custom/Core/core_init.c
@@ -92,6 +93,7 @@ C_SOURCES += ../Custom/Hal/camera.c
 C_SOURCES += ../Custom/Hal/cat1.c
 C_SOURCES += ../Custom/Hal/codec.c
 C_SOURCES += ../Custom/Hal/draw.c
+C_SOURCES += ../Custom/Hal/image_utils.c
 C_SOURCES += ../Custom/Hal/driver_core.c
 C_SOURCES += ../Custom/Hal/drtc.c
 C_SOURCES += ../Custom/Hal/enc.c
@@ -586,6 +588,8 @@ C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_tim_ex.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_wwdg.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_usb.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_venc.c
+C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_crc.c
+C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_crc_ex.c
 
 # BSP
 C_SOURCES += ../BSP/STM32N6570-DK/stm32n6570_discovery.c

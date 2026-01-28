@@ -708,14 +708,12 @@ static aicam_result_t video_ai_node_init_callback(video_node_t *node) {
     
     // Check NN state
     nn_state_t nn_state = nn_get_state();
-    if (nn_state == NN_STATE_UNINIT) {
-        LOG_CORE_WARN("NN module not initialized, AI node will work in pass-through mode");
-    } else if (nn_state == NN_STATE_READY || nn_state == NN_STATE_RUNNING) {
+    if (nn_state == NN_STATE_READY || nn_state == NN_STATE_RUNNING) {
         LOG_CORE_INFO("NN module is ready, AI processing enabled");
         
         // Get model information if available
         nn_get_model_info(&data->model_info);
-    }else if(nn_state == NN_STATE_INIT) {
+    }else if(nn_state == NN_STATE_INIT || nn_state == NN_STATE_UNINIT) {
         LOG_CORE_INFO("NN module is initialized, AI node will work in pass-through mode");
         // load active model
         aicam_result_t result = video_ai_node_load_model_active(node);

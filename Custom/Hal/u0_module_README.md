@@ -531,7 +531,7 @@ void pir_wakeup_example(void)
     uint32_t wakeup_flags = PWR_WAKEUP_FLAG_PIR_RISING | PWR_WAKEUP_FLAG_CONFIG_KEY;
     
     // Keep 3V3 power on (PIR sensor needs power)
-    uint32_t switch_bits = PWR_3V3_SWITCH_BIT;
+    // uint32_t switch_bits = PWR_3V3_SWITCH_BIT;
     
     // Optional: Set timing wakeup as backup (wakeup after 300 seconds)
     uint32_t sleep_seconds = 300;
@@ -585,7 +585,7 @@ void pir_wakeup_modes_example(void)
 {
     int ret = 0;
     uint32_t wakeup_flags = 0;
-    uint32_t switch_bits = PWR_3V3_SWITCH_BIT;
+    uint32_t switch_bits = 0;// PWR_3V3_SWITCH_BIT;
     
     // Method 1: PIR rising edge wakeup
     wakeup_flags = PWR_WAKEUP_FLAG_PIR_RISING | PWR_WAKEUP_FLAG_CONFIG_KEY;

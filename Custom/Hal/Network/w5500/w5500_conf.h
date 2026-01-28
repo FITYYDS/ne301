@@ -68,6 +68,7 @@ typedef enum
     W5500_ERR_CHECK,
     W5500_ERR_MEM,
     W5500_ERR_TIMEOUT,
+    W5500_ERR_UNCONNECTED,
     W5500_ERR_UNKNOW,
 } w5500_err_t;
 #pragma pack(1)

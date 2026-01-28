@@ -360,7 +360,7 @@ void app_task(void *argument)
                     last_key_state = key_state;
                 }
 
-                if (pir_is_inited) {
+                // if (pir_is_inited) {
                     pir_state = HAL_GPIO_ReadPin(PIR_TRIGGER_GPIO_Port, PIR_TRIGGER_Pin);
                     if (pir_state != last_pir_state) {
                         if (pir_state == GPIO_PIN_SET) pir_trigger_reset();
@@ -377,7 +377,7 @@ void app_task(void *argument)
                         WIC_LOGD("app: pir state changed = %d", pir_state);
                         last_pir_state = pir_state;
                     }
-                }
+                // }
                 
             #if MS_BD_KEEPLIVE_ENABLE
                 else {

@@ -52,6 +52,7 @@
 #include "drtc.h"
 #include "wdg.h"
 #include "wifi.h" 
+#include "crc.h"
 #define IS_IRQ_MODE()     (__get_IPSR() != 0U)
 
 extern int __uncached_bss_start__;
@@ -209,6 +210,7 @@ static void PLATFORM_Config(void)
 #else
     MX_USART2_UART_Init();
     MX_RNG_Init();
+    MX_CRC_Init();
 #endif
 
 #if !defined(POWER_MODULE_TEST) || !POWER_MODULE_TEST
@@ -312,7 +314,7 @@ void StartMainTask(void *argument)
 
     if (is_wifi_ant()) {
       for (;;) {
-          osDelay(1000);
+          osDelay(100);
       }
     }
 

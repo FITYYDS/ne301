@@ -65,7 +65,7 @@ static void SYSCLKConfig_STOP(void)
     RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_HSI;
     RCC_OscInitStruct.HSIState            = RCC_HSI_ON;
     RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-    RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_NONE;
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
     {
         Error_Handler();
@@ -77,7 +77,7 @@ static void SYSCLKConfig_STOP(void)
     /* Select PLL as system clock source and configure the HCLK, PCLK1 and PCLK2
         clocks dividers */
     RCC_ClkInitStruct.ClockType     = RCC_CLOCKTYPE_SYSCLK;
-    RCC_ClkInitStruct.SYSCLKSource  = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.SYSCLKSource  = RCC_SYSCLKSOURCE_HSI;
     if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, pFLatency) != HAL_OK) {
         Error_Handler();
     }
@@ -666,7 +666,7 @@ void pwr_enter_stop2(uint32_t wakeup_flags, uint32_t switch_bits, pwr_rtc_wakeup
         }
     }
     if (!(switch_bits & PWR_EXT_SWITCH_BIT)) {
-        HAL_GPIO_WritePin(PWR_EXT_GPIO_Port, PWR_EXT_Pin, GPIO_PIN_SET);
+        // HAL_GPIO_WritePin(PWR_EXT_GPIO_Port, PWR_EXT_Pin, GPIO_PIN_SET);
         if (usb_in_status == 0) {
             GPIO_InitStruct.Pin = PWR_EXT_Pin;
             GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -676,7 +676,7 @@ void pwr_enter_stop2(uint32_t wakeup_flags, uint32_t switch_bits, pwr_rtc_wakeup
         }
     }
     if (!(switch_bits & PWR_WIFI_SWITCH_BIT)) {
-        HAL_GPIO_WritePin(PWR_WIFI_GPIO_Port, PWR_WIFI_Pin, GPIO_PIN_SET);
+        // HAL_GPIO_WritePin(PWR_WIFI_GPIO_Port, PWR_WIFI_Pin, GPIO_PIN_SET);
         if (usb_in_status == 0) {
             GPIO_InitStruct.Pin = PWR_WIFI_Pin;
             GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;

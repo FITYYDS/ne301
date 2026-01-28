@@ -439,6 +439,7 @@ static err_t sl_net_low_level_output(struct netif *netif, struct pbuf *p)
                 LOG_DRV_ERROR(NETIF_NAME_STR_FMT ": Failed to send data frame: 0x%0lX.\r\n", NETIF_NAME_PARAMETER(netif), status);
                 return ERR_IF;
             }
+            return ERR_OK;
         }
     }
     for (q = p; q != NULL; q = q->next) {
@@ -708,6 +709,9 @@ static int sl_net_set_client_link_up(sl_net_wifi_client_profile_t *profile)
 #endif 
 
     if (err != ERR_OK) {
+#if LWIP_IPV4 && LWIP_DHCP && !IS_TCP_IP_DUAL_MODE
+        dhcp_stop(&client_netif);
+#endif /* LWIP_IPV4 && LWIP_DHCP && !IS_TCP_IP_DUAL_MODE */
         netifapi_netif_set_link_down(&client_netif);
         netifapi_netif_set_down(&client_netif);
         return err;
@@ -2539,6 +2543,10 @@ int sl_net_netif_ctrl(const char *if_name, netif_cmd_t cmd, void *param)
     // } else if (ret == SL_STATUS_OK && wifi_storage_scan_result.scan_count == 0) {
     //     sl_net_update_strorage_scan_result(3000);
     // }
+    // If the firmware is not present and never updated, enter the update mode
+    if (ret == SL_STATUS_VALID_FIRMWARE_NOT_PRESENT && get_wifi_update_times() < 1) {
+        wifi_enter_update_mode();
+    }
     return ret;
 }
 

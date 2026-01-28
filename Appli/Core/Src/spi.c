@@ -56,7 +56,7 @@ void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_HIGH;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -216,10 +216,10 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     handle_HPDMA1_Channel5.Init.DestInc = DMA_DINC_INCREMENTED;
     handle_HPDMA1_Channel5.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
     handle_HPDMA1_Channel5.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    handle_HPDMA1_Channel5.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_HPDMA1_Channel5.Init.Priority = DMA_LOW_PRIORITY_HIGH_WEIGHT;
     handle_HPDMA1_Channel5.Init.SrcBurstLength = 1;
     handle_HPDMA1_Channel5.Init.DestBurstLength = 1;
-    handle_HPDMA1_Channel5.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;
+    handle_HPDMA1_Channel5.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT1|DMA_DEST_ALLOCATED_PORT0;
     handle_HPDMA1_Channel5.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
     handle_HPDMA1_Channel5.Init.Mode = DMA_NORMAL;
     if (HAL_DMA_Init(&handle_HPDMA1_Channel5) != HAL_OK)
@@ -257,10 +257,10 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     handle_HPDMA1_Channel4.Init.DestInc = DMA_DINC_FIXED;
     handle_HPDMA1_Channel4.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
     handle_HPDMA1_Channel4.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
-    handle_HPDMA1_Channel4.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_HPDMA1_Channel4.Init.Priority = DMA_LOW_PRIORITY_HIGH_WEIGHT;
     handle_HPDMA1_Channel4.Init.SrcBurstLength = 1;
     handle_HPDMA1_Channel4.Init.DestBurstLength = 1;
-    handle_HPDMA1_Channel4.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT0;
+    handle_HPDMA1_Channel4.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
     handle_HPDMA1_Channel4.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
     handle_HPDMA1_Channel4.Init.Mode = DMA_NORMAL;
     if (HAL_DMA_Init(&handle_HPDMA1_Channel4) != HAL_OK)
@@ -553,7 +553,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     handle_GPDMA1_Channel9.Init.Priority = DMA_HIGH_PRIORITY;
     handle_GPDMA1_Channel9.Init.SrcBurstLength = 1;
     handle_GPDMA1_Channel9.Init.DestBurstLength = 1;
-    handle_GPDMA1_Channel9.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
+    handle_GPDMA1_Channel9.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT1|DMA_DEST_ALLOCATED_PORT0;
     handle_GPDMA1_Channel9.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
     handle_GPDMA1_Channel9.Init.Mode = DMA_NORMAL;
     if (HAL_DMA_Init(&handle_GPDMA1_Channel9) != HAL_OK)
@@ -595,7 +595,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     handle_GPDMA1_Channel8.Init.Priority = DMA_HIGH_PRIORITY;
     handle_GPDMA1_Channel8.Init.SrcBurstLength = 1;
     handle_GPDMA1_Channel8.Init.DestBurstLength = 1;
-    handle_GPDMA1_Channel8.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT1|DMA_DEST_ALLOCATED_PORT0;
+    handle_GPDMA1_Channel8.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
     handle_GPDMA1_Channel8.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
     handle_GPDMA1_Channel8.Init.Mode = DMA_NORMAL;
     if (HAL_DMA_Init(&handle_GPDMA1_Channel8) != HAL_OK)

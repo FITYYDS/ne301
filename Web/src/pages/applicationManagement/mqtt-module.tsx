@@ -362,7 +362,7 @@ export default function MqttModule() {
                             <TooltipTrigger>
                                 <SvgIcon icon="info" className="w-4 h-4" />
                             </TooltipTrigger>
-                            <TooltipContent className="max-w-[300px] text-pretty">{i18n._('sys.application_management.ca_cert_tooltip')}</TooltipContent>
+                            <TooltipContent className="max-w-80 text-pretty">{i18n._('sys.application_management.ca_cert_tooltip')}</TooltipContent>
                         </Tooltip>
                     </div>
                     <div className="flex items-center gap-2">
@@ -440,7 +440,6 @@ export default function MqttModule() {
                 </DialogHeader>
                 <div className="my-4">
                     <p className="text-text-secondary">{i18n._('sys.application_management.confirm_protocol_change_description')}</p>
-
                 </div>
                 <DialogFooter>
                     <Button variant="outline" onClick={() => cancelConfirmDialog()}>{i18n._('common.cancel')}</Button>

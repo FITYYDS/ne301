@@ -149,7 +149,7 @@ function DialogContent({
                 {/* Content */}
                 <div
                   className={cn(
-                        "relative z-50 grid w-full max-w-lg max-h-[calc(100vh-2rem)] gap-4 border bg-white dark:bg-gray-900 shadow-lg duration-200 rounded-lg overflow-hidden flex flex-col",
+                        "relative z-50 w-full max-w-lg max-h-[calc(100vh-2rem)] gap-4 border bg-white dark:bg-gray-900 shadow-lg duration-200 rounded-lg overflow-hidden flex flex-col",
                         className
                     )}
                   ref={contentRef}
