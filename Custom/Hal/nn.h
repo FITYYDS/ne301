@@ -55,6 +55,7 @@ typedef struct {
     char input_data_type[32];         // input data type
     char output_data_type[32];        // data type
     char color_format[32];            // color format
+    char stedgeai_version[64];        // ST Edge AI Core version (e.g. v3.0.0-20426 123672867)
     uint32_t input_width;             // input width
     uint32_t input_height;            // input height
     uint32_t input_channels;          // input channels
@@ -126,10 +127,10 @@ typedef struct {
     uint32_t package_checksum;          /* CRC32 over entire package with this field zeroed */
 } nn_package_header_t;
 
-#define MODEL_PACKAGE_MAGIC 0x314D364E  // 'N6M1' - v2.1
-#define MODEL_PACKAGE_VERSION 0x020100  // v2.1
+#define MODEL_PACKAGE_MAGIC 0x314D364E  // 'N6M1' - v3.0
+#define MODEL_PACKAGE_VERSION 0x030000  // v3.0.0
 #define MODEL_RELOCATABLE_MAGIC 0x4E49424E  // 'NBIN' - v1.0
-
+#define MODEL_STEDGEAI_VERSION_SUPPORTED "v3.0.0"
 
 /* ==================== public API functions ==================== */
 

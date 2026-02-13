@@ -8,6 +8,7 @@ import systemApis, { type FirmwareType } from '@/services/api/system';
 import { toast } from 'sonner';
 import WifiReloadMask from '@/components/wifi-reload-mask';
 import { retryFetch, sleep, sliceFile } from '@/utils';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 type ImportFirmwareProps = {
     isImportFirmwareDialogOpen: boolean;
@@ -90,7 +91,7 @@ export default function ImportFirmware({ isImportFirmwareDialogOpen, setIsImport
     )
     const uploadOTAs = async (file: File, type: UploadCategory): Promise<boolean> => {
         try {
-            const contentPreview = await sliceFile(file, 1024);
+            const contentPreview = await sliceFile(file, 2048);
             if (!contentPreview.size) {
                 throw new Error(i18n._('sys.system_management.invalid_firmware_file') || 'Invalid firmware file');
             }
@@ -210,76 +211,75 @@ export default function ImportFirmware({ isImportFirmwareDialogOpen, setIsImport
                         <DialogTitle>
                             {i18n._('sys.system_management.header_import_firmware')}
                         </DialogTitle>
-                        <div className="flex flex-col gap-2">
-                            <p className="text-sm mt-2 self-start">
-                                *{i18n._('sys.system_management.firmware_file')}
-                            </p>
-                            <div className="h-full w-full flex md:grid md:grid-cols-2 flex-col flex-1 justify-center items-center gap-4 mb-4">
-                                <Upload
-                                  className="h-50 w-full"
-                                  type="customZone"
-                                  slot={customUpload({ placeholder: i18n._('sys.system_management.app_file'), fileName: appFile?.name || '', type: 'app' })}
-                                  accept={acceptFileType}
-                                  maxFiles={1}
-                                  maxSize={1024 * 1024 * 10}
-                                  multiple={false}
-                                  onFileChange={onAppFileChange}
-                                  loading={uploadLoadings.app}
-                                />
-                                <Upload
-                                  className="h-50  w-full"
-                                  type="customZone"
-                                  slot={customUpload({ placeholder: i18n._('sys.system_management.web_file'), fileName: webFile?.name || '', type: 'web' })}
-                                  accept={acceptFileType}
-                                  maxFiles={1}
-                                  maxSize={1024 * 1024 * 10}
-                                  multiple={false}
-                                  onFileChange={onWebFileChange}
-                                  loading={uploadLoadings.web}
-                                />
-                                <Upload
-                                  className="h-50 w-full"
-                                  type="customZone"
-                                  slot={customUpload({ placeholder: i18n._('sys.system_management.ai_model_file'), fileName: aiModelFile?.name || '', type: 'ai' })}
-                                  accept={acceptFileType}
-                                  maxFiles={1}
-                                  maxSize={1024 * 1024 * 10}
-                                  multiple={false}
-                                  onFileChange={onAIFileChange}
-                                  loading={uploadLoadings.ai}
-                                />
-                                <Upload
-                                  className="h-50 w-full"
-                                  type="customZone"
-                                  slot={customUpload({ placeholder: i18n._('sys.system_management.device_file'), fileName: deviceFile?.name || '', type: 'device' })}
-                                  accept={acceptDeviceFileType}
-                                  maxFiles={1}
-                                  maxSize={1024 * 1024 * 50}
-                                  multiple={false}
-                                  onFileChange={onDeviceFileChange}
-                                  loading={uploadLoadings.device}
-                                />
+                        <ScrollArea className="h-[70vh] md:h-auto pt-2">
+                            <div className="flex flex-col gap-2">
+                                <p className="text-sm mt-2 self-start">
+                                    *{i18n._('sys.system_management.firmware_file')}
+                                </p>
+                                <div className="h-full w-full flex md:grid md:grid-cols-2 flex-col flex-1 justify-center items-center gap-4 mb-4">
+                                    <Upload
+                                      className="h-50 w-full"
+                                      type="customZone"
+                                      slot={customUpload({ placeholder: i18n._('sys.system_management.app_file'), fileName: appFile?.name || '', type: 'app' })}
+                                      accept={acceptFileType}
+                                      maxFiles={1}
+                                      maxSize={1024 * 1024 * 10}
+                                      multiple={false}
+                                      onFileChange={onAppFileChange}
+                                      loading={uploadLoadings.app}
+                                    />
+                                    <Upload
+                                      className="h-50  w-full"
+                                      type="customZone"
+                                      slot={customUpload({ placeholder: i18n._('sys.system_management.web_file'), fileName: webFile?.name || '', type: 'web' })}
+                                      accept={acceptFileType}
+                                      maxFiles={1}
+                                      maxSize={1024 * 1024 * 10}
+                                      multiple={false}
+                                      onFileChange={onWebFileChange}
+                                      loading={uploadLoadings.web}
+                                    />
+                                    <Upload
+                                      className="h-50 w-full"
+                                      type="customZone"
+                                      slot={customUpload({ placeholder: i18n._('sys.system_management.ai_model_file'), fileName: aiModelFile?.name || '', type: 'ai' })}
+                                      accept={acceptFileType}
+                                      maxFiles={1}
+                                      maxSize={1024 * 1024 * 10}
+                                      multiple={false}
+                                      onFileChange={onAIFileChange}
+                                      loading={uploadLoadings.ai}
+                                    />
+                                    <Upload
+                                      className="h-50 w-full"
+                                      type="customZone"
+                                      slot={customUpload({ placeholder: i18n._('sys.system_management.device_file'), fileName: deviceFile?.name || '', type: 'device' })}
+                                      accept={acceptDeviceFileType}
+                                      maxFiles={1}
+                                      maxSize={1024 * 1024 * 50}
+                                      multiple={false}
+                                      onFileChange={onDeviceFileChange}
+                                      loading={uploadLoadings.device}
+                                    />
+                                </div>
                             </div>
-                        </div>
+                        </ScrollArea>
                     </DialogHeader>
-                    <DialogFooter>
-                        <div className="flex gap-2 justify-end">
-                            <Button
-                              variant="outline"
-                              className="w-1/2 md:w-auto"
-                              onClick={() => setIsImportFirmwareDialogOpen(false)}
-                            >
-                                {i18n._('common.cancel')}
-                            </Button>
-                            <Button
-                              variant="primary"
-                              className="w-1/2 md:w-auto"
-                              onClick={() => handleUpdate()}
-                            //   disabled={!appFile || !webFile || !aiModelFile}
-                            >
-                                {i18n._('sys.system_management.confirm_burn')}
-                            </Button>
-                        </div>
+                    <DialogFooter className="mt-4">
+                        <Button
+                          variant="outline"
+                          className="w-1/2 md:w-auto"
+                          onClick={() => setIsImportFirmwareDialogOpen(false)}
+                        >
+                            {i18n._('common.cancel')}
+                        </Button>
+                        <Button
+                          variant="primary"
+                          className="w-1/2 md:w-auto"
+                          onClick={() => handleUpdate()}
+                        >
+                            {i18n._('sys.system_management.confirm_burn')}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
 

@@ -97,6 +97,7 @@ static void web_server_ap_sleep_timer_task_function(void* argument)
     while (g_web_server.running)
     {
         web_server_ap_sleep_timer_check();
+        ota_check_timeout(); // check if the OTA upload is timed out
         osDelay(1000); // 1 second delay
     }
 }
@@ -224,7 +225,7 @@ static uint64_t get_relative_timestamp(void) {
         return AICAM_ERROR_SERVICE_INIT;
     }
 
-    LOG_SVC_INFO("[WEB_SERVER] Starting AP sleep timer task...\r\n");
+    LOG_SVC_INFO("[WEB_SERVER] Starting AP timer task...\r\n");
     g_web_server.ap_sleep_timer_thread = osThreadNew(web_server_ap_sleep_timer_task_function, NULL, &web_server_ap_sleep_timer_task_attributes);
     if (!g_web_server.ap_sleep_timer_thread) {
         return AICAM_ERROR_SERVICE_INIT;

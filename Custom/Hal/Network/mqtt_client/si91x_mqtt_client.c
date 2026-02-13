@@ -472,7 +472,7 @@ int si91x_mqtt_client_publish(const char *topic, const char *data, int data_len,
     }
     status = sl_mqtt_client_publish(si91x_mqtt_client->sl_mqtt_client, &message_to_be_published, 0, (void *)topic);
     SI91X_MQTT_CLIENT_FUNC_END();
-    if (status != SL_STATUS_IN_PROGRESS) {
+    if (status != SL_STATUS_IN_PROGRESS && status != SL_STATUS_OK) {
         LOG_DRV_ERROR("[SI91X MQTT]client publish failed: 0x%08X\r\n", status);
         return MQTT_ERR_RESPONSE;
     }
@@ -514,7 +514,7 @@ int si91x_mqtt_client_subscribe(const char *topic, int qos)
     if (qos >= 2) qos = 1;  // SI91X MQTT only support QoS 0 and 1
     status = sl_mqtt_client_subscribe(si91x_mqtt_client->sl_mqtt_client, (const uint8_t *)topic, strlen(topic), qos, 0, si91x_mqtt_client_message_handler, (void *)topic);
     SI91X_MQTT_CLIENT_FUNC_END();
-    if (status != SL_STATUS_IN_PROGRESS) {
+    if (status != SL_STATUS_IN_PROGRESS && status != SL_STATUS_OK) {
         LOG_DRV_ERROR("[SI91X MQTT]client subscribe failed: 0x%08X\r\n", status);
         return MQTT_ERR_RESPONSE;
     }
@@ -543,7 +543,7 @@ int si91x_mqtt_client_unsubscribe(const char *topic)
     SI91X_MQTT_CLIENT_FUNC_START(false);        
     status = sl_mqtt_client_unsubscribe(si91x_mqtt_client->sl_mqtt_client, (const uint8_t *)topic, strlen(topic), 0, (void *)topic);
     SI91X_MQTT_CLIENT_FUNC_END();
-    if (status != SL_STATUS_IN_PROGRESS) {
+    if (status != SL_STATUS_IN_PROGRESS && status != SL_STATUS_OK) {
         LOG_DRV_ERROR("[SI91X MQTT]client unsubscribe failed: 0x%08X\r\n", status);
         return MQTT_ERR_RESPONSE;
     }
@@ -570,14 +570,10 @@ int si91x_mqtt_client_disconnect(void)
     sl_status_t status = SL_STATUS_OK;
 
     SI91X_MQTT_CLIENT_FUNC_START(false);
-    if (si91x_mqtt_client->sl_mqtt_client->state != SL_MQTT_CLIENT_DISCONNECTED) {
-        status = sl_mqtt_client_disconnect(si91x_mqtt_client->sl_mqtt_client, 0);
-        if (status != SL_STATUS_IN_PROGRESS) {
-            LOG_DRV_ERROR("[SI91X MQTT]client disconnect failed: 0x%08X\r\n", status);
-            ret = MQTT_ERR_RESPONSE;
-        }
-    } else {
-        ret = MQTT_ERR_INVALID_STATE;
+    status = sl_mqtt_client_disconnect(si91x_mqtt_client->sl_mqtt_client, 0);
+    if (status != SL_STATUS_IN_PROGRESS && status != SL_STATUS_OK) {
+        LOG_DRV_ERROR("[SI91X MQTT]client disconnect failed: 0x%08X\r\n", status);
+        ret = MQTT_ERR_RESPONSE;
     }
     SI91X_MQTT_CLIENT_FUNC_END();
     return ret;

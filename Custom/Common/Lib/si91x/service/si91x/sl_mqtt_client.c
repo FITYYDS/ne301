@@ -424,6 +424,12 @@ sl_status_t sl_mqtt_client_connect(sl_mqtt_client_t *client,
 {
   SL_VERIFY_POINTER_OR_RETURN(client, SL_STATUS_WIFI_NULL_PTR_ARG);
 
+  // disconnect() call maps to disconnect and deinit in firmware, so if the client is in TA_DISCONNECTED or CONNECTION_FAILED state, we need to call disconnect to make sure the firmware is in clean state before we attempt to connect again.
+  if (client->state == SL_MQTT_CLIENT_TA_DISCONNECTED || client->state == SL_MQTT_CLIENT_CONNECTION_FAILED) {
+    sl_mqtt_client_disconnect(client, SI91X_MQTT_CLIENT_DISCONNECT_TIMEOUT);
+    client->state = SL_MQTT_CLIENT_DISCONNECTED;
+  }
+
   VERIFY_AND_RETURN_ERROR_IF_FALSE(
     (client->state == SL_MQTT_CLIENT_DISCONNECTED || client->state == SL_MQTT_CLIENT_TA_INIT),
     SL_STATUS_INVALID_STATE);
@@ -978,6 +984,7 @@ static void sli_si91x_handle_disconnected_event(sl_status_t status,
      However, if the status is SL_STATUS_SI91X_MQTT_KEEP_ALIVE_TERMINATE_ERROR, 
      it indicates a keep-alive terminate error, not a user-initiated disconnect failure.
   */
+  printf("rx_packet->command: %d, status: 0x%08lx\r\n", rx_packet->command, status);
   if (rx_packet->command == SLI_WLAN_REQ_EMB_MQTT_CLIENT && status != SL_STATUS_OK
       && status != SL_STATUS_SI91X_MQTT_KEEP_ALIVE_TERMINATE_ERROR) {
     *is_error_event = true;

@@ -5,31 +5,54 @@ import PlayerPanel from './player-panel';
 import deviceTool from '@/services/api/deviceTool';
 import { toast } from 'sonner';
 import { useLingui } from '@lingui/react';
+import { setItem } from '@/utils/storage';
 
 type PlayerProps = {
   videoUrl: string;
   videoRendererInstance: React.RefObject<H264Player | null>;
   // setVideoRendererInstance: (inst: H264Player | null) => void;
 }
+
+const STREAM_STATS_KEY = 'deviceToolStreamStatsVisible';
+
 export default function Player({ videoUrl, videoRendererInstance }: PlayerProps) {
   const [loading, setLoading] = useState(false);
-  const [isPlay, setIsPlay] = useState(false);
   const { i18n } = useLingui();
   // isloading and isReload are mutually exclusive
   // const [isReload, setIsReload] = useState(false);
   const [isShowPanel, setIsShowPanel] = useState(false);
-  // const [isShowFps, setIsShowFps] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const idleTimerRef = useRef<number | null>(null);
-  const [isShowFps, setIsShowFps] = useState(false);
+  const [isShowStreamStats, setIsShowStreamStats] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const stored = window.localStorage.getItem(STREAM_STATS_KEY);
+      return stored === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [fps, setFps] = useState(0);
   const [isControlPanel, setIsControlPanel] = useState(false);
+  const [latency, setLatency] = useState(0);
+  const [bandwidth, setBandwidth] = useState(0);
   const { startVideoStreamReq, stopVideoStreamReq } = deviceTool;
   const [sysTime, setSysTime] = useState('');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      setItem(STREAM_STATS_KEY, isShowStreamStats);
+    } catch {
+      // ignore storage errors
+    }
+  }, [isShowStreamStats]);
   useEffect(() => {
     const initializePlayer = async () => {
+      // Show loading during the initial connection phase
+      setLoading(true);
       await startVideoStreamReq();
       if (!videoUrl) return;
       const video = videoRef.current; // HTMLVideoElement | null
@@ -37,7 +60,6 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
       videoRendererInstance.current = new H264Player(() => { });
       videoRendererInstance.current?.initPlayer(video);
       videoRendererInstance.current?.start(videoUrl);
-      setIsPlay(true);  
     };
     initializePlayer();
     return () => {
@@ -50,12 +72,23 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
   useEffect(() => {
     if (!videoRendererInstance.current) return;
     const interval = setInterval(() => {
-      // If timestamp is 0 or invalid, use current system time
-      let timestamp = videoRendererInstance.current?.currentTime ?? 0;
-      // console.log('timestamp', timestamp);
-      if (timestamp === 0 || timestamp < 1000000000 || timestamp > 2000000000) {
-        // Get current UTC timestamp
-        timestamp = Math.floor(Date.now() / 1000);
+      const rawTs = videoRendererInstance.current?.currentTime;
+      if (rawTs == null || rawTs === 0) {
+        setSysTime('');
+        const packetsPerSecond = videoRendererInstance.current?.packetsPerSecond ?? 0;
+        const currentPackets = videoRendererInstance.current?.packetCount ?? 0;
+        setFps(packetsPerSecond || currentPackets);
+        return;
+      }
+
+      // If timestamp is invalid, do not display time
+      const timestamp = rawTs;
+      if (timestamp < 1000000000 || timestamp > 2000000000) {
+        setSysTime('');
+        const packetsPerSecond = videoRendererInstance.current?.packetsPerSecond ?? 0;
+        const currentPackets = videoRendererInstance.current?.packetCount ?? 0;
+        setFps(packetsPerSecond || currentPackets);
+        return;
       }
 
       // Convert timestamp to year-month-day hour:minute:second (UTC time)
@@ -72,6 +105,13 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
       const packetsPerSecond = videoRendererInstance.current?.packetsPerSecond ?? 0;
       const currentPackets = videoRendererInstance.current?.packetCount ?? 0;
       setFps(packetsPerSecond || currentPackets);
+
+      // Update latency and bandwidth
+      const stats = videoRendererInstance.current?.getStats?.();
+      if (stats) {
+        setLatency(stats.latency);
+        setBandwidth(stats.bandwidth);
+      }
     }, 1000); // Update every second
     return () => {
       clearInterval(interval);
@@ -81,7 +121,6 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
   const handleReload = () => {
     videoRendererInstance.current?.resetStartState().start(videoUrl);
     // setIsReload(false);
-    setIsPlay(true);
     setLoading(false);
   };
   useEffect(() => {
@@ -103,6 +142,7 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
       }
     };
     const handleWvError = (e: Event) => {
+      // eslint-disable-next-line no-console
       console.error('handleWvError', e);
     };
 
@@ -112,8 +152,9 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
     return () => {
       window.removeEventListener('wv_work', handleWvWork);
       window.removeEventListener('wv_close', handlWvClose);
+      window.removeEventListener('wv_error', handleWvError);
     };
-  }, [isPlay]);
+  }, [i18n]);
   const handleSnapshot = () => {
     videoRendererInstance.current?.doSnapshot();
   };
@@ -143,6 +184,7 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
     if (!el) return;
     const onDbl = () => {
       handleFullscreen().catch(e => {
+        // eslint-disable-next-line no-console
         console.error(e);
       });
     };
@@ -214,9 +256,11 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
                 {sysTime}
               </div>
             )}
-            {isShowFps && (
-              <div className="absolute md:top-4 top-2 md:right-4 right-2 text-red-600 px-2 py-1 rounded text-sm font-mono">
-                {fps} FPS
+            {isShowStreamStats && (
+              <div className="absolute md:top-4 top-2 md:right-4 right-2 bg-gray-800/50 px-2 py-1 rounded text-xs font-mono space-y-0.5">
+                <div><span className="text-gray-400 font-bold">{i18n._('sys.device_tool.fps')}:</span> <span className="text-white">{fps}</span></div>
+                <div><span className="text-gray-400 font-bold">{i18n._('sys.device_tool.latency')}:</span> <span className="text-white">{latency.toFixed(2)}s</span></div>
+                <div><span className="text-gray-400 font-bold">{i18n._('sys.device_tool.bandwidth')}:</span> <span className="text-white">{bandwidth.toFixed(1)} kB/s</span></div>
               </div>
             )}
           </div>
@@ -231,8 +275,8 @@ export default function Player({ videoUrl, videoRendererInstance }: PlayerProps)
           snapshot={handleSnapshot}
           fullscreen={handleFullscreen}
           isControlPanel={isControlPanel}
-          isShowFps={isShowFps}
-          showFps={() => setIsShowFps(!isShowFps)}
+          isShowStreamStats={isShowStreamStats}
+          toggleStreamStats={() => setIsShowStreamStats((prev) => !prev)}
         />
         {loading && (
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">

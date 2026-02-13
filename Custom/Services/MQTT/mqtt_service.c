@@ -1252,9 +1252,12 @@ aicam_result_t mqtt_service_start(void)
 
     // Create MQTT connection task to monitor STA connection and auto-connect
     if(g_mqtt_service.api_type == MQTT_API_TYPE_SI91X) {
-        aicam_result_t result = service_wait_for_ready(SERVICE_READY_STA, AICAM_TRUE, osWaitForever);
+        // Use timeout instead of infinite wait to avoid blocking forever
+        // when network is not available
+        #define STA_READY_TIMEOUT_MS  30000
+        aicam_result_t result = service_wait_for_ready(SERVICE_READY_STA, AICAM_TRUE, STA_READY_TIMEOUT_MS);
         if (result != AICAM_OK) {
-            LOG_SVC_ERROR("Failed to wait for STA service to be ready: %d", result);
+            LOG_SVC_ERROR("STA service not ready within %d ms: %d", STA_READY_TIMEOUT_MS, result);
             return result;
         }
         result = mqtt_service_connect();

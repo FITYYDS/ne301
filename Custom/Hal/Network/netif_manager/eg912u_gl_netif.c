@@ -308,6 +308,7 @@ int eg912u_netif_up(void)
 {
     int ret = 0, try_count = 0;;
     uint32_t event = 0;
+    // uint32_t start_tick = 0, end_tick, diff_tick = 0;
 #if USE_OLD_CAT1
     device_t *cat1_dev = NULL;
 
@@ -336,17 +337,27 @@ int eg912u_netif_up(void)
 #else
     if (eg912u_netif_state() != NETIF_STATE_DOWN) return AICAM_ERROR_BUSY;
 
-    ret = modem_device_wait_sim_ready(NETIF_4G_CAT1_INIT_TIMEOUT_MS);
-    if (ret != MODEM_OK) {
-        LOG_DRV_ERROR("modem wait sim ready failed(ret = %d)!", ret);
-        return ret;
-    }
+    // start_tick = osKernelGetTickCount();
 
     ret = modem_device_set_config(&eg912u_modem_config);
     if (ret != 0) {
         LOG_DRV_ERROR("modem set config failed(ret = %d)!", ret);
         return ret;
     }
+
+#if MODEM_IS_ENABLE_NETWORK_READY
+    ret = modem_device_wait_network_ready(NETIF_4G_CAT1_INIT_TIMEOUT_MS);
+    if (ret != MODEM_OK) {
+        LOG_DRV_ERROR("modem wait network ready failed(ret = %d)!", ret);
+        return ret;
+    }
+#else
+    ret = modem_device_wait_sim_ready(NETIF_4G_CAT1_INIT_TIMEOUT_MS);
+    if (ret != MODEM_OK) {
+        LOG_DRV_ERROR("modem wait sim ready failed(ret = %d)!", ret);
+        return ret;
+    }
+#endif
 
     ret = eg912u_update_info(1);
     if (ret != 0) {
@@ -394,6 +405,10 @@ int eg912u_netif_up(void)
             eg912u_netif_down();
         }
     }
+
+    // end_tick = osKernelGetTickCount();
+    // diff_tick = (end_tick >= start_tick) ? (end_tick - start_tick) : (0xFFFFFFFFU - start_tick + end_tick);
+    // LOG_DRV_INFO("eg912u netif up time: %ld ms.\r\n", diff_tick);
     
     return ret;
 }

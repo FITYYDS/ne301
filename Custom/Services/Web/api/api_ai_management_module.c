@@ -73,6 +73,7 @@ static aicam_result_t ai_management_status_handler(http_handler_context_t* ctx) 
         cJSON_AddStringToObject(model, "color_format", model_info.color_format);
         cJSON_AddStringToObject(model, "version", model_info.version);
         cJSON_AddStringToObject(model, "created_at", model_info.created_at);
+        cJSON_AddStringToObject(model, "stedgeai_version", model_info.stedgeai_version[0] ? model_info.stedgeai_version : "unknown");
         cJSON_AddNumberToObject(model, "input_width", model_info.input_width);
         cJSON_AddNumberToObject(model, "input_height", model_info.input_height);
         cJSON_AddNumberToObject(model, "input_channels", model_info.input_channels);

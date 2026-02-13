@@ -208,7 +208,7 @@ export default function RtmpConfig() {
                 {
                     rtmpLoading ? skeleton() : (
                         <>
-                            <div className="flex justify-between gap-2 mb-2">
+                            <div className="flex justify-between gap-2 mb-2 flex-wrap">
                                 <div className="flex items-center gap-2">
                                     <Label className="text-sm text-text-primary"> {i18n._('common.status')}:</Label>
                                     {rtmpStatus.status.state === 'reconnecting' && (

@@ -335,19 +335,7 @@ aicam_result_t video_ai_node_reload_model(video_node_t *node) {
         return AICAM_ERROR_INVALID_PARAM;
     }
 
-    nn_state_t nn_state = nn_get_state();
-    if (nn_state != NN_STATE_READY && nn_state != NN_STATE_RUNNING) {
-        LOG_CORE_WARN("NN not ready (state=%d), AI will work in pass-through mode", nn_state);
-        return AICAM_OK;
-    }
-
-    int nn_ret = nn_stop_inference();
-    if (nn_ret != 0) {
-        LOG_CORE_ERROR("Failed to stop NN inference: %d", nn_ret);
-        return AICAM_ERROR;
-    }
-
-    nn_ret = video_ai_node_unload_model(node);
+    aicam_result_t nn_ret = video_ai_node_unload_model(node);
     if (nn_ret != AICAM_OK) {
         LOG_CORE_ERROR("Failed to unload AI model: %d", nn_ret);
         return nn_ret;
@@ -396,7 +384,7 @@ aicam_result_t video_ai_node_get_nn_result(video_node_t *node, nn_result_t *resu
     if (data->cache_count == 0) {
         // Release mutex first
         osMutexRelease(data->cache_mutex);
-        LOG_CORE_WARN("NN result cache is empty");
+        LOG_CORE_DEBUG("NN result cache is empty");
         result->od.nb_detect = 0;
         return AICAM_OK;
     }
@@ -438,7 +426,7 @@ aicam_result_t video_ai_node_get_best_nn_result(video_node_t *node, nn_result_t 
     if (data->cache_count == 0) {
         // Release mutex first
         osMutexRelease(data->cache_mutex);
-        LOG_CORE_WARN("NN result cache is empty");
+        LOG_CORE_DEBUG("NN result cache is empty");
         result->od.nb_detect = 0;
         return AICAM_OK;
     }
@@ -819,7 +807,7 @@ static aicam_result_t video_ai_node_process_callback(video_node_t *node,
     
     video_ai_node_data_t *data = (video_ai_node_data_t*)video_node_get_private_data(node);
     if (!data || !data->is_initialized) {
-        return AICAM_ERROR_INVALID_PARAM;
+        return AICAM_OK;
     }
 
     //printf("AI node process callback\r\n");

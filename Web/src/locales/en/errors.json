@@ -51,7 +51,8 @@
       "POE_STATUS_IP_CONFLICT":"IP Address Conflict",
       "POE_STATUS_GATEWAY_UNREACHABLE":"Gateway Unreachable",
       "POE_STATUS_DNS_ERROR":"DNS Resolution Error",
-      "POE_STATUS_ERROR":"Generic Error"
+      "POE_STATUS_ERROR":"Generic Error",
+      "API_BUSINESS_ERROR_MODEL_RELOAD_FAILED":"Model Reload Failed, Please Confirm the Model Format"
     },
     "basic": {
       "login_success": "Login Success ! Welcome back!"

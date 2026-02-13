@@ -51,7 +51,8 @@
       "POE_STATUS_IP_CONFLICT":"IP地址冲突",
       "POE_STATUS_GATEWAY_UNREACHABLE":"网关不可达",
       "POE_STATUS_DNS_ERROR":"DNS解析错误",
-      "POE_STATUS_ERROR":"通用错误"
+      "POE_STATUS_ERROR":"通用错误",
+      "API_BUSINESS_ERROR_MODEL_RELOAD_FAILED":"模型加载失败，请确认模型格式"
     },
     "basic": {
       "login_success": "登录成功！欢迎回来！"

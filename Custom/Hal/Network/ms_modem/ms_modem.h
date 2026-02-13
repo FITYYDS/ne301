@@ -13,9 +13,10 @@ extern "C" {
 #define MODEM_TX_TASK_PRIORITY          (osPriorityRealtime4)       // Task priority
 #define MODEM_POWER_ON_DELAY_MS         (1000)                      // Module power-on stabilization delay
 #define MODEM_GPIO_READY_TIMEOUT_MS     (3000)                      // Module power-on GPIO ready timeout
-#define MODEM_UART_CHECK_BAUDRATE_MODE  (1)                         // UART baud rate detection mode 0: interrupt mode, 1: DMA mode
 #define MODEM_UART_SEND_MAX_TIME_MS     (1000)                      // Maximum wait time for sending data 1s
 #define MODEM_UART_BAUDRATE             (921600U)                   // UART baud rate
+#define MODEM_IS_ENABLE_NETWORK_READY   (1)                         // Enable network ready check
+#define MODEM_IS_CHECK_NETWORK_TYPE     (0)                         // Enable network type check
 
 /// @brief MODEM state
 typedef enum 
@@ -65,10 +66,14 @@ int modem_device_deinit(void);
 int modem_device_get_info(modem_info_t *info, uint8_t is_update_all);
 int modem_device_set_config(const modem_config_t *config);
 int modem_device_get_config(modem_config_t *config);
+int modem_device_restart_network(void);
+#if MODEM_IS_ENABLE_NETWORK_READY
+int modem_device_wait_network_ready(uint32_t timeout_ms);
+#endif
+int modem_device_wait_sim_ready(uint32_t timeout_ms);
 int modem_device_into_ppp(modem_net_ppp_callback_t recv_callback);
 int modem_device_exit_ppp(uint8_t is_focre);
 int modem_net_ppp_send(uint8_t *p_data, uint16_t len, uint32_t timeout);
-int modem_device_wait_sim_ready(uint32_t timeout_ms);
 int modem_device_check_and_enable_ecm(void);
 modem_state_t modem_device_get_state(void);
 

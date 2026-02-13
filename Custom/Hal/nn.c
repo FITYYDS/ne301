@@ -86,6 +86,17 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
     }
 
     nn_package_header_t *header = (nn_package_header_t *)file_ptr;
+
+    if (header->magic != MODEL_PACKAGE_MAGIC) {
+        LOG_DRV_ERROR("Invalid model package magic number\r\r\n");
+        return -1;
+    }
+
+    if (header->version != MODEL_PACKAGE_VERSION) {
+        LOG_DRV_ERROR("Incompatible model package version 0X%lx\r\r\n", header->version);
+        return -1;
+    }
+
     info->metadata_ptr = file_ptr + header->metadata_offset;
     /* Model configuration pointer */
     info->config_ptr = file_ptr + header->model_config_offset;
@@ -179,8 +190,21 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
     if (cJSON_IsString(json)) {
         strncpy(info->created_at, json->valuestring, sizeof(info->created_at) - 1);
     }
+    /* ST Edge AI version */
+    json = cJSON_GetObjectItemCaseSensitive(root, "stedgeai_version");
+    if (cJSON_IsString(json)) {
+        strncpy(info->stedgeai_version, json->valuestring, sizeof(info->stedgeai_version) - 1);
+        info->stedgeai_version[sizeof(info->stedgeai_version) - 1] = '\0';
+    } else {
+        info->stedgeai_version[0] = '\0';
+    }
 
     cJSON_Delete(root);
+
+    if (strstr(info->stedgeai_version, MODEL_STEDGEAI_VERSION_SUPPORTED) == NULL) {
+        LOG_DRV_ERROR("ST Edge AI version not supported, supported: %s, current: %s\r\r\n", MODEL_STEDGEAI_VERSION_SUPPORTED, info->stedgeai_version);
+        return -1;
+    }
 
     return 0;
 }
@@ -417,13 +441,13 @@ static int validate_model(const uintptr_t file_ptr)
 
     /* Check magic number */
     if (header->magic != MODEL_PACKAGE_MAGIC) {
-        LOG_DRV_ERROR("Invalid package magic number\r\r\n");
+        LOG_DRV_ERROR("Invalid model package magic number\r\r\n");
         return NN_ERROR_INVALID_PACKAGE;
     }
 
     /* Check version */
-    if (header->version > MODEL_PACKAGE_VERSION) {
-        LOG_DRV_ERROR("Incompatible package version 0X%lx\r\r\n", header->version);
+    if (header->version != MODEL_PACKAGE_VERSION) {
+        LOG_DRV_ERROR("Incompatible model package version 0X%lx\r\r\n", header->version);
         return NN_ERROR_INCOMPATIBLE;
     }
 
@@ -557,8 +581,8 @@ int nn_instance_load_model(nn_handle_t handle, const uintptr_t file_ptr)
 {
     nn_t *nn = (nn_t *)handle;
     if (!nn || nn->state == NN_STATE_READY) {
-        LOG_DRV_ERROR("model already loaded\r\r\n");
-        return -1;
+        LOG_DRV_WARN("model already loaded\r\r\n");
+        return 0;
     }
 
     osMutexAcquire(nn->mtx_id, osWaitForever);
@@ -575,8 +599,8 @@ int nn_instance_unload_model(nn_handle_t handle)
 {
     nn_t *nn = (nn_t *)handle;
     if (!nn || nn->state != NN_STATE_READY) {
-        LOG_DRV_ERROR("model already unloaded\r\r\n");
-        return -1;
+        LOG_DRV_WARN("model already unloaded\r\r\n");
+        return 0;
     }
 
     osMutexAcquire(nn->mtx_id, osWaitForever);
@@ -978,6 +1002,7 @@ static int nn_cmd(int argc, char *argv[])
             LOG_SIMPLE("Model Description: %s\r\n", nn->model.description);
             LOG_SIMPLE("Model Author: %s\r\n", nn->model.author);
             LOG_SIMPLE("Model Created At: %s\r\n", nn->model.created_at);
+            LOG_SIMPLE("Model ST Edge AI Version: %s\r\n", nn->model.stedgeai_version);
             LOG_SIMPLE("Model Color Format: %s\r\n", nn->model.color_format);
             LOG_SIMPLE("Model Input Data Type: %s\r\n", nn->model.input_data_type);
             LOG_SIMPLE("Model Output Data Type: %s\r\n", nn->model.output_data_type);

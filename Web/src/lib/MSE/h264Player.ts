@@ -72,7 +72,7 @@ interface ReturnResult {
 }
 
 interface WsWorkerMessage {
-    type: 'open' | 'close' | 'error' | 'video-data';
+    type: 'connecting' | 'open' | 'close' | 'error' | 'video-data';
     error?: string;
     payload?: ArrayBuffer;
     code?: number;
@@ -144,6 +144,29 @@ export default class H264Player {
 
     public currentFrame: number = 0;
 
+    public totalBytesLoaded: number = 0;
+
+    // Adaptive buffer management
+    private readonly MAX_BUFFER_ENTRIES: number = 10;
+
+    private bufferTimes: number[] = [];
+
+    private bufferIndex: number = 0;
+
+    private lastJumpTime: number = 0;
+
+    private readonly BUFFERING_COOLDOWN_TIMEOUT: number = 5000;
+
+    // Latency tracking
+    public latency: number = 0;
+
+    // Bandwidth tracking
+    private lastBandwidthCheck: number = 0;
+
+    private lastBytesLoaded: number = 0;
+
+    public bandwidth: number = 0; // kBps
+
     // H264 raw stream capture
     private captureActive: boolean = false;
 
@@ -175,6 +198,14 @@ export default class H264Player {
         this.lastPacketSec = 0;
         this.currentTime = 0;
         this.currentFrame = 0;
+        this.totalBytesLoaded = 0;
+        this.bufferTimes = [];
+        this.bufferIndex = 0;
+        this.lastJumpTime = 0;
+        this.latency = 0;
+        this.lastBandwidthCheck = Date.now();
+        this.lastBytesLoaded = 0;
+        this.bandwidth = 0;
     }
 
     /**
@@ -188,7 +219,13 @@ export default class H264Player {
             if (!msg || typeof msg !== 'object') return;
             
             switch (msg.type) {
+                case 'connecting':
+                    // Notify external to show loading during the connection phase
+                    window.dispatchEvent(new CustomEvent('wv_work', { detail: false }));
+                    break;
                 case 'open':
+                    // Connected: hide loading
+                    window.dispatchEvent(new CustomEvent('wv_work', { detail: true }));
                     window.dispatchEvent(new CustomEvent('wv_open'));
                     break;
                 case 'close':
@@ -198,6 +235,8 @@ export default class H264Player {
                     break;
                 case 'error':
                     window.dispatchEvent(new CustomEvent('wv_error', { detail: msg.error }));
+                    // Keep loading visible while retrying
+                    window.dispatchEvent(new CustomEvent('wv_work', { detail: false }));
                     this.wsRetryCount -= 1;
                     if (this.wsRetryCount > 0) {
                         this.resetStartState().start(this.wsUrl);
@@ -214,8 +253,11 @@ export default class H264Player {
                         this.packetCount = 0;
                     }
                     this.packetCount++;
-                    
+
                     if (msg.payload instanceof ArrayBuffer) {
+                        // Track total bytes for bandwidth calculation
+                        this.totalBytesLoaded += msg.payload.byteLength;
+
                         const frameData = this.dealVideoData(msg.payload);
                         if (frameData) {
                             this.decoderWorker?.postMessage(frameData);
@@ -275,6 +317,7 @@ export default class H264Player {
             this.mediaSrcCallback(msg);
         });
         this.videoPlayer.setVideoElement(this.videoElement);
+        this.setupProgressHandler();
         return this;
     }
 
@@ -307,7 +350,6 @@ export default class H264Player {
         this.initWorkers();
         this.wsConnect(url);
         this.decodeWorker?.postMessage({ type: 'init' });
-        window.dispatchEvent(new CustomEvent('wv_work', { detail: true }));
         return this;
     }
 
@@ -397,9 +439,6 @@ export default class H264Player {
         
         // Reinitialize decoder worker to prepare for new stream
         this.decoderWorker?.postMessage({ type: 'init' });
-        
-        // Notify external that work has started
-        window.dispatchEvent(new CustomEvent('wv_work', { detail: true }));
         
         // Reset state
         this.isStarted = true;
@@ -733,6 +772,180 @@ export default class H264Player {
 
     setPlayMode(opt: boolean): void {
         this.isPlayback = opt;
+    }
+
+    /**
+     * Get buffered time (how much video is buffered ahead of current playback position)
+     */
+    private getBufferedTime(): number {
+        if (!this.videoElement || this.videoElement.buffered.length === 0) return 0;
+        return this.videoElement.buffered.end(this.videoElement.buffered.length - 1) - this.videoElement.currentTime;
+    }
+
+    /**
+     * Calculate adaptive buffer threshold based on rolling average
+     */
+    private calculateAdaptiveBufferThreshold(): number {
+        const filledEntries = this.bufferTimes.length;
+        const sum = this.bufferTimes.reduce((a, b) => a + b, 0);
+        const averageBufferTime = filledEntries ? sum / filledEntries : 0;
+
+        // Safari/iOS needs higher threshold due to playback rate issues
+        const isSafariOrIOS = browser.isBrowserSafari() || /iPad|iPhone|iPod/.test(navigator.userAgent);
+        return averageBufferTime * (isSafariOrIOS ? 3 : 1.5);
+    }
+
+    /**
+     * Calculate adaptive playback rate to catch up to live edge
+     */
+    private calculateAdaptivePlaybackRate(bufferTime: number, bufferThreshold: number): number {
+        const alpha = 0.2; // aggressiveness of playback rate increase
+        const beta = 0.5; // steepness of exponential growth
+
+        // Don't adjust playback rate if we're close enough to live
+        // or if we just started streaming
+        if (
+            ((bufferTime <= bufferThreshold && bufferThreshold < 3) || bufferTime < 3)
+            && this.bufferTimes.length <= this.MAX_BUFFER_ENTRIES
+        ) {
+            return 1;
+        }
+
+        const rate = 1 + alpha * Math.exp(beta * (bufferTime - bufferThreshold));
+        return Math.min(rate, 2);
+    }
+
+    /**
+     * Jump to live edge (for Safari/iOS)
+     */
+    private jumpToLive(): void {
+        if (!this.videoElement) return;
+
+        const { buffered } = this.videoElement;
+        if (buffered.length > 0) {
+            const liveEdge = buffered.end(buffered.length - 1);
+            // Jump to the live edge minus a small buffer
+            this.videoElement.currentTime = liveEdge - 0.75;
+            this.lastJumpTime = Date.now();
+        }
+    }
+
+    /**
+     * Calculate latency (how far behind live we are)
+     */
+    private calculateLatency(): number {
+        if (!this.videoElement) return 0;
+
+        const { seekable } = this.videoElement;
+        if (seekable.length > 0) {
+            return Math.max(0, seekable.end(seekable.length - 1) - this.videoElement.currentTime);
+        }
+
+        // Fallback: use buffered range
+        const { buffered } = this.videoElement;
+        if (buffered.length > 0) {
+            return Math.max(0, buffered.end(buffered.length - 1) - this.videoElement.currentTime);
+        }
+
+        return 0;
+    }
+
+    /**
+     * Calculate bandwidth in kBps
+     */
+    private calculateBandwidth(): void {
+        const now = Date.now();
+        const timeElapsed = (now - this.lastBandwidthCheck) / 1000; // seconds
+
+        if (timeElapsed >= 1) {
+            const bytesLoaded = this.totalBytesLoaded;
+            this.bandwidth = (bytesLoaded - this.lastBytesLoaded) / timeElapsed / 1000; // kBps
+
+            this.lastBytesLoaded = bytesLoaded;
+            this.lastBandwidthCheck = now;
+        }
+    }
+
+    /**
+     * Setup progress handler for adaptive buffer management
+     */
+    private setupProgressHandler(): void {
+        if (!this.videoElement) return;
+
+        this.videoElement.addEventListener('progress', () => {
+            this.onProgress();
+        });
+
+        // Also update stats periodically
+        setInterval(() => {
+            this.calculateBandwidth();
+            this.latency = this.calculateLatency();
+        }, 1000);
+    }
+
+    /**
+     * Handle progress events for adaptive buffer management
+     */
+    private onProgress(): void {
+        if (!this.videoElement) return;
+
+        const bufferTime = this.getBufferedTime();
+
+        // Track buffer times in rolling window (only when playback rate is normal or buffer is low)
+        if (this.videoElement.playbackRate === 1 || bufferTime < 3) {
+            if (this.bufferTimes.length < this.MAX_BUFFER_ENTRIES) {
+                this.bufferTimes.push(bufferTime);
+            } else {
+                this.bufferTimes[this.bufferIndex] = bufferTime;
+                this.bufferIndex = (this.bufferIndex + 1) % this.MAX_BUFFER_ENTRIES;
+            }
+        }
+
+        const bufferThreshold = this.calculateAdaptiveBufferThreshold();
+
+        // Calculate adaptive playback rate
+        const playbackRate = this.calculateAdaptivePlaybackRate(bufferTime, bufferThreshold);
+
+        // Apply adaptive strategy based on browser
+        const isSafariOrIOS = browser.isBrowserSafari() || /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+        if (this.videoElement && !this.videoElement.paused) {
+            if (
+                isSafariOrIOS
+                && bufferTime > 3
+                && Date.now() - this.lastJumpTime > this.BUFFERING_COOLDOWN_TIMEOUT
+            ) {
+                // Jump to live on Safari/iOS due to playback rate changes causing re-buffering
+                this.jumpToLive();
+            } else if (!isSafariOrIOS) {
+                // Adjust playback rate to compensate for drift - non Safari/iOS only
+                if (this.videoElement.playbackRate !== playbackRate) {
+                    this.videoElement.playbackRate = playbackRate;
+                }
+            }
+        }
+
+        // Update latency
+        this.latency = this.calculateLatency();
+    }
+
+    /**
+     * Get player statistics
+     */
+    public getStats(): {
+        bandwidth: number;
+        latency: number;
+        bufferTime: number;
+        playbackRate: number;
+        packetsPerSecond: number;
+    } {
+        return {
+            bandwidth: this.bandwidth,
+            latency: this.latency,
+            bufferTime: this.getBufferedTime(),
+            playbackRate: this.videoElement?.playbackRate ?? 1,
+            packetsPerSecond: this.packetsPerSecond,
+        };
     }
 
     // setPlayPaused(opt: number): void {

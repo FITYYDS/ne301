@@ -21,6 +21,8 @@
 #include "iperf_test.h"
 #include "ms_mqtt_client_test.h"
 #include "ms_network_test.h"
+#include "http_client_test.h"
+#include "aws_capture.h"
 #include "icmp_client.h"
 #include "netif_manager.h"
 #include "wifi.h"
@@ -536,6 +538,8 @@ void netif_manager_register_commands(void)
     iperf_test_register();
     ms_mqtt_client_test_register();
     ms_network_test_register();
+    http_client_test_register();
+    aws_capture_register();
     icmp_client_register();
     wifi_register();
 #ifdef SLI_SI91X_ENABLE_BLE

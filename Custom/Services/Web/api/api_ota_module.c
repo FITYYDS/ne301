@@ -22,10 +22,16 @@
 #include "drtc.h"
 #include "storage.h"
 #include "version.h"
+#include "nn.h"
+#include "cmsis_os2.h"
 
 #define OTA_WRITE_BUF_SIZE 1024
+#define OTA_PRECHECK_DATA_SIZE 2048  // 2KB: 1KB OTA header + 1KB model package header
+#define OTA_TIMEOUT_MS (5 * 60 * 1000)  // 5 minutes timeout for OTA upload
 /* ==================== Global Variables ==================== */
 static aicam_bool_t g_ota_upgrade_in_progress = AICAM_FALSE;
+static uint32_t g_ota_last_activity_tick = 0;
+
 typedef struct {
     upgrade_handle_t handle;
     firmware_header_t header_storage;
@@ -280,21 +286,28 @@ static int process_ota_header(ota_upload_ctx_t *ctx) {
 /* ==================== API Handlers for OTA ==================== */
 
 /**
- * @brief Pre-check OTA header validation (1KB data check)
- * @param ctx HTTP handler context
+ * @brief Pre-check OTA header validation
+ * @param header_data Raw data containing OTA header (1KB) + optional model package header (1KB for AI model)
+ * @param data_len Length of header_data: 1KB for non-AI, 2KB for AI model
+ * @param fw_type_param Firmware type from request parameter
+ * @param expected_content_length Expected total content length (optional)
  * @return AICAM_OK on success, error code on failure
  */
 static aicam_result_t ota_precheck_header(const uint8_t *header_data, size_t data_len, 
                                           FirmwareType fw_type_param, 
                                           size_t expected_content_length)
 {
-    if (!header_data || data_len < sizeof(ota_header_t)) {
+    // Determine required data size based on firmware type
+    aicam_bool_t is_ai_model = (fw_type_param == FIRMWARE_AI_1 || fw_type_param == FIRMWARE_DEFAULT_AI);
+    size_t required_size = is_ai_model ? OTA_PRECHECK_DATA_SIZE : sizeof(ota_header_t);
+    
+    if (!header_data || data_len < required_size) {
         LOG_SVC_ERROR("Pre-check failed: insufficient data (received %lu, need %lu)", 
-                      (unsigned long)data_len, (unsigned long)sizeof(ota_header_t));
+                      (unsigned long)data_len, (unsigned long)required_size);
         return AICAM_ERROR_INVALID_PARAM;
     }
     
-    // Cast to ota_header_t for validation
+    // ============== Part 1: Validate OTA header (first 1KB) ==============
     ota_header_t *header = (ota_header_t *)header_data;
     
     // 1. Check firmware header magic/CRC
@@ -323,7 +336,7 @@ static aicam_result_t ota_precheck_header(const uint8_t *header_data, size_t dat
     // 3. Check firmware size match (if expected_content_length is provided)
     if (expected_content_length > 0) {
         if (header->total_package_size != expected_content_length) {
-            LOG_SVC_ERROR("Pre-check failed: Firmware size mismatch (header=%u, expected=lu)", 
+            LOG_SVC_ERROR("Pre-check failed: Firmware size mismatch (header=%u, expected=%lu)", 
                          header->total_package_size, (unsigned long)expected_content_length);
             return AICAM_ERROR_INVALID_PARAM;
         }
@@ -352,9 +365,33 @@ static aicam_result_t ota_precheck_header(const uint8_t *header_data, size_t dat
         return AICAM_ERROR_INVALID_PARAM;
     }
     
-    LOG_SVC_INFO("Pre-check passed: Header is valid (type=%d, size=%u, version=%.*s)", 
+    LOG_SVC_INFO("Pre-check passed: OTA header is valid (type=%d, size=%u, version=%.*s)", 
                  fw_type_from_header, header->total_package_size, 
                  (int)sizeof(header->fw_ver), header->fw_ver);
+    
+    // ============== Part 2: Validate model package header (second 1KB, for AI model only) ==============
+    if (fw_type_param == FIRMWARE_AI_1 || fw_type_param == FIRMWARE_DEFAULT_AI) {
+        
+        // Model package header starts at offset 1KB (after OTA header)
+        const nn_package_header_t *model_header = (const nn_package_header_t *)(header_data + sizeof(ota_header_t));
+        
+        // Check model package magic number
+        if (model_header->magic != MODEL_PACKAGE_MAGIC) {
+            LOG_SVC_ERROR("Pre-check failed: Invalid model package magic (0x%08lX, expected 0x%08X)", 
+                         (unsigned long)model_header->magic, MODEL_PACKAGE_MAGIC);
+            return AICAM_ERROR_INVALID_PARAM;
+        }
+        
+        // Check model package version
+        if (model_header->version != MODEL_PACKAGE_VERSION) {
+            LOG_SVC_ERROR("Pre-check failed: Incompatible model package version (0x%06lX, expected 0x%06X)", 
+                         (unsigned long)model_header->version, MODEL_PACKAGE_VERSION);
+            return AICAM_ERROR_INVALID_PARAM;
+        }
+        
+        LOG_SVC_INFO("Pre-check passed: Model package header is valid (magic=0x%08lX, version=0x%06lX)", 
+                     (unsigned long)model_header->magic, (unsigned long)model_header->version);
+    }
     
     return AICAM_OK;
 }
@@ -362,7 +399,7 @@ static aicam_result_t ota_precheck_header(const uint8_t *header_data, size_t dat
 /**
  * @brief OTA pre-check handler
  * POST /api/v1/system/ota/precheck
- * Validates 1KB OTA header data before full upload
+ * Validates OTA header data before full upload: 1KB for non-AI, 2KB for AI model
  */
 aicam_result_t ota_precheck_handler(http_handler_context_t *ctx)
 {
@@ -383,24 +420,29 @@ aicam_result_t ota_precheck_handler(http_handler_context_t *ctx)
         // Don't fail, just warn - some clients may not set Content-Type correctly
     }
     
-    // Check Content-Length (should be at least 1KB = 1024 bytes)
-    if (ctx->request.content_length < sizeof(ota_header_t)) {
-        return api_response_error(ctx, API_ERROR_INVALID_REQUEST, 
-                                  "Content-Length must be at least 1KB (1024 bytes)");
-    }
-    
     // Check if request body is available
     if (!ctx->request.body || ctx->request.content_length == 0) {
         return api_response_error(ctx, API_ERROR_INVALID_REQUEST, "Request body is empty");
     }
     
-    // Parse firmware type from query parameter
+    // Parse firmware type from query parameter first (needed for Content-Length check)
     char fw_type_str[32] = {0};
     if (mg_http_get_var(&ctx->msg->query, "firmwareType", fw_type_str, sizeof(fw_type_str)) <= 0) {
         strcpy(fw_type_str, "app");  // Default to app
     }
     
     FirmwareType fw_type = parse_firmware_type(fw_type_str);
+    
+    // Determine required Content-Length based on firmware type
+    aicam_bool_t is_ai_model = (fw_type == FIRMWARE_AI_1 || fw_type == FIRMWARE_DEFAULT_AI);
+    size_t required_size = is_ai_model ? OTA_PRECHECK_DATA_SIZE : sizeof(ota_header_t);
+    
+    // Check Content-Length (1KB for non-AI, 2KB for AI model)
+    if (ctx->request.content_length < required_size) {
+        return api_response_error(ctx, API_ERROR_INVALID_REQUEST, 
+                                  is_ai_model ? "Content-Length must be at least 2KB (2048 bytes) for AI model"
+                                              : "Content-Length must be at least 1KB (1024 bytes)");
+    }
     
     // Parse expected content length from query parameter (optional)
     size_t expected_content_length = 0;
@@ -549,6 +591,7 @@ void ota_upload_stream_processor(struct mg_connection *c, int ev, void *ev_data)
                      ctx->fw_type_param, fw_type_str, (unsigned int)ctx->content_length);
 
         g_ota_upgrade_in_progress = AICAM_TRUE;
+        g_ota_last_activity_tick = osKernelGetTickCount();
 
         // remove the Mongoose HTTP protocol handler, switch to Raw TCP mode
         c->pfn = NULL; 
@@ -560,6 +603,8 @@ void ota_upload_stream_processor(struct mg_connection *c, int ev, void *ev_data)
     // data processing (buffer header + write)
     // -----------------------------
     if (ctx && ctx->initialized && !ctx->failed && c->recv.len > 0) {
+        g_ota_last_activity_tick = osKernelGetTickCount();  // update activity timestamp
+        
         size_t processed = 0;
         uint8_t *data = (uint8_t *)c->recv.buf;
         size_t len = c->recv.len;
@@ -678,8 +723,8 @@ cleanup:
     if (ctx && (ctx->failed || ctx->total_received >= ctx->content_length)) {
         buffer_free(ctx);
         c->fn_data = NULL;
-        g_ota_upgrade_in_progress = AICAM_FALSE; // should be handled in the service layer
     }
+    g_ota_upgrade_in_progress = AICAM_FALSE; // clear the global status
 }
 
 aicam_result_t ota_upload_handler(http_handler_context_t *ctx)
@@ -897,3 +942,46 @@ aicam_result_t web_api_register_ota_module(void)
     return AICAM_OK;
 }
 
+/**
+ * @brief Check OTA upload timeout and reset state if necessary
+ * @return AICAM_TRUE if timeout occurred and state was reset, AICAM_FALSE otherwise
+ */
+aicam_bool_t ota_check_timeout(void)
+{
+    if (!g_ota_upgrade_in_progress) {
+        return AICAM_FALSE;
+    }
+    
+    uint32_t current_tick = osKernelGetTickCount();
+    uint32_t elapsed = current_tick - g_ota_last_activity_tick;
+    
+    if (elapsed > OTA_TIMEOUT_MS) {
+        LOG_SVC_WARN("OTA upload timeout after %u ms, resetting state", elapsed);
+        g_ota_upgrade_in_progress = AICAM_FALSE;
+        g_ota_last_activity_tick = 0;
+        return AICAM_TRUE;
+    }
+    
+    return AICAM_FALSE;
+}
+
+/**
+ * @brief Force reset OTA upload state
+ */
+void ota_reset_upload_state(void)
+{
+    if (g_ota_upgrade_in_progress) {
+        LOG_SVC_WARN("Force resetting OTA upload state");
+    }
+    g_ota_upgrade_in_progress = AICAM_FALSE;
+    g_ota_last_activity_tick = 0;
+}
+
+/**
+ * @brief Check if OTA upload is in progress
+ * @return AICAM_TRUE if OTA upload is in progress, AICAM_FALSE otherwise
+ */
+aicam_bool_t ota_is_upload_in_progress(void)
+{
+    return g_ota_upgrade_in_progress;
+}

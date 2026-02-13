@@ -551,6 +551,9 @@ void ms_network_close(ms_network_handle_t network)
     xSemaphoreTake(network->rx_lock, portMAX_DELAY);
     xSemaphoreTake(network->tx_lock, portMAX_DELAY);
     if (network->sock_fd >= 0) {
+        if (network->tls_enable_flag) {
+            mbedtls_ssl_close_notify(&network->ssl);
+        }
         shutdown(network->sock_fd, SHUT_RDWR);
         close(network->sock_fd);
         network->sock_fd = -1;
@@ -569,7 +572,6 @@ void ms_network_deinit(ms_network_handle_t network)
     xSemaphoreTake(network->rx_lock, portMAX_DELAY);
     xSemaphoreTake(network->tx_lock, portMAX_DELAY);
     if (network->tls_enable_flag) {
-        mbedtls_ssl_close_notify(&network->ssl);
         mbedtls_x509_crt_free(&network->cacert);
         mbedtls_x509_crt_free(&network->clicert);
         mbedtls_pk_free(&network->pkey);

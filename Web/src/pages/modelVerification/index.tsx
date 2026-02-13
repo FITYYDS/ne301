@@ -23,6 +23,7 @@ export default function ModelVerification() {
   const { inferenceImageReq } = modelVerification;
   const { getAiStatusReq } = deviceTool;
   const [aiModelName, setAiModelName] = useState('');
+  const [aiStatus, setAiStatus] = useState('');
   const [inferenceLoading, setInferenceLoading] = useState(false);
   const [showInferenceImage, setShowInferenceImage] = useState(true);
   const [inferenceImage, setInferenceImage] = useState<string | null>(null);
@@ -36,6 +37,7 @@ export default function ModelVerification() {
     try {
       const res = await getAiStatusReq();
       setAiModelName(res.data.model.name);
+      setAiStatus(res.data.model.status);
       setAiImgSize(() => ({
         width: res.data.model.input_width,
         height: res.data.model.input_height,
@@ -182,12 +184,14 @@ export default function ModelVerification() {
     <div className="flex flex-col items-center w-full min-h-full bg-gray-100 pt-4 gap-4">
       <div className="flex flex-wrap justify-start items-center  gap-2 sm:w-xl w-full md:px-0 px-4">
         {/* <span className="text-lg mr-4 text-text-primary">{i18n._('sys.model_verification.model_verification_title')}</span> */}
-        <div className="flex items-center">
-          <span className="text-sm text-text-secondary">
-            {i18n._('sys.model_verification.model_verification_subtitle')}：
-          </span>
-          <span className="text-sm text-text-primary">{aiModelName}</span>
-        </div>
+        {aiStatus === 'loaded' && (
+          <div className="flex items-center">
+            <span className="text-sm text-text-secondary">
+              {i18n._('sys.model_verification.model_verification_subtitle')}：
+            </span>
+            <span className="text-sm text-text-primary">{aiModelName}</span>
+          </div>
+        )}
       </div>
       <div className="w-full flex-1 px-4 flex justify-center">
         <Card className="w-full sm:w-xl mb-4">
@@ -200,34 +204,44 @@ export default function ModelVerification() {
               </div>
             ) : (
               <div className="w-full md:min-h-[340px] md:h-1/2 min-h-[100px] h-[350px] bg-gray-100 rounded-md border-1 border-gray-300 border-dashed  flex flex-col items-center justify-center">
-                {inferenceImage && (
-                  <div className="w-full max-h-[300px] flex items-center justify-center">
-                    <Image
-                      src={
-                        showInferenceImage
-                          ? inferenceImage
-                          : originalImage || ''
-                      }
-                      alt="inferenceImage"
-                      className=" h-full  p-2 object-contain"
-                    />
-                  </div>
+                {aiStatus === 'loaded' && (
+                  <>
+                    {inferenceImage && (
+                      <div className="w-full max-h-[300px] flex items-center justify-center">
+                        <Image
+                          src={
+                            showInferenceImage
+                              ? inferenceImage
+                              : originalImage || ''
+                          }
+                          alt="inferenceImage"
+                          className=" h-full  p-2 object-contain"
+                        />
+                      </div>
+                    )}
+                    {!inferenceImage && (
+                      <Upload
+                        onFileChange={onFileChange}
+                        maxSize={fileSize}
+                        className="w-full h-[340px] flex-1"
+                        type="imgZone"
+                        accept={acceptFileType}
+                        maxFiles={1}
+                        multiple={false}
+                        minSize={0}
+                      />
+                    )}
+                    {inferenceImage && (
+                      <div className="flex flex-col justify-end mb-2">
+                        {uploadSlot()}
+                      </div>
+                    )}
+                  </>
                 )}
-                {!inferenceImage && (
-                  <Upload
-                    onFileChange={onFileChange}
-                    maxSize={fileSize}
-                    className="w-full h-[340px] flex-1"
-                    type="imgZone"
-                    accept={acceptFileType}
-                    maxFiles={1}
-                    multiple={false}
-                    minSize={0}
-                  />
-                )}
-                {inferenceImage && (
-                  <div className="flex flex-col justify-end mb-2">
-                    {uploadSlot()}
+                {aiStatus === 'unloaded' && (
+                  <div className="w-full h-[340px] flex flex-col items-center justify-center gap-3">
+                    <SvgIcon icon="ai_off" className="w-16 h-16 text-gray-400" />
+                    <p className="text-sm text-text-secondary text-center">{i18n._('sys.model_verification.model_unloaded')}</p>
                   </div>
                 )}
               </div>

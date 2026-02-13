@@ -3,11 +3,6 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useLingui } from '@lingui/react';
 import deviceTool from '@/services/api/deviceTool';
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger
-} from "@/components/tooltip"
 import { toast } from 'sonner';
 import { useAiStatusStore } from '@/store/aiStatus';
 import { debounce } from 'throttle-debounce';
@@ -17,18 +12,16 @@ type PlayerPanelProps = {
     handleReload: () => void;
     snapshot: () => void;
     className?: string;
-    // showFps: () => void;
-    // isShowFps?: boolean;
     isFullscreen: boolean;
     fullscreen: () => void;
     isControlPanel: boolean;
-    isShowFps: boolean;
-    showFps: () => void;
+    isShowStreamStats: boolean;
+    toggleStreamStats: () => void;
 }
-export default function PlayerPanel({ handleReload, isFullscreen, snapshot, fullscreen, isControlPanel, className, isShowFps, showFps }: PlayerPanelProps) {
+export default function PlayerPanel({ handleReload, isFullscreen, snapshot, fullscreen, isControlPanel, className, isShowStreamStats, toggleStreamStats }: PlayerPanelProps) {
     const { i18n } = useLingui();
     const { toggleAiReq } = deviceTool;
-    const { isAiInference, setIsAiInference } = useAiStatusStore();
+    const { isAiInference, setIsAiInference, aiStatus } = useAiStatusStore();
     const { photoCaptureReq } = deviceTool;
     const [captureDisabled, setCaptureDisabled] = useState(false);
     const handleAiInferenceChange = async (value: boolean) => {
@@ -64,86 +57,92 @@ export default function PlayerPanel({ handleReload, isFullscreen, snapshot, full
     return (
         <div className={cn("w-full md:h-[60px] h-[40px] md:px-12 px-8 flex items-center justify-between transition-all duration-300 ease-in-out bg-gradient-to-t from-black/70 via-black/30 to-transparent", className)}>
             <div className="flex items-center gap-4">
-                {/* <Button variant="ghost" onClick={handlePlay} className="md:w-8 w-6 md:h-8 h-6 !p-0 flex items-center justify-center">
-                        {(isPlay && isControlPanel) ? <SvgIcon className="w-full !h-full flex-1" icon="pause" /> : <SvgIcon className="w-full !h-full flex-1" icon="play" />}
-                    </Button> */}
-                <Tooltip>
-                    <TooltipTrigger>
-                        <Button variant="ghost" onClick={handleReload} className="md:w-8 w-6 md:h-8 h-6 !p-0 flex items-center justify-center cursor-pointer">
-                            <SvgIcon className="w-full !h-full flex-1" icon="reload" />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-80 text-pretty">
+                <div className="relative md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer group">
+                    <Button
+                      variant="ghost"
+                      onClick={handleReload}
+                      className="md:w-8 w-6 md:h-8 h-6 !p-0 flex items-center justify-center cursor-pointer"
+                    >
+                        <SvgIcon className="w-full !h-full flex-1" icon="reload" />
+                    </Button>
+                    <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-2 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                         {i18n._('sys.device_tool.reload')}
-                    </TooltipContent>
-                </Tooltip>
+                    </span>
+                </div>
             </div>
             <div className="flex gap-3">
-                <Tooltip>
-                    <TooltipTrigger>
-                        <div className="md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer">
-                            <Button disabled={!isControlPanel || captureDisabled} variant="ghost" onClick={debouncedHandlePhotoCameraClick} className="md:w-8 w-6 md:h-7 h-6 !p-0">
-                                <SvgIcon className="w-full !h-full flex-1 text-[#f3f2f3]" icon="photo_camera" />
-                            </Button>
-                        </div>
-
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-80 text-pretty">
+                <div className="relative md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer group">
+                    <Button
+                      disabled={!isControlPanel || captureDisabled}
+                      variant="ghost"
+                      onClick={debouncedHandlePhotoCameraClick}
+                      className="md:w-8 w-6 md:h-7 h-6 !p-0"
+                    >
+                        <SvgIcon className="w-full !h-full flex-1 text-[#f3f2f3]" icon="photo_camera" />
+                    </Button>
+                    <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-2 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                         {i18n._('sys.device_tool.photo_capture')}
-                    </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                    <TooltipTrigger>
-                        <div className="md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer">
-                            <Button disabled={!isControlPanel} variant="ghost" onClick={() => handleAiInferenceChange(!isAiInference)} className="md:w-8 w-6 md:h-7 h-6 !p-0">
-                                {isAiInference ? <SvgIcon className="w-full !h-full flex-1" icon="ai" /> : <SvgIcon className="w-full !h-full flex-1 text-[#f3f2f3]" icon="ai_off" />}
-                            </Button>
-                        </div>
-
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-80 text-pretty">
+                    </span>
+                </div>
+                <div className="relative md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer group">
+                    <Button
+                      disabled={!isControlPanel || aiStatus === 'unloaded'}
+                      variant="ghost"
+                      onClick={() => handleAiInferenceChange(!isAiInference)}
+                      className="md:w-8 w-6 md:h-7 h-6 !p-0"
+                    >
+                        {(isAiInference && aiStatus === 'loaded') ? <SvgIcon className="w-full !h-full flex-1" icon="ai" /> : <SvgIcon className="w-full !h-full flex-1 text-[#f3f2f3]" icon="ai_off" />}
+                    </Button>
+                    <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-2 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                         {i18n._('sys.device_tool.ai')}
-                    </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                    <TooltipTrigger>
-                        <div className="md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer">
-                            <Button disabled={!isControlPanel} variant="ghost" onClick={showFps} className="!p-0 !w-full !h-full">
-                                {isShowFps ? <SvgIcon className="!w-full !h-full flex-1 text-[#f3f2f3]" icon="show_fps" /> : <SvgIcon className="w-full !h-full flex-1 text-[#E6E6E6]" icon="close_fps" />}
-                            </Button>
-                        </div>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-80 text-pretty">
-                        {i18n._('sys.device_tool.fps')}
-                    </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                    <TooltipTrigger>
-                        <div className="md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer">
-                            <Button disabled={!isControlPanel} variant="ghost" onClick={snapshot} className="!p-0 !w-full !h-full">
-                                <SvgIcon className="w-full !h-full flex-1 text-[#f3f2f3]" icon="screenshot" />
-                            </Button>
-                        </div>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-80 text-pretty">
+                    </span>
+                </div>
+                <div className="relative md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer group">
+                    <Button
+                      disabled={!isControlPanel}
+                      variant="ghost"
+                      onClick={toggleStreamStats}
+                      className="!p-0 !w-full !h-full"
+                    >
+                        {isShowStreamStats ? <SvgIcon className="!w-full !h-full flex-1 text-[#f3f2f3]" icon="show_info" /> : <SvgIcon className="w-full !h-full flex-1 text-[#E6E6E6]" icon="close_info" />}
+                    </Button>
+                    <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-2 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                        {i18n._('sys.device_tool.stream_info')}
+                    </span>
+                </div>
+                <div className="relative md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer group">
+                    <Button
+                      disabled={!isControlPanel}
+                      variant="ghost"
+                      onClick={snapshot}
+                      className="!p-0 !w-full !h-full"
+                    >
+                        <SvgIcon className="w-full !h-full flex-1 text-[#f3f2f3]" icon="screenshot" />
+                    </Button>
+                    <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-2 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                         {i18n._('sys.device_tool.snapshot')}
-                    </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                    <TooltipTrigger>
-                        <div className="md:w-8 w-6 md:h-8 h-6 flex items-center justify-center">
-                            <Button variant="ghost" onClick={fullscreen} className="!p-0 !w-full !h-full cursor-pointer">
-                                {isFullscreen ? <SvgIcon className="w-full !h-full flex-1" icon="fullscreen_exit" /> : <SvgIcon className="w-full !h-full flex-1" icon="fullscreen" />}
-                            </Button>
-                        </div>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-80 text-pretty">
+                    </span>
+                </div>
+                <div className="relative md:w-8 w-6 md:h-8 h-6 flex items-center justify-center cursor-pointer group">
+                    <Button
+                      disabled={!isControlPanel}
+                      variant="ghost"
+                      onClick={fullscreen}
+                      className="!p-0 !w-full !h-full"
+                    >
+                        {isFullscreen
+                            ? <SvgIcon className="w-full !h-full flex-1" icon="fullscreen_exit" />
+                            : <SvgIcon className="w-full !h-full flex-1" icon="fullscreen" />}
+                    </Button>
+                    <span
+                      className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 
+               whitespace-nowrap rounded bg-black/75 px-2 py-0.5 
+               text-[10px] text-white opacity-0 transition-opacity
+               group-hover:opacity-100"
+                    >
                         {i18n._('sys.device_tool.fullscreen')}
-                    </TooltipContent>
-                </Tooltip>
+                    </span>
+                </div>
 
             </div>
         </div>

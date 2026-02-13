@@ -98,7 +98,10 @@
       "inference_parameter": "Inference Parameter",
       "trigger_desc": "Configure the trigger method for camera operation",
       "reload": "Reload",
+      "stream_info": "Stream Info",
       "fps": "FPS",
+      "bandwidth": "Bandwidth",
+      "latency": "Latency",
       "snapshot": "Snapshot",
       "fullscreen": "Fullscreen",
       "ai": "AI Inference",
@@ -134,7 +137,7 @@
       "sensitivity_level_note": "The smaller the value, the more sensitive the infrared change, the farther the detection distance/easier to trigger. Indoor recommended 30-40",
       "ignore_time_note": "After triggering, ignore new triggers within this time. The time corresponding to N = N*0.5+0.5 seconds. Example: 7→7*0.5+0.5=4 seconds",
       "pulse_count_note": "The number of pulses to be sent after triggering. Increasing this value can improve anti-interference, but slightly reduce response speed.",
-      "window_time_note": "The maximum time window for pulse occurrence. The time corresponding to M = M*0.5+1.5 seconds. Example: 0-2 seconds.",
+      "window_time_note": "The maximum time window for pulse occurrence. The time corresponding to M = M*2+2 seconds. Example: 0-2 seconds.",
       "reconnecting": "Reconnecting",
       "connecting": "Connecting",
       "connected": "Connected",
@@ -148,7 +151,9 @@
       "json_result": "JSON inference results will be shown here",
       "loading": "Inference in progress, please wait",
       "upload_local_image_desc": "Upload a local image above",
-      "json_result_desc": "JSON inference results will be shown here"
+      "json_result_desc": "JSON inference results will be shown here",
+      "model_unloaded": "Model not loaded, please upload the model in the feature debugging",
+      "please_upload_model": "Please upload model"
     },
     "application_management": {
       "protocol": "Protocol",

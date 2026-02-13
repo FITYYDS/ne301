@@ -97,7 +97,10 @@
       "inference_parameter": "推理参数",
       "trigger_desc": "可配置Camera工作的触发方式",
       "reload": "重新加载",
+      "stream_info": "统计信息",
       "fps": "帧率",
+      "bandwidth": "带宽",
+      "latency": "延迟",
       "snapshot": "截图",
       "fullscreen": "全屏",
       "ai": "AI推理",
@@ -133,12 +136,11 @@
       "sensitivity_level_note":"值越小，对红外变化越敏感，检测距离越远/越容易触发。室内常规建议30-40",
       "ignore_time_note":"触发后，在此时间内忽略新触发。数值N对应时间=N*0.5+0.5秒。例:7→7*0.5+0.5=4秒",
       "pulse_count_note":"需连续检测到N次有效信号才确认触发。增大此值可抗干扰，但会略微降低响应速度。",
-      "window_time_note":"允许脉冲发生的最大时间窗口。数值M对应时间=M*0.5+1.5秒。例:0-2秒。",
+      "window_time_note":"允许脉冲发生的最大时间窗口。数值M对应时间=M*2+2秒。例:0-2秒。",
       "reconnecting": "重连中",
       "connecting": "连接中",
       "connected": "已连接",
       "disconnected": "未连接"
-
     },
     "model_verification": {
       "model_verification_title": "模型验证",
@@ -148,7 +150,9 @@
       "json_result": "JSON推理结果将在此处显示",
       "loading": "正在推理，请稍等",
       "upload_local_image_desc": "在上方上传本地图片",
-      "json_result_desc": "JSON推理结果将在此处显示"
+      "json_result_desc": "JSON推理结果将在此处显示",
+      "model_unloaded": "模型未加载,请到功能调试中上传模型",
+      "please_upload_model": "请上传模型"
     },
     "application_management": {
       "protocol": "协议",

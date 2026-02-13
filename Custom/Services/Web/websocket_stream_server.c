@@ -295,7 +295,7 @@ aicam_result_t websocket_stream_server_stop(void) {
     osMutexRelease(g_websocket_server.mutex);
     
     if (g_websocket_server.server_task_id) {
-        osThreadJoin(g_websocket_server.server_task_id);
+        osThreadTerminate(g_websocket_server.server_task_id);
         g_websocket_server.server_task_id = NULL;
     }
     
@@ -492,11 +492,13 @@ static void ws_stream_server_task(void *argument) {
     
     if (mg_http_listen(&g_websocket_server.mgr, url, ws_stream_event_handler, NULL) == NULL) {
         LOG_SVC_ERROR("Failed to start WebSocket server");
+        g_websocket_server.is_running = AICAM_FALSE;
         return;
     }
 
     if (mg_wakeup_init(&g_websocket_server.mgr) == false) {
         LOG_SVC_ERROR("Failed to initialize wakeup");
+        g_websocket_server.is_running = AICAM_FALSE;
         return;
     }
 
@@ -677,7 +679,10 @@ static void ws_stream_add_client(struct mg_connection *conn) {
 }
 
 static void ws_stream_remove_client(struct mg_connection *conn) {
-    osMutexAcquire(g_websocket_server.mutex, osWaitForever);
+    
+    if (osMutexAcquire(g_websocket_server.mutex, 100) != osOK) {
+        return;
+    }
     
     for (uint32_t i = 0; i < g_websocket_server.config.max_clients; i++) {
         if (g_websocket_server.clients[i].is_active && g_websocket_server.clients[i].conn == conn) {

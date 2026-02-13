@@ -90,6 +90,8 @@ function attemptConnect(url: string): void {
     teardown(false);
 
     try {
+        // Notify main thread: connection is starting (used to show loading UI)
+        ctx.postMessage({ type: 'connecting' });
         ws = new WebSocket(url);
         ws.binaryType = 'arraybuffer';
 

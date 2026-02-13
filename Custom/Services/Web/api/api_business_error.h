@@ -56,6 +56,7 @@ typedef enum {
     /* AI & Model Errors (1501-1599) */
     API_BUSINESS_ERROR_MODEL_NOT_LOADED = 1501,       ///< AI model not loaded
     API_BUSINESS_ERROR_MODEL_INVALID = 1502,          ///< Invalid AI model
+    API_BUSINESS_ERROR_MODEL_RELOAD_FAILED = 1503,    ///< Model reload failed
     API_BUSINESS_ERROR_INFERENCE_TIMEOUT = 1505,      ///< Inference timeout
     
     /* Configuration Errors (1601-1699) */

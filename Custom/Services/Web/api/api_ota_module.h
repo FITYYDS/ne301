@@ -58,6 +58,23 @@ aicam_result_t ota_upgrade_local_handler(http_handler_context_t *ctx);
  */
 aicam_result_t ota_export_firmware_handler(http_handler_context_t *ctx);
 
+/**
+ * @brief Check OTA upload timeout and reset state if necessary
+ * @return AICAM_TRUE if timeout occurred and state was reset, AICAM_FALSE otherwise
+ */
+aicam_bool_t ota_check_timeout(void);
+
+/**
+ * @brief Force reset OTA upload state
+ */
+void ota_reset_upload_state(void);
+
+/**
+ * @brief Check if OTA upload is in progress
+ * @return AICAM_TRUE if OTA upload is in progress, AICAM_FALSE otherwise
+ */
+aicam_bool_t ota_is_upload_in_progress(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -353,7 +353,7 @@ export default function TimePicker({
                     )}
                 </div>
                 <div className="p-3 border-t">
-                    <div className="flex items-center justify-between">
+                    <div className="flex gap-2 items-center justify-between">
                         {customSlot ? customSlot(() => { }) : (
                             <Button
                               variant="outline"

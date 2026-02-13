@@ -239,8 +239,7 @@ void w5500_isr_thread(void *arg)
         ret = W5500_Sock_Get_IR(0, &s0_ir);
         if (ret != W5500_OK) goto isr_thread_exit_check;
         if (s0_ir == 0x00 || s0_ir == 0xFF) {
-            if (w5500_mutex != NULL) {
-                osMutexAcquire(w5500_mutex, osWaitForever);
+            if (w5500_mutex != NULL && osMutexAcquire(w5500_mutex, 0) == osOK) {
                 w5500_state = w5500_netif_state();
                 osMutexRelease(w5500_mutex);
                 if (w5500_state != NETIF_STATE_UP) goto isr_thread_exit_check;

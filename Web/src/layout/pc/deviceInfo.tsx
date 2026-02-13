@@ -58,7 +58,7 @@ export default function DeviceInfo() {
     const communicationTypeSlot = () => (
         <div className="flex items-center space-x-1">
             {communicationData?.active_type === 'cellular' && (
-                <Tooltip mbEnhance>
+                <Tooltip>
                     <TooltipTrigger>
                         <div className="w-5 h-5">
                             <Link to="/system-settings">
@@ -72,7 +72,7 @@ export default function DeviceInfo() {
                 </Tooltip>
             )}
             {communicationData?.active_type === 'wifi' && (
-                <Tooltip mbEnhance>
+                <Tooltip>
                     <TooltipTrigger>
                         <div className="w-5 h-5">
                             <Link to="/system-settings">
@@ -86,7 +86,7 @@ export default function DeviceInfo() {
                 </Tooltip>
             )}
             {communicationData?.active_type === 'poe' && (
-                <Tooltip mbEnhance>
+                <Tooltip>
                     <TooltipTrigger>
                         <div className="w-4 h-4">
                             <Link to="/system-settings">
@@ -100,7 +100,7 @@ export default function DeviceInfo() {
                 </Tooltip>
             )}
             {powerStatus === 'high' && (
-                <Tooltip mbEnhance>
+                <Tooltip>
                     <TooltipTrigger>
                         <div className="w-5 h-5">
                             <Link to="/system-settings">
@@ -114,7 +114,7 @@ export default function DeviceInfo() {
                 </Tooltip>
             )}
             {powerStatus === 'middle' && (
-                <Tooltip mbEnhance>
+                <Tooltip>
                     <TooltipTrigger>
                         <div className="w-5 h-5">
                             <Link to="/system-settings">
@@ -128,7 +128,7 @@ export default function DeviceInfo() {
                 </Tooltip>
             )}
             {powerStatus === 'low' && (
-                <Tooltip mbEnhance>
+                <Tooltip>
                     <TooltipTrigger>
                         <div className="w-5 h-5">
                             <Link to="/system-settings">
@@ -142,7 +142,7 @@ export default function DeviceInfo() {
                 </Tooltip>
             )}
             {powerStatus === 'power' && (
-                <Tooltip mbEnhance>
+                <Tooltip>
                     <TooltipTrigger>
                         <div className="w-5 h-5">
                             <Link to="/device-information">

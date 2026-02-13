@@ -173,7 +173,6 @@ static void Setup_Mpu()
 
 void NPUCache_config()
 {
-    npu_cache_init();
     npu_cache_enable();
 }
 

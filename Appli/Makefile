@@ -130,6 +130,10 @@ C_SOURCES += ../Custom/Hal/Network/mqtt_client/ms_mqtt_client_test.c
 C_SOURCES += ../Custom/Hal/Network/mqtt_client/si91x_mqtt_client.c
 C_SOURCES += ../Custom/Hal/Network/ms_network_port/ms_network.c
 C_SOURCES += ../Custom/Hal/Network/ms_network_port/ms_network_test.c
+C_SOURCES += ../Custom/Hal/Network/http_client/http_client.c
+C_SOURCES += ../Custom/Hal/Network/http_client/aws_sigv4.c
+C_SOURCES += ../Custom/Hal/Network/http_client/aws_capture.c
+C_SOURCES += ../Custom/Hal/Network/http_client/http_client_test.c
 C_SOURCES += ../Custom/Hal/Network/netif_manager/eg912u_gl_netif.c
 C_SOURCES += ../Custom/Hal/Network/netif_manager/netif_manager.c
 C_SOURCES += ../Custom/Hal/Network/netif_manager/sl_net_netif.c
@@ -199,26 +203,7 @@ C_SOURCES += ../Custom/Common/Lib/nau881x/nau881x.c
 C_SOURCES += ../Custom/Common/Lib/nvs/nvs.c
 
 # Custom - Common/Lib/pp
-C_SOURCES += ../Custom/Common/Lib/pp/pp.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_yolo_v2_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_yolo_v2_ui.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_yolo_v5_uu.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_st_yolox_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_st_yolox_ui.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_st_ssd_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_fd_blazeface_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_fd_blazeface_ui.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_fd_blazeface_uu.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_yolo_v8_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_od_yolo_v8_ui.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_mpe_yolo_v8_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_mpe_yolo_v8_ui.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_mpe_pd_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_spe_movenet_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_spe_movenet_ui.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_iseg_yolo_v8_ui.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_sseg_deeplab_v3_uf.c
-C_SOURCES += ../Custom/Common/Lib/pp/pp_sseg_deeplab_v3_ui.c
+C_SOURCES += $(wildcard ../Custom/Common/Lib/pp/*.c)
 
 # Custom - Common/Lib/ms_bridging
 C_SOURCES += ../Custom/Common/Lib/ms_bridging/ms_bridging.c
@@ -316,25 +301,25 @@ C_SOURCES += ../Gcc/Src/fast_memcpy.c
 C_SOURCES += ../Gcc/Src/threadx_libc.c
 
 # Middlewares - AI Runtime
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/Devices/STM32N6XX/mcu_cache.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/Devices/STM32N6XX/npu_cache.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ecloader.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_cipher.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_dbgtrc.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_debug.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_lib.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_lib_sw_operators.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_osal_freertos.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_osal_threadx.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_osal_zephyr.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_profiler.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_reloc_network.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_rt_main.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_runtime.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_aton_util.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_sw_float.c
-C_SOURCES += ../Middlewares/ST/AI_Runtime/Npu/ll_aton/ll_sw_integer.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/Devices/STM32N6xx/mcu_cache.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/Devices/STM32N6xx/npu_cache.c
+# C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ecloader.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_cipher.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_util.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_dbgtrc.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_debug.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_lib.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_lib_sw_operators.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_osal_freertos.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_osal_threadx.c
+# C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_osal_zephyr.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_profiler.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_reloc_network.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_rt_main.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_aton_runtime.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_sw_float.c
+C_SOURCES += ../Middlewares/ST/stedgeai-lib/Npu/ll_aton/ll_sw_integer.c
 
 # Middlewares - Camera
 C_SOURCES += ../Middlewares/ST/STM32_Camera_Middleware/cmw_camera.c
@@ -508,24 +493,7 @@ C_SOURCES += $(wildcard ../Middlewares/ST/filex/common/src/fx_*.c)
 C_SOURCES += $(wildcard ../Middlewares/ST/filex/common/src/fxe_*.c)
 
 # Middlewares - Vision Models Post-processing
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/iseg_pp_yolov8.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/mpe_pp_yolov8.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_centernet.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_fd_blazeface.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_ssd.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_ssd_st.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_st_yolox.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_yolov2.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_yolov4.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_yolov5.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/od_pp_yolov8.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/pd_pp_model.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/spe_movenet_pp.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/sseg_pp_deeplabv3.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/vision_models_pp.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/vision_models_pp_maxi_if32.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/vision_models_pp_maxi_is8.c
-C_SOURCES += ../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Src/vision_models_pp_maxi_iu8.c
+C_SOURCES += $(wildcard ../Middlewares/ST/stm32-vision-models-postprocessing/lib_vision_models_pp/Src/*.c)
 
 # Middlewares - VideoEncoder
 C_SOURCES += ../Middlewares/ST/VideoEncoder_EWL/ewl_impl.c
@@ -650,6 +618,7 @@ C_DEFS += -DLL_ATON_SW_FALLBACK
 C_DEFS += -DLL_ATON_EB_DBG_INFO
 C_DEFS += -DLL_ATON_DBG_BUFFER_INFO_EXCLUDED=1
 C_DEFS += -DLL_ATON_RT_RELOC
+C_DEFS += -DAI_RELOC_LOG_ENABLE=1
 
 # ThreadX
 C_DEFS += -DFEAT_THREADX
@@ -741,9 +710,9 @@ AS_INCLUDES += -I../Drivers/STM32N6xx_HAL_Driver/Inc/Legacy
 AS_INCLUDES += -I../Middlewares/ST/usbx/common/core/inc
 AS_INCLUDES += -I../Middlewares/ST/usbx/ports/generic/inc
 AS_INCLUDES += -I../Drivers/CMSIS/Include
-AS_INCLUDES += -I../Middlewares/ST/AI_Runtime/Npu/Devices/STM32N6XX
-AS_INCLUDES += -I../Middlewares/ST/AI_Runtime/Inc
-AS_INCLUDES += -I../Middlewares/ST/AI_Runtime/Npu/ll_aton
+AS_INCLUDES += -I../Middlewares/ST/stedgeai-lib/Npu/Devices/STM32N6xx
+AS_INCLUDES += -I../Middlewares/ST/stedgeai-lib/Inc
+AS_INCLUDES += -I../Middlewares/ST/stedgeai-lib/Npu/ll_aton
 AS_INCLUDES += -I../Middlewares/ST/threadx/common/inc
 AS_INCLUDES += -I../Middlewares/ST/threadx/ports/cortex_M55/gnu/inc
 AS_INCLUDES += -I../Middlewares/ST/threadx/utility/low_power
@@ -777,6 +746,7 @@ C_INCLUDES += -I../Custom/Hal/Network/icmp_client
 C_INCLUDES += -I../Custom/Hal/Network/iperf_test
 C_INCLUDES += -I../Custom/Hal/Network/mqtt_client
 C_INCLUDES += -I../Custom/Hal/Network/ms_network_port
+C_INCLUDES += -I../Custom/Hal/Network/http_client
 C_INCLUDES += -I../Custom/Hal/Network/netif_manager
 C_INCLUDES += -I../Custom/Hal/Network/sl_rsi_ble
 C_INCLUDES += -I../Custom/Hal/Network/w5500
@@ -845,9 +815,9 @@ C_INCLUDES += -I../BSP/Utilities/Fonts
 C_INCLUDES += -I../BSP/Utilities/JPEG
 
 # Middlewares - ST
-C_INCLUDES += -I../Middlewares/ST/AI_Runtime/Inc
-C_INCLUDES += -I../Middlewares/ST/AI_Runtime/Npu/ll_aton
-C_INCLUDES += -I../Middlewares/ST/AI_Runtime/Npu/Devices/STM32N6XX
+C_INCLUDES += -I../Middlewares/ST/stedgeai-lib/Inc
+C_INCLUDES += -I../Middlewares/ST/stedgeai-lib/Npu/ll_aton
+C_INCLUDES += -I../Middlewares/ST/stedgeai-lib/Npu/Devices/STM32N6xx
 C_INCLUDES += -I../Middlewares/ST/STM32_Camera_Middleware
 C_INCLUDES += -I../Middlewares/ST/STM32_Camera_Middleware/sensors
 C_INCLUDES += -I../Middlewares/ST/STM32_Camera_Middleware/sensors/imx335
@@ -858,7 +828,7 @@ C_INCLUDES += -I../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Inc
 C_INCLUDES += -I../Middlewares/ST/cmsis_rtos_threadx
 C_INCLUDES += -I../Middlewares/ST/filex/common/inc
 C_INCLUDES += -I../Middlewares/ST/filex/ports/generic/inc
-C_INCLUDES += -I../Middlewares/ST/lib_vision_models_pp/lib_vision_models_pp/Inc
+C_INCLUDES += -I../Middlewares/ST/stm32-vision-models-postprocessing/lib_vision_models_pp/Inc
 C_INCLUDES += -I../Middlewares/ST/threadx/common/inc
 C_INCLUDES += -I../Middlewares/ST/threadx/ports/cortex_M55/gnu/inc
 C_INCLUDES += -I../Middlewares/ST/threadx/utility/execution_profile_kit
@@ -918,11 +888,11 @@ LDSCRIPT = STM32N657L0HXQ_LRUN.ld
 LIBS = -ln6-evision-st-ae_gcc
 LIBS += -ln6-evision-awb_gcc
 LIBS += -lc -lm -lnosys
-LIBS += -l:NetworkRuntime1020_CM55_GCC.a
+LIBS += -l:NetworkRuntime1100_CM55_GCC.a
 
 LIBDIR =
 LIBDIR += -L../Middlewares/ST/STM32_ISP_Library/evision/Lib
-LIBDIR += -L../Middlewares/ST/AI_Runtime/Lib/GCC/ARMCortexM55
+LIBDIR += -L../Middlewares/ST/stedgeai-lib/Lib/GCC/ARMCortexM55
 
 # Linker flags (inherits COMMON_LDFLAGS from root)
 LDFLAGS = $(COMMON_LDFLAGS) -T$(LDSCRIPT)

@@ -124,10 +124,10 @@ The following table lists all post-processing types defined in `app_postprocess.
 
 ```bash
 cd Model
-make model
+make pkg-model
 ```
 
-The output will be in `build/ne301_Model.bin`
+The output will be in `build/ne301_Model_xxx_pkg.bin`
 
 ### 3. Deploy to Device
 

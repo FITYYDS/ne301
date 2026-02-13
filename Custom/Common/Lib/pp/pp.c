@@ -8,9 +8,13 @@ extern const pp_entry_t pp_entry_od_yolo_v5_uu;
 extern const pp_entry_t pp_entry_od_st_yolox_uf;
 extern const pp_entry_t pp_entry_od_st_yolox_ui;
 extern const pp_entry_t pp_entry_od_st_ssd_uf;
-extern const pp_entry_t pp_entry_od_fd_blazeface_uf;
-extern const pp_entry_t pp_entry_od_fd_blazeface_ui;
-extern const pp_entry_t pp_entry_od_fd_blazeface_uu;
+extern const pp_entry_t pp_entry_od_st_ssd_ui;
+extern const pp_entry_t pp_entry_od_blazeface_uf;
+extern const pp_entry_t pp_entry_od_blazeface_ui;
+extern const pp_entry_t pp_entry_od_blazeface_uu;
+extern const pp_entry_t pp_entry_fd_blazeface_ui;
+extern const pp_entry_t pp_entry_od_yolo_d_ui;
+extern const pp_entry_t pp_entry_fd_yunet_ui;
 extern const pp_entry_t pp_entry_mpe_yolo_v8_uf;
 extern const pp_entry_t pp_entry_mpe_pd_uf;
 extern const pp_entry_t pp_entry_spe_movenet_uf;
@@ -21,6 +25,8 @@ extern const pp_entry_t pp_entry_sseg_deeplab_v3_ui;
 extern const pp_entry_t pp_entry_mpe_yolo_v8_ui;
 extern const pp_entry_t pp_entry_od_yolo_v8_uf;
 extern const pp_entry_t pp_entry_od_yolo_v8_ui;
+extern const pp_entry_t pp_entry_od_yolo_v11_uf;
+extern const pp_entry_t pp_entry_od_yolo_v11_ui;
 
 /* Return registry (pointer array) and count */
 static const pp_entry_t * const* get_registered_entries(size_t *out_count)
@@ -33,9 +39,13 @@ static const pp_entry_t * const* get_registered_entries(size_t *out_count)
         &pp_entry_od_st_yolox_uf,
         &pp_entry_od_st_yolox_ui,
         &pp_entry_od_st_ssd_uf,
-        &pp_entry_od_fd_blazeface_uf,
-        &pp_entry_od_fd_blazeface_ui,
-        &pp_entry_od_fd_blazeface_uu,
+        &pp_entry_od_st_ssd_ui,
+        &pp_entry_od_blazeface_uf,
+        &pp_entry_od_blazeface_ui,
+        &pp_entry_od_blazeface_uu,
+        &pp_entry_fd_blazeface_ui,
+        &pp_entry_od_yolo_d_ui,
+        &pp_entry_fd_yunet_ui,
         &pp_entry_mpe_yolo_v8_uf,
         &pp_entry_mpe_pd_uf,
         &pp_entry_spe_movenet_uf,
@@ -46,6 +56,8 @@ static const pp_entry_t * const* get_registered_entries(size_t *out_count)
         &pp_entry_mpe_yolo_v8_ui,
         &pp_entry_od_yolo_v8_uf,
         &pp_entry_od_yolo_v8_ui,
+        &pp_entry_od_yolo_v11_uf,
+        &pp_entry_od_yolo_v11_ui,
     };
     if (out_count) {
         *out_count = sizeof(entries) / sizeof(entries[0]);

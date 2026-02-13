@@ -1,0 +1,73 @@
+{
+  "version": "1.0.0",
+  "model_info": {
+    "name": "YOLO11 Nano Object Detection Model",
+    "version": "1.0.0",
+    "description": "YOLO11 Nano model for person detection with COCO dataset",
+    "type": "OBJECT_DETECTION",
+    "framework": "TFLITE",
+    "author": "CamThink"
+  },
+  "input_spec": {
+    "width": 256,
+    "height": 256,
+    "channels": 3,
+    "data_type": "uint8",
+    "color_format": "RGB888_YUV444_1",
+    "normalization": {
+      "enabled": true,
+      "mean": [0, 0, 0],
+      "std": [255, 255, 255]
+    }
+  },
+  "output_spec": {
+    "num_outputs": 1,
+    "outputs": [
+      {
+        "name": "output0",
+        "batch": 1,
+        "height": 5,
+        "width": 1344,
+        "channels": 1,
+        "data_type": "float32",
+        "scale": 0.003921568859368563,
+        "zero_point": 0
+      }
+    ]
+  },
+  "memory": {
+    "exec_memory_pool": 874512384,
+    "exec_memory_size": 1835008,
+    "ext_memory_pool": 2415919104,
+    "ext_memory_size": 301056,
+    "alignment_requirement": 32
+  },
+  "postprocess_type": "pp_od_yolo_v11_uf",
+  "postprocess_params": {
+    "num_classes": 1,
+    "class_names": ["person"],
+    "confidence_threshold": 0.6,
+    "iou_threshold": 0.5,
+    "max_detections": 100,
+    "total_boxes": 1344,
+    "raw_output_scale": 0,
+    "raw_output_zero_point": 0
+  },
+  "runtime": {
+    "execution": {
+      "mode": "SYNC",
+      "priority": 5,
+      "timeout_ms": 5000
+    },
+    "memory_management": {
+      "cache_policy": "WRITE_BACK",
+      "memory_pool_size": 2097152,
+      "garbage_collection": false
+    },
+    "debugging": {
+      "log_level": "INFO",
+      "performance_monitoring": true,
+      "memory_profiling": false
+    }
+  }
+}

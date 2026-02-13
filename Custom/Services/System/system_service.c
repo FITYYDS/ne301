@@ -23,6 +23,7 @@
 #include "sl_net_netif.h"
 #include "communication_service.h"
 #include "web_server.h"
+#include "web_service.h"
 #include "ai_draw_service.h"
 #include "nn.h"
 #include "cJSON.h"
@@ -1464,19 +1465,34 @@ static aicam_result_t unregister_pir_runtime_callback(void)
   * @param controller System controller
   * @return Configured wakeup flags
   */
- static uint32_t configure_u0_wakeup_sources(system_controller_t *controller)
- {
-     if (!controller) {
-         return 0;
-     }
-     
-     uint32_t wakeup_flags = 0;
-     power_mode_t power_mode = controller->power_config.current_mode;
-     
-     // Low power mode: default only RTC, button, wifi wakeup
-     if (power_mode == POWER_MODE_LOW_POWER) {
-         // Default wakeup sources for low power mode
-         wakeup_flags = PWR_WAKEUP_FLAG_RTC_TIMING | PWR_WAKEUP_FLAG_CONFIG_KEY;
+/**
+ * @brief Configure U0 wakeup sources based on power mode
+ * @param controller System controller
+ * @param fallback_sleep_sec Output: fallback sleep duration when remote wakeup fails (0 = no fallback needed)
+ * @param remote_wakeup_ok Output: whether remote wakeup was successfully configured
+ * @return Configured wakeup flags
+ */
+static uint32_t configure_u0_wakeup_sources(system_controller_t *controller, uint32_t *fallback_sleep_sec, aicam_bool_t *remote_wakeup_ok)
+{
+    if (!controller) {
+        return 0;
+    }
+    
+    // Initialize output parameters
+    if (fallback_sleep_sec) {
+        *fallback_sleep_sec = 0;
+    }
+    if (remote_wakeup_ok) {
+        *remote_wakeup_ok = AICAM_FALSE;
+    }
+    
+    uint32_t wakeup_flags = 0;
+    power_mode_t power_mode = controller->power_config.current_mode;
+    
+    // Low power mode: default only RTC, button, wifi wakeup
+    if (power_mode == POWER_MODE_LOW_POWER) {
+        // Default wakeup sources for low power mode
+        wakeup_flags = PWR_WAKEUP_FLAG_RTC_TIMING | PWR_WAKEUP_FLAG_CONFIG_KEY;
 
          LOG_SVC_INFO("pir trigger enable: %d", controller->work_config.pir_trigger.enable);
          LOG_SVC_INFO("pir wakeup source enabled: %d", controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled);
@@ -1521,35 +1537,99 @@ static aicam_result_t unregister_pir_runtime_callback(void)
              wakeup_flags |= PWR_WAKEUP_FLAG_RTC_ALARM_A;
          }
 
-         if (controller->work_config.remote_trigger.enable &&
-             controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].enabled &&
-             controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].low_power_supported) {
-             
-             //switch to si91x mqtt client
-             mqtt_service_stop();
-             mqtt_service_set_api_type(MQTT_API_TYPE_SI91X);
-             aicam_result_t result = sl_net_netif_romote_wakeup_mode_ctrl(WAKEUP_MODE_WIFI);
-             if (result != AICAM_OK) {
-                 LOG_SVC_WARN("Failed to enable remote wakeup mode: %d", result);
-                 return wakeup_flags;
-             }
-             result = mqtt_service_start();
-             if (result != AICAM_OK) {
-                 LOG_SVC_WARN("Failed to switch to si91x mqtt client: %d", result);
-                 return wakeup_flags;
-             }
-
-             //enter low power mode
-             result = sl_net_netif_low_power_mode_ctrl(1);
-             if (result != AICAM_OK) {
+        if (controller->work_config.remote_trigger.enable &&
+            controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].enabled &&
+            controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].low_power_supported) {
+            
+            // Configuration for remote wakeup setup
+            #define REMOTE_WAKEUP_NETWORK_WAIT_MS     120000  // Wait up to 2 minutes for network
+            #define REMOTE_WAKEUP_MAX_RETRIES         3       // Max retry attempts
+            #define REMOTE_WAKEUP_RETRY_DELAY_MS      5000    // 5 seconds between retries
+            #define REMOTE_WAKEUP_FALLBACK_SEC        1800    // 30 minutes fallback wakeup
+            
+            aicam_bool_t remote_wakeup_success = AICAM_FALSE;
+            aicam_result_t result;
+            
+            // Step 1: Wait for network connection (if not connected)
+            uint32_t ready_flags = service_get_ready_flags();
+            if (!(ready_flags & SERVICE_READY_STA)) {
+                LOG_SVC_INFO("Network not connected, waiting up to %d ms...", REMOTE_WAKEUP_NETWORK_WAIT_MS);
+                result = service_wait_for_ready(SERVICE_READY_STA, AICAM_TRUE, REMOTE_WAKEUP_NETWORK_WAIT_MS);
+                if (result != AICAM_OK) {
+                    LOG_SVC_WARN("Network connection timeout after %d ms", REMOTE_WAKEUP_NETWORK_WAIT_MS);
+                    goto remote_wakeup_failed;
+                }
+                LOG_SVC_INFO("Network connected successfully");
+            }
+            
+            // Step 2: Switch to si91x mqtt client
+            mqtt_service_stop();
+            mqtt_service_set_api_type(MQTT_API_TYPE_SI91X);
+            result = sl_net_netif_romote_wakeup_mode_ctrl(WAKEUP_MODE_WIFI);
+            if (result != AICAM_OK) {
+                LOG_SVC_WARN("Failed to enable remote wakeup mode: %d", result);
+                goto remote_wakeup_failed;
+            }
+            
+            // Step 3: Start MQTT service and wait for connection with retries
+            // Note: SI91X mqtt_service_start() uses synchronous connection internally,
+            // so we check connection status directly instead of waiting for event
+            for (int retry = 0; retry < REMOTE_WAKEUP_MAX_RETRIES; retry++) {
+                if (retry > 0) {
+                    LOG_SVC_INFO("Retrying MQTT connection (attempt %d/%d)...", 
+                                retry + 1, REMOTE_WAKEUP_MAX_RETRIES);
+                    osDelay(REMOTE_WAKEUP_RETRY_DELAY_MS);
+                }
+                
+                result = mqtt_service_start();
+                if (result != AICAM_OK) {
+                    LOG_SVC_WARN("Failed to start si91x mqtt client: %d", result);
+                    continue;
+                }
+                
+                // Check if MQTT is connected (SI91X uses sync connect, no event callback)
+                if (mqtt_service_is_connected()) {
+                    remote_wakeup_success = AICAM_TRUE;
+                    LOG_SVC_INFO("MQTT connected successfully");
+                    break;
+                }
+                
+                LOG_SVC_WARN("MQTT connection attempt %d failed", retry + 1);
+                mqtt_service_stop();
+            }
+            
+            if (!remote_wakeup_success) {
+                LOG_SVC_WARN("All MQTT connection attempts failed");
+                sl_net_netif_romote_wakeup_mode_ctrl(WAKEUP_MODE_NORMAL);
+                goto remote_wakeup_failed;
+            }
+            
+            // Step 4: Enter low power mode
+            result = sl_net_netif_low_power_mode_ctrl(1);
+            if (result != AICAM_OK) {
                 LOG_SVC_WARN("Failed to enable low power mode: %d", result);
-                return wakeup_flags;
-             }
+                mqtt_service_stop();
+                sl_net_netif_romote_wakeup_mode_ctrl(WAKEUP_MODE_NORMAL);
+                goto remote_wakeup_failed;
+            }
 
-             wakeup_flags |= PWR_WAKEUP_FLAG_SI91X;
-
-
-         }
+            wakeup_flags |= PWR_WAKEUP_FLAG_SI91X;
+            if (remote_wakeup_ok) {
+                *remote_wakeup_ok = AICAM_TRUE;
+            }
+            LOG_SVC_INFO("Remote wakeup enabled successfully");
+            goto skip_remote_wakeup;
+            
+        remote_wakeup_failed:
+            // Remote wakeup setup failed, configure fallback RTC wakeup
+            // Device will wake up periodically to retry remote wakeup setup
+            if (fallback_sleep_sec) {
+                *fallback_sleep_sec = REMOTE_WAKEUP_FALLBACK_SEC;
+                LOG_SVC_WARN("Remote wakeup failed, setting fallback RTC wakeup in %d seconds", 
+                            REMOTE_WAKEUP_FALLBACK_SEC);
+            }
+        }
+        skip_remote_wakeup:
          
          LOG_SVC_INFO("Low power mode wakeup sources: 0x%08X", wakeup_flags);
      }
@@ -1599,37 +1679,40 @@ static aicam_result_t unregister_pir_runtime_callback(void)
      return wakeup_flags;
  }
  
- /**
-  * @brief Configure U0 power switches based on power mode
-  * @param controller System controller
-  * @return Configured power switch bits
-  */
- static uint32_t configure_u0_power_switches(system_controller_t *controller)
- {
-     if (!controller) {
-         return 0;
-     }
-     
-     uint32_t switch_bits = 0;
-     power_mode_t power_mode = controller->power_config.current_mode;
-     
-     // Low power mode: turn off all power (Standby mode)
-     if (power_mode == POWER_MODE_LOW_POWER) {
-        // Check if PIR is enabled and needs 3V3 power
-        // if (controller->work_config.pir_trigger.enable &&
-        //     controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
-        //     controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
-        //     switch_bits |= PWR_3V3_SWITCH_BIT;
-        //     LOG_SVC_INFO("Keeping 3V3 power for PIR in low power mode");
-        // }
+/**
+ * @brief Configure U0 power switches based on power mode
+ * @param controller System controller
+ * @param remote_wakeup_ok Whether remote wakeup was successfully configured
+ * @return Configured power switch bits
+ */
+static uint32_t configure_u0_power_switches(system_controller_t *controller, aicam_bool_t remote_wakeup_ok)
+{
+    if (!controller) {
+        return 0;
+    }
+    
+    uint32_t switch_bits = 0;
+    power_mode_t power_mode = controller->power_config.current_mode;
+    
+    // Low power mode: turn off all power (Standby mode)
+    if (power_mode == POWER_MODE_LOW_POWER) {
+       // Check if PIR is enabled and needs 3V3 power
+       // if (controller->work_config.pir_trigger.enable &&
+       //     controller->wakeup_sources[WAKEUP_SOURCE_PIR].enabled &&
+       //     controller->wakeup_sources[WAKEUP_SOURCE_PIR].low_power_supported) {
+       //     switch_bits |= PWR_3V3_SWITCH_BIT;
+       //     LOG_SVC_INFO("Keeping 3V3 power for PIR in low power mode");
+       // }
 
-         if (controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].enabled &&
-             controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].low_power_supported &&
-             controller->work_config.remote_trigger.enable) {
-             switch_bits |= PWR_WIFI_SWITCH_BIT;
-             switch_bits |= PWR_3V3_SWITCH_BIT;
-             LOG_SVC_INFO("Keeping WiFi and 3V3 power for remote wakeup in low power mode");
-         }
+        // Only keep WiFi power if remote wakeup was successfully configured
+        if (remote_wakeup_ok &&
+            controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].enabled &&
+            controller->wakeup_sources[WAKEUP_SOURCE_REMOTE].low_power_supported &&
+            controller->work_config.remote_trigger.enable) {
+            switch_bits |= PWR_WIFI_SWITCH_BIT;
+            switch_bits |= PWR_3V3_SWITCH_BIT;
+            LOG_SVC_INFO("Keeping WiFi and 3V3 power for remote wakeup in low power mode");
+        }
          // Otherwise all power off for maximum power saving
      }
      // Full speed mode: keep necessary power (Stop2 mode)
@@ -1713,8 +1796,16 @@ static aicam_result_t prepare_for_sleep(void)
     }
     
     system_controller_t *controller = g_system_service_ctx.controller;
-    
+    aicam_result_t result;
+
     LOG_SVC_INFO("Preparing system for sleep mode...");
+
+    // Stop web/WebSocket server before any network teardown to avoid MG_EV_CLOSE
+    // running while the stack is being deinited (which can cause hang).
+    result = web_service_stop();
+    if (result != AICAM_OK && result != AICAM_ERROR_UNAVAILABLE) {
+        LOG_SVC_WARN("Web service stop before sleep: %d", result);
+    }
     
     // Update RTC time to U0 chip before sleep
     int ret = u0_module_update_rtc_time();
@@ -1723,7 +1814,7 @@ static aicam_result_t prepare_for_sleep(void)
     }
     
     // Configure PIR sensor if PIR wakeup is enabled
-    aicam_result_t result = configure_pir_sensor(controller);
+    result = configure_pir_sensor(controller);
     if (result != AICAM_OK) {
         LOG_SVC_WARN("Failed to configure PIR for sleep: %d", result);
         // Continue even if PIR configuration fails
@@ -1761,19 +1852,30 @@ static aicam_result_t prepare_for_sleep(void)
          return result;
      }
      
-     // Configure wakeup sources and power switches
-     uint32_t wakeup_flags = configure_u0_wakeup_sources(controller);
-     uint32_t switch_bits = configure_u0_power_switches(controller);
-     
-     // Determine sleep duration
-     uint32_t sleep_sec = sleep_duration_sec;
-     if (sleep_sec == 0) {
-         // Use timer trigger interval if configured
-         timer_trigger_config_t *timer_config = &controller->work_config.timer_trigger;
-         if (timer_config->enable && timer_config->capture_mode == AICAM_TIMER_CAPTURE_MODE_INTERVAL) {
-             sleep_sec = timer_config->interval_sec;
-         }
-     }
+    // Configure wakeup sources and power switches
+    uint32_t fallback_sleep_sec = 0;
+    aicam_bool_t remote_wakeup_ok = AICAM_FALSE;
+    uint32_t wakeup_flags = configure_u0_wakeup_sources(controller, &fallback_sleep_sec, &remote_wakeup_ok);
+    uint32_t switch_bits = configure_u0_power_switches(controller, remote_wakeup_ok);
+    
+    // Determine sleep duration
+    uint32_t sleep_sec = sleep_duration_sec;
+    if (sleep_sec == 0) {
+        // Use timer trigger interval if configured
+        timer_trigger_config_t *timer_config = &controller->work_config.timer_trigger;
+        if (timer_config->enable && timer_config->capture_mode == AICAM_TIMER_CAPTURE_MODE_INTERVAL) {
+            sleep_sec = timer_config->interval_sec;
+        }
+    }
+    
+    // Apply fallback sleep duration if remote wakeup failed
+    // Use the shorter of configured sleep and fallback to ensure periodic retry
+    if (fallback_sleep_sec > 0) {
+        if (sleep_sec == 0 || fallback_sleep_sec < sleep_sec) {
+            sleep_sec = fallback_sleep_sec;
+            LOG_SVC_INFO("Using fallback sleep duration: %u seconds", sleep_sec);
+        }
+    }
      
      // Get RTC alarm times from scheduler
      ms_bridging_alarm_t alarm_a = {0};

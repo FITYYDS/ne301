@@ -185,7 +185,7 @@ void HAL_HCD_MspInit(HCD_HandleTypeDef* hcdHandle)
     /** Initializes the peripherals clock
     */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USBOTGHS1;
-    PeriphClkInitStruct.UsbOtgHs1ClockSelection = RCC_USBPHY1REFCLKSOURCE_HSE_DIRECT;
+   PeriphClkInitStruct.UsbOtgHs1ClockSelection = RCC_USBPHY1CLKSOURCE_HSE_DIRECT;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       /* Initialization Error */
@@ -194,7 +194,7 @@ void HAL_HCD_MspInit(HCD_HandleTypeDef* hcdHandle)
 
     /** Set USB OTG HS PHY1 Reference Clock Source */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USBPHY1;
-    PeriphClkInitStruct.UsbPhy1ClockSelection = RCC_USBPHY1REFCLKSOURCE_HSE_DIRECT;
+    PeriphClkInitStruct.UsbPhy1ClockSelection = RCC_USBPHY1CLKSOURCE_HSE_DIRECT;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       /* Initialization Error */
@@ -253,7 +253,7 @@ void HAL_HCD_MspInit(HCD_HandleTypeDef* hcdHandle)
     /** Initializes the peripherals clock
     */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USBOTGHS2;
-    PeriphClkInitStruct.UsbOtgHs2ClockSelection = RCC_USBPHY2REFCLKSOURCE_HSE_DIRECT;
+   PeriphClkInitStruct.UsbOtgHs2ClockSelection = RCC_USBPHY2CLKSOURCE_HSE_DIRECT;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       /* Initialization Error */
@@ -262,7 +262,7 @@ void HAL_HCD_MspInit(HCD_HandleTypeDef* hcdHandle)
 
     /** Set USB OTG HS PHY2 Reference Clock Source */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USBPHY2;
-    PeriphClkInitStruct.UsbPhy2ClockSelection = RCC_USBPHY2REFCLKSOURCE_HSE_DIRECT;
+    PeriphClkInitStruct.UsbPhy2ClockSelection = RCC_USBPHY2CLKSOURCE_HSE_DIRECT;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       /* Initialization Error */

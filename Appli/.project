@@ -1200,6 +1200,16 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Custom/Common/Lib/pp/pp_od_yolo_v8_ui.c</locationURI>
 		</link>
 		<link>
+			<name>Custom/Common/Lib/pp/pp_od_yolo_v11_uf.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Custom/Common/Lib/pp/pp_od_yolo_v11_uf.c</locationURI>
+		</link>
+		<link>
+			<name>Custom/Common/Lib/pp/pp_od_yolo_v11_ui.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Custom/Common/Lib/pp/pp_od_yolo_v11_ui.c</locationURI>
+		</link>
+		<link>
 			<name>Custom/Common/Lib/si91x/common</name>
 			<type>2</type>
 			<locationURI>virtual:/virtual</locationURI>

@@ -29,6 +29,17 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
     // Internal state management
     const [currentStep, setCurrentStep] = useState(0);
     const [isShow, setIsShow] = useState(true);
+    const [viewportTick, setViewportTick] = useState(0);
+
+    const getViewport = () => {
+        const vv = window.visualViewport
+        return {
+            width: vv?.width ?? window.innerWidth,
+            height: vv?.height ?? window.innerHeight,
+            offsetTop: vv?.offsetTop ?? 0,
+            offsetLeft: vv?.offsetLeft ?? 0,
+        }
+    }
 
     // Add mask to body
     useEffect(() => {
@@ -38,7 +49,22 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
         }
     }, [])
 
-    // const 
+    // iPhone in landscape mode will trigger viewport change
+    useEffect(() => {
+        const vv = window.visualViewport
+        const onViewportChange = () => setViewportTick((v) => v + 1)
+
+        vv?.addEventListener('resize', onViewportChange)
+        vv?.addEventListener('scroll', onViewportChange)
+        window.addEventListener('resize', onViewportChange)
+
+        return () => {
+            vv?.removeEventListener('resize', onViewportChange)
+            vv?.removeEventListener('scroll', onViewportChange)
+            window.removeEventListener('resize', onViewportChange)
+        }
+    }, [])
+
     const guideList = {
         // aiInferenceRef: {
         //     title: i18n._('sys.device_tool.ai_inference'),
@@ -84,37 +110,27 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
         dialogX: 0,
         dialogY: 0,
     })
-    /*
-    * @XXX
-    * Special case: import and output guide areas, handle separately
-    */
-    // const setImportAndOutput = () => {
-    //     const windowWidth = window.innerWidth
-    //     const windowHeight = window.innerHeight
-    //     let importDialogY = 0
-    //     const el = document.querySelector('.import-and-output')
-    //     const rect = el?.getBoundingClientRect()
-    //     if (windowHeight / 2 > 55) {
-    //         importDialogY = 80
-    //     } else {
-    //         importDialogY = 0
-    //     }
-    //     setToolGuideProps(p => ({
-    //         ...p,
-    //         boxWidth: rect?.width ? rect.width + 10 : 190,
-    //         boxHeight: rect?.height ? rect.height + 10 : 55,
-    //         boxX: rect?.left ? rect.left - 5 : windowWidth - 220,
-    //         boxY: rect?.top ? rect.top - 5 : 5,
-    //         dialogX: rect?.left ? rect.left - 90 : windowWidth - 320,
-    //         dialogY: importDialogY,
-    //         dialogHeight: 210,
-    //         dialogWidth: 300,
-    //         currentStep: 4,
-    //     }))
-    // }
+
+    const calcDialogY = (rect: DOMRect, viewportHeight: number, offsetTop: number) => {
+        const padding = 8
+        const gap = 25
+        const baseTop = rect.top + offsetTop
+        const belowY = baseTop + rect.height + gap
+        const aboveY = baseTop - toolGuideProps.dialogHeight - gap
+
+        // put below if possible, otherwise put above
+        const maxY = offsetTop + viewportHeight - toolGuideProps.dialogHeight - padding
+        const minY = offsetTop + padding
+
+        if (belowY <= maxY) return belowY
+        if (aboveY >= minY) return aboveY
+
+        // if both sides are not fully satisfied,尽量保证可见（夹逼到 viewport 内）
+        return Math.max(minY, Math.min(belowY, maxY))
+    }
 
     // Region boundary adjustment
-    function resetViewPort(top: number, height: number) {
+    function resetViewPort(rect: DOMRect) {
         return new Promise<{ rect: DOMRect; dialogY: number } | boolean>((resolve, _reject) => {
             //  Need to scroll down
             setToolGuideProps(p => ({
@@ -123,33 +139,31 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
             }))
             const el = refList?.[currentStep]?.current;
             if (!el) return;
-            let rect = el.getBoundingClientRect();
             const parentEl = scollRef?.current
             const parentrect = parentEl?.getBoundingClientRect();
-            if (top + height > window.innerHeight) {
+            const { height: viewportHeight, offsetTop } = getViewport()
+            // rect is based on visual viewport, use visual viewport height to determine if scrolling is needed
+            if (rect.bottom > viewportHeight) {
+                const delta = rect.bottom - viewportHeight + 25
+                const currentScrollTop = (parentEl as any)?.scrollTop ?? 0
                 parentEl?.scrollTo({
-                    top: rect.top + rect.height - window.innerHeight + 25,
+                    top: currentScrollTop + delta,
                     behavior: 'smooth',
                 })
                 setTimeout(() => {
-                    rect = el.getBoundingClientRect();
-                    let resetDialogY = 0
-                    const halfWindowHeight = window.innerHeight / 2
-                    // If boxY is greater than half the viewport, set dialog above box
-                    if (rect.top > halfWindowHeight) {
-                        resetDialogY = rect.top - toolGuideProps.dialogHeight - 25
-                    } else {
-                        resetDialogY = rect.top + rect.height + 25
-                    }
+                    const newRect = el.getBoundingClientRect();
+                    const resetDialogY = calcDialogY(newRect, viewportHeight, offsetTop)
                     setToolGuideProps(p => ({
                         ...p,
                         isShow: true,
                     }))
-                    resolve({ rect, dialogY: resetDialogY })
+                    resolve({ rect: newRect, dialogY: resetDialogY })
                 }, 500)
             } else if (rect && parentrect && rect.top < parentrect?.top) {
+                const delta = parentrect.top - rect.top + 25
+                const currentScrollTop = (parentEl as any)?.scrollTop ?? 0
                 parentEl?.scrollTo({
-                    top: -(parentrect.top - rect.top),
+                    top: Math.max(0, currentScrollTop - delta),
                     behavior: 'smooth',
                 })
                 setToolGuideProps(p => ({
@@ -157,20 +171,13 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
                     isShow: false,
                 }))
                 setTimeout(() => {
-                    rect = el.getBoundingClientRect();
-                    let scrollDialogY = 0
-                    const halfWindowHeight = window.innerHeight / 2
-                    // If boxY is greater than half the viewport, set dialog above box
-                    if (rect.top > halfWindowHeight) {
-                        scrollDialogY = rect.top - toolGuideProps.dialogHeight - 25
-                    } else {
-                        scrollDialogY = rect.top + rect.height + 25
-                    }
+                    const newRect = el.getBoundingClientRect();
+                    const scrollDialogY = calcDialogY(newRect, viewportHeight, offsetTop)
                     setToolGuideProps(p => ({
                         ...p,
                         isShow: true,
                     }))
-                    resolve({ rect, dialogY: scrollDialogY })
+                    resolve({ rect: newRect, dialogY: scrollDialogY })
                 }, 500)
             } else {
                 resolve(true)
@@ -185,17 +192,11 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
             // }
             const el = refList?.[currentStep]?.current;  // Use currentStep instead of fixed 0
             if (!el) return;
-            let updateDialogY = 0
             let rect = el.getBoundingClientRect();
-            const halfWindowHeight = window.innerHeight / 2
-            // If boxY is greater than half the viewport, set dialog above box
-            if (rect.top > halfWindowHeight) {
-                updateDialogY = rect.top - toolGuideProps.dialogHeight - 25
-            } else {
-                updateDialogY = rect.top + rect.height + 25
-            }
+            const { height: viewportHeight, offsetTop, offsetLeft } = getViewport()
+            let updateDialogY = calcDialogY(rect, viewportHeight, offsetTop)
             // If box area is outside view, smoothly scroll into view
-            const res = await resetViewPort(rect.top, rect.height)
+            const res = await resetViewPort(rect)
             if (res && typeof res === 'object' && 'dialogY' in res && 'rect' in res) {
                 updateDialogY = (res as { rect: DOMRect; dialogY: number }).dialogY
                 rect = (res as { rect: DOMRect; dialogY: number }).rect
@@ -204,9 +205,10 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
                 ...p,
                 boxWidth: rect.width + 20,
                 boxHeight: rect.height + 20,
-                boxX: rect.left - 10,
-                boxY: rect.top - 10,
-                dialogX: rect.left - 10,
+                // use visualViewport offset to correct fixed coordinate system
+                boxX: rect.left + offsetLeft - 10,
+                boxY: rect.top + offsetTop - 10,
+                dialogX: rect.left + offsetLeft - 10,
                 dialogY: updateDialogY,
                 dialogWidth: rect.width + 50,
                 isShow: true,
@@ -214,7 +216,7 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
         };
 
         updateToolGuide();
-    }, [currentStep, isLoading]);
+    }, [currentStep, isLoading, viewportTick]);
 
     // ----------base 
     const [isAnimating, setIsAnimating] = useState(false);
@@ -248,7 +250,7 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
         if (content.description.includes('\b')) {
             const parts = content.description.split('\b');
             return parts.map((part, index) => {
-                // Even indices are normal text, odd indices are bold text
+                // even indices are normal text, odd indices are bold text
                 if (index % 2 === 1) {
                     // Bold text uses span
                     if (part.includes('\n')) {
@@ -348,7 +350,7 @@ export default function ToolGuide({ refList, scollRef, isLoading, onClose }: Too
             <div
               className={`fixed flex flex-col bg-white rounded-lg p-4 transition-all duration-300 ${isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0'
                     }`}
-              style={{ width: toolGuideProps.dialogWidth, left: toolGuideProps.dialogX, top: toolGuideProps.dialogY, height: toolGuideProps.dialogHeight }}
+              style={{ width: toolGuideProps.dialogWidth, left: toolGuideProps.dialogX, top: toolGuideProps.dialogY }}
             >
                 <div className="flex justify-between items-center">
                     <p>{content.title}</p>

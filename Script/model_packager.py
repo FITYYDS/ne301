@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-STM32N6 Model Packager v2.1
+STM32N6 Model Packager
 ============================
 
 This tool creates model packages for the STM32N6 dynamic configuration system.
@@ -18,12 +18,14 @@ import json
 import struct
 import argparse
 import binascii
+import subprocess
+import re
 from datetime import datetime
 from typing import Dict, Any, Optional
 
 # Package format constants
-PACKAGE_MAGIC_V21 = 0x314D364E  # 'N6M1' - v2.1
-PACKAGE_VERSION_V21 = 0x020100   # v2.1.0
+PACKAGE_MAGIC = 0x314D364E  # 'N6M1' - v3.0
+PACKAGE_VERSION = 0x030000   # v3.0.0
 RELOCATABLE_MODEL_MAGIC = 0x4E49424E  # 'NBIN'
 
 # Header format: 20 x uint32 (device-compatible)
@@ -49,6 +51,27 @@ CHECKSUM_FIELD_COUNT = 4
 PACKAGE_HEADER_SIZE = struct.calcsize(HEADER_FMT)
 HEADER_CHECKSUM_OFFSET = (NUM_HEADER_FIELDS - CHECKSUM_FIELD_COUNT) * 4  # byte offset of header_checksum
 PACKAGE_CHECKSUM_OFFSET = (NUM_HEADER_FIELDS - 1) * 4                    # byte offset of package_checksum
+
+def get_stedgeai_version() -> Optional[str]:
+    """Get ST Edge AI Core version string (e.g. v3.0.0-20426 123672867) from stedgeai --version."""
+    try:
+        result = subprocess.run(
+            ['stedgeai', '--version'],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return None
+        # First line: "ST Edge AI Core v3.0.0-20426 123672867"
+        first_line = result.stdout.strip().split('\n')[0]
+        m = re.search(r'(v[\d\.\-]+\s*\d+)', first_line)
+        if m:
+            return m.group(1).strip()
+        return None
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
 
 class ModelPackager:
     def __init__(self):
@@ -128,11 +151,13 @@ class ModelPackager:
             header_size = PACKAGE_HEADER_SIZE
             
             # Metadata (package info JSON)
+            stedgeai_ver = get_stedgeai_version()
             metadata = {
                 "created_at": datetime.now().isoformat(),
-                "created_by": "STM32N6 Model Packager v2.1",
+                "created_by": "STM32N6 Model Packager",
                 "model_info": config['model_info'],
-                "package_version": "2.1.0"
+                "package_version": f"{PACKAGE_VERSION >> 16}.{(PACKAGE_VERSION >> 8) & 0xFF}.{PACKAGE_VERSION & 0xFF}",
+                "stedgeai_version": stedgeai_ver if stedgeai_ver else "unknown",
             }
             metadata_data = json.dumps(metadata, indent=2, sort_keys=True).encode('utf-8')
             
@@ -164,8 +189,8 @@ class ModelPackager:
             # Create package header (header_checksum and package_checksum set to 0 for now)
             header = struct.pack(
                 HEADER_FMT,
-                PACKAGE_MAGIC_V21,               # magic
-                PACKAGE_VERSION_V21,             # version
+                PACKAGE_MAGIC,                   # magic
+                PACKAGE_VERSION,                 # version
                 total_package_size,              # package_size
                 metadata_offset,                 # metadata_offset
                 metadata_size,                   # metadata_size
@@ -263,12 +288,12 @@ class ModelPackager:
                  header_checksum, model_checksum, config_checksum, package_checksum) = header
                 
                 # Validate magic and version
-                if magic != PACKAGE_MAGIC_V21:
-                    print(f"Invalid magic: 0x{magic:08X} (expected: 0x{PACKAGE_MAGIC_V21:08X})")
+                if magic != PACKAGE_MAGIC:
+                    print(f"Invalid magic: 0x{magic:08X} (expected: 0x{PACKAGE_MAGIC:08X})")
                     return False
                 
-                if version != PACKAGE_VERSION_V21:
-                    print(f"Unsupported version: 0x{version:08X} (expected: 0x{PACKAGE_VERSION_V21:08X})")
+                if version != PACKAGE_VERSION:
+                    print(f"Unsupported version: 0x{version:08X} (expected: 0x{PACKAGE_VERSION:08X})")
                     return False
                 
                 # Validate header checksum
@@ -302,13 +327,15 @@ class ModelPackager:
                 try:
                     metadata = json.loads(metadata_data.decode('utf-8'))
                     model_info = metadata.get('model_info', {})
-                except:
+                except Exception:
                     model_info = {}
+                    metadata = {}
                 
                 print(f"[OK] Valid package: {package_path}")
                 print(f"  Version: {version >> 16}.{(version >> 8) & 0xFF}.{version & 0xFF}")
                 print(f"  Model: {model_info.get('name', 'Unknown')}")
                 print(f"  Framework: {model_info.get('framework', 'Unknown')}")
+                print(f"  StedgeAI: {metadata.get('stedgeai_version', 'unknown')}")
                 print(f"  Size: {package_size:,} bytes ({package_size/1024/1024:.2f} MB)")
                 print(f"  Model size: {relocatable_model_size:,} bytes ({relocatable_model_size/1024/1024:.2f} MB)")
                 print(f"  Config size: {model_config_size:,} bytes")
@@ -336,11 +363,16 @@ class ModelPackager:
                  header_checksum, model_checksum, config_checksum, package_checksum) = header
                 
                 # Extract metadata
+                metadata_obj = {}
                 if metadata_size > 0:
                     f.seek(metadata_offset)
                     metadata_data = f.read(metadata_size)
                     with open(os.path.join(output_dir, 'metadata.json'), 'wb') as out_f:
                         out_f.write(metadata_data)
+                    try:
+                        metadata_obj = json.loads(metadata_data.decode('utf-8'))
+                    except Exception:
+                        pass
                 
                 # Extract configuration
                 if model_config_size > 0:
@@ -357,9 +389,10 @@ class ModelPackager:
                 
                 # Save package information
                 package_info = {
-                    "package_format": "STM32N6 Model Package v2.1",
+                    "package_format": "STM32N6 Model Package",
                     "magic": f"0x{magic:08X}",
                     "version": f"{version >> 16}.{(version >> 8) & 0xFF}.{version & 0xFF}",
+                    "stedgeai_version": metadata_obj.get("stedgeai_version", "unknown"),
                     "package_size": package_size,
                     "sections": {
                         "metadata": {"offset": metadata_offset, "size": metadata_size},
@@ -393,7 +426,7 @@ class ModelPackager:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='STM32N6 Model Packager v2.1')
+    parser = argparse.ArgumentParser(description='STM32N6 Model Packager')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # Create package command

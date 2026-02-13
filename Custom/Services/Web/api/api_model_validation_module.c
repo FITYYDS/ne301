@@ -386,7 +386,7 @@ static aicam_result_t model_reload_handler(http_handler_context_t* ctx) {
    //reload the model
    aicam_result_t result = ai_reload_model();
    if (result != AICAM_OK) {
-       return api_response_error(ctx, API_ERROR_INTERNAL_ERROR, "Failed to reload model");
+       return api_response_error(ctx, API_BUSINESS_ERROR_MODEL_RELOAD_FAILED, "Failed to reload model");
    }
    
    return api_response_success(ctx, NULL, "Model reload completed successfully");

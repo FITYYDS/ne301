@@ -21,7 +21,7 @@
 # =============================================================================
 
 # Main version number definition (manually update for releases)
-VERSION_MAJOR  := 1
+VERSION_MAJOR  := 2
 VERSION_MINOR  := 0
 VERSION_PATCH  := 1
 # Version suffix (optional, for alpha/beta/rc releases)
@@ -73,8 +73,8 @@ endif
 # Format: MAJOR.MINOR.PATCH.BUILD or empty
 FSBL_VERSION_OVERRIDE    := 1.0.0.2
 APP_VERSION_OVERRIDE     := $(VERSION)
-WEB_VERSION_OVERRIDE     := 1.3.1.0
-MODEL_VERSION_OVERRIDE   := 1.0.0.0
+WEB_VERSION_OVERRIDE     := 1.3.4.4
+MODEL_VERSION_OVERRIDE   := 2.0.0.0
 WAKECORE_VERSION_OVERRIDE := 0.2.7.3
 
 # Set component-specific version suffixes

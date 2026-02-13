@@ -2,9 +2,9 @@ import axios from 'axios'
 import { setItem } from '@/utils/storage';
 import { i18n } from '@lingui/core';
 import { toast } from 'sonner';
-import { debounce  } from 'throttle-debounce';
+import { debounce } from 'throttle-debounce';
 
-  // Interfaces that need longer timeout (long-running tasks)
+// Interfaces that need longer timeout (long-running tasks)
 const longTimeTaskList = [
   '/api/v1/system/ota/export',
   '/api/v1/device/config/export',
@@ -32,12 +32,12 @@ request.interceptors.request.use(
       const cleanToken = token.replace(/^"(.*)"$/, '$1');
       (config.headers as any).Authorization = cleanToken;
     }
-    
+
     // If FormData, delete Content-Type to let browser set it automatically
     if (config.data instanceof FormData) {
       delete (config.headers as any)['Content-Type'];
     }
-    
+
     // Add timestamp to prevent caching
     if (config.method === 'get') {
       config.params = {
@@ -52,7 +52,7 @@ request.interceptors.request.use(
 
     return config
   },
-  (error) =>  Promise.reject(error)
+  (error) => Promise.reject(error)
 )
 
 // Response interceptor
@@ -75,11 +75,14 @@ request.interceptors.response.use(
       setItem('lastRequestTime', Date.now().toString());
       return data
     }
-      toast.error(i18n._(`errors.business.${data.error_code}`))
+    //  special case for unauthorized error
+    if (data.error_code === 'UNAUTHORIZED' && window.location.pathname.includes('/login') && window.location.pathname !== '/') {
       return Promise.reject(response)
+    }
+    toast.error(i18n._(`errors.business.${data.error_code}`))
+    return Promise.reject(response)
   },
   (error) => {
-    console.log('error', error.code);
     if (!error.response) {
       const errorMessage = String(error)
       debouncedTimeoutError(errorMessage)
@@ -91,7 +94,7 @@ request.interceptors.response.use(
         // Unauthorized, clear token and redirect to login page
         localStorage.removeItem('token')
         // 'login route
-        if (!window.location.pathname.includes('/login') &&  window.location.pathname !== '/') {
+        if (!window.location.pathname.includes('/login') && window.location.pathname !== '/') {
           toast.error(i18n._('errors.http.401'))
           window.location.href = '/login'
         }
@@ -99,15 +102,15 @@ request.interceptors.response.use(
       case 403:
         toast.error(i18n._('errors.http.403'))
         return Promise.reject(error.response)
-        
+
       case 404:
         toast.error(i18n._('errors.http.404'))
         return Promise.reject(error.response)
-        
+
       case 500:
         debouncedTimeoutError(i18n._('errors.http.500'))
         return Promise.reject(error.response)
-        
+
       default: {
         // Handle business errors
         return Promise.reject(error.response)

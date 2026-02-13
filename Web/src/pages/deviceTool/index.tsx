@@ -64,7 +64,7 @@ export default function DeviceTool() {
   } = deviceTool;
   const videoRendererInstance = useRef<H264Player | null>(null);
   const { uploadOTAFileReq, reloadModelReq, preCheckReq } = systemApis;
-  const { setIsAiInference } = useAiStatusStore();
+  const { setIsAiInference, setAiStatus, aiStatus } = useAiStatusStore();
   const [curPowerModel, setCurPowerModel] = useState<string>('full_speed');
   const handlePowerModelChange = async (value: string) => {
     try {
@@ -118,16 +118,13 @@ export default function DeviceTool() {
     // Only accept .bin firmware files
     'application/octet-stream': ['.bin'],
   };
-  // const onTriggerConfigChange = async (config: TriggerConfig) => {
-  //   setTriggerConfig(config);
-  // };
-
   const [isLoading, setIsLoading] = useState(true);
   const getAiStatus = async () => {
     try {
       const res = await getAiStatusReq();
       setIsAiInference(res.data.ai_enabled);
       setAiModelName(res.data.model.name);
+      setAiStatus(res.data.model.status);
     } catch (error) {
       console.error('getAiStatus', error);
       throw error;
@@ -218,7 +215,7 @@ export default function DeviceTool() {
       setModelUploadLoading(true);
       videoRendererInstance.current?.pause();
       await stopVideoStreamReq();
-      const contentPreview = await sliceFile(file, 1024);
+      const contentPreview = await sliceFile(file, 2048);
       if (!contentPreview.size) {
         throw new Error(i18n._('sys.system_management.invalid_firmware_file') || 'Invalid firmware file');
       }
@@ -302,7 +299,7 @@ export default function DeviceTool() {
                             </Label>
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="text-sm text-text-secondary mr-1">
-                                {aiModelName}
+                                {aiStatus === 'loaded' ? aiModelName : i18n._('sys.model_verification.please_upload_model')}
                               </p>
                               <Upload
                                 slot={uploadSlot}
@@ -317,62 +314,66 @@ export default function DeviceTool() {
                               />
                             </div>
                           </div>
-                          <Separator className="my-2" />
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-semibold text-text-primary">
-                              {i18n._('sys.device_tool.params')}
-                            </p>
-                          </div>
-                          <div className="flex flex-col items-center gap-4 p-2 border border-gray-200 border-solid rounded-md mt-2">
-                            <div className="w-full flex items-center justify-between gap-4">
-                              <Label>{i18n._('sys.device_tool.nms_threshold')}</Label>
-                              <div className="flex items-center gap-2 flex-1">
-                                <Slider
-                                  className="flex-1 min-w-16"
-                                  value={aiParams.nms_threshold}
-                                  max={100}
-                                  step={1}
-                                  min={1}
-                                  onChange={value => setAiParams(p => ({ ...p, nms_threshold: value }))}
-                                  onChangeEnd={(value) => postAiParams('nms_threshold', value)}
-                                />
-                                <Input
-                                  className="w-16"
-                                  type="number"
-                                  min={1}
-                                  max={100}
-                                  step={1}
-                                  value={aiParams.nms_threshold}
-                                  onChange={(e) => handleAiParamsChange('nms_threshold', parseInt((e.target as HTMLInputElement).value || '0', 10))}
-                                  onBlur={(e) => postAiParams('nms_threshold', parseInt((e.target as HTMLInputElement).value || '0', 10))}
-                                />
+                          {aiStatus === 'loaded' && (
+                            <>
+                              <Separator className="my-2" />
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-semibold text-text-primary">
+                                  {i18n._('sys.device_tool.params')}
+                                </p>
                               </div>
-                            </div>
-                            <div className="w-full flex items-center justify-between gap-4">
-                              <Label>{i18n._('sys.device_tool.confidence_threshold')}</Label>
-                              <div className="flex items-center gap-2 flex-1">
-                                <Slider
-                                  className="flex-1 min-w-16"
-                                  value={aiParams.confidence_threshold}
-                                  max={100}
-                                  step={1}
-                                  min={1}
-                                  onChange={value => setAiParams(p => ({ ...p, confidence_threshold: value }))}
-                                  onChangeEnd={value => postAiParams('confidence_threshold', value)}
-                                />
-                                <Input
-                                  className="w-16"
-                                  type="number"
-                                  min={1}
-                                  max={100}
-                                  step={1}
-                                  value={aiParams.confidence_threshold}
-                                  onChange={(e) => handleAiParamsChange('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '1', 10))}
-                                  onBlur={(e) => postAiParams('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '1', 10))}
-                                />
+                              <div className="flex flex-col items-center gap-4 p-2 border border-gray-200 border-solid rounded-md mt-2">
+                                <div className="w-full flex items-center justify-between gap-4">
+                                  <Label>{i18n._('sys.device_tool.nms_threshold')}</Label>
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <Slider
+                                      className="flex-1 min-w-16"
+                                      value={aiParams.nms_threshold}
+                                      max={100}
+                                      step={1}
+                                      min={1}
+                                      onChange={value => setAiParams(p => ({ ...p, nms_threshold: value }))}
+                                      onChangeEnd={(value) => postAiParams('nms_threshold', value)}
+                                    />
+                                    <Input
+                                      className="w-16"
+                                      type="number"
+                                      min={1}
+                                      max={100}
+                                      step={1}
+                                      value={aiParams.nms_threshold}
+                                      onChange={(e) => handleAiParamsChange('nms_threshold', parseInt((e.target as HTMLInputElement).value || '0', 10))}
+                                      onBlur={(e) => postAiParams('nms_threshold', parseInt((e.target as HTMLInputElement).value || '0', 10))}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="w-full flex items-center justify-between gap-4">
+                                  <Label>{i18n._('sys.device_tool.confidence_threshold')}</Label>
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <Slider
+                                      className="flex-1 min-w-16"
+                                      value={aiParams.confidence_threshold}
+                                      max={100}
+                                      step={1}
+                                      min={1}
+                                      onChange={value => setAiParams(p => ({ ...p, confidence_threshold: value }))}
+                                      onChangeEnd={value => postAiParams('confidence_threshold', value)}
+                                    />
+                                    <Input
+                                      className="w-16"
+                                      type="number"
+                                      min={1}
+                                      max={100}
+                                      step={1}
+                                      value={aiParams.confidence_threshold}
+                                      onChange={(e) => handleAiParamsChange('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '1', 10))}
+                                      onBlur={(e) => postAiParams('confidence_threshold', parseInt((e.target as HTMLInputElement).value || '1', 10))}
+                                    />
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
+                            </>
+                          )}
                           <Separator className="my-2" />
                           <div ref={patternRef}>
                             <div className="flex items-center  justify-between">

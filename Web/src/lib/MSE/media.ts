@@ -39,8 +39,6 @@ class MsMediaSource {
 
     private initFlag: number = 0;
 
-    private removeOffset: number = 0;
-
     private cb: CallbackFunction;
 
     private currentSegmentIndex: number = 0;
@@ -48,6 +46,11 @@ class MsMediaSource {
     private skipDistance: number = MsMediaSource.skipCount;
 
     private isPlayback: boolean = false; // false: preview, true: playback
+
+    // Buffer management optimization
+    private readonly MAX_FRAME_BUFFER_SIZE: number = 300; // Limit frame buffer size
+
+    private readonly BUFFER_WINDOW_SIZE: number = 15; // Keep 15 seconds of buffer (Frigate strategy)
 
     constructor(cb: CallbackFunction) {
         this.cb = cb;
@@ -171,7 +174,6 @@ class MsMediaSource {
                     // Double check videoElement still exists before reinitializing
                     if (this.videoElement && this.initMse(codec)) {
                         this.initFlag = MsMediaSource.statusNormal;
-                        this.removeOffset = 0;
                         // If there are buffered frames, continue driving playback
                         this.updateSourceBuffer();
                     } else {
@@ -224,19 +226,47 @@ class MsMediaSource {
                     this.handleTimeUpdate();
                     const end = this.sourceBuffer.buffered.end(this.currentSegmentIndex);
                     const { currentTime } = this.videoElement;
-                    
+
+                    // Adaptive skip strategy for live preview
                     if (!this.isPlayback) {
-                        if (end - currentTime >= 1 && this.skipDistance === 0) {
+                        const bufferTime = end - currentTime;
+
+                        // Reset skip distance when buffer is large
+                        if (bufferTime >= 1 && this.skipDistance === 0) {
                             this.skipDistance = MsMediaSource.skipCount;
                         }
-                        if (end - currentTime >= 0.5 && this.skipDistance) {
-                            this.videoElement.currentTime = end - 0.4;
+
+                        // Adaptive jump based on buffer size
+                        if (bufferTime >= 0.5 && this.skipDistance) {
+                            // Jump closer to live edge as buffer grows
+                            const jumpOffset = Math.min(0.4, bufferTime * 0.8);
+                            this.videoElement.currentTime = end - jumpOffset;
                             this.skipDistance--;
                         }
                     }
-                    if (!this.sourceBuffer.updating && currentTime - this.removeOffset >= 20) {
-                        this.sourceBuffer.remove(this.removeOffset, currentTime - 10);
-                        this.removeOffset = currentTime - 10;
+
+                    // Optimized buffer cleanup: use 15-second rolling window (Frigate strategy)
+                    if (!this.sourceBuffer.updating && buffered.length > 0) {
+                        const bufferEnd = buffered.end(buffered.length - 1);
+                        const bufferStart = buffered.start(0);
+                        const removeEnd = bufferEnd - this.BUFFER_WINDOW_SIZE;
+
+                        // Remove old data if we have more than 15 seconds buffered
+                        if (removeEnd > bufferStart && currentTime > bufferStart) {
+                            const safeRemoveEnd = Math.min(removeEnd, currentTime - 1);
+                            if (safeRemoveEnd > bufferStart) {
+                                this.sourceBuffer.remove(bufferStart, safeRemoveEnd);
+
+                                // Set live seekable range for better latency calculation
+                                if (this.mediaSource && 'setLiveSeekableRange' in this.mediaSource) {
+                                    try {
+                                        (this.mediaSource as any).setLiveSeekableRange(safeRemoveEnd, bufferEnd);
+                                    } catch {
+                                        // Ignore if not supported
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             } catch (error) {
@@ -271,7 +301,6 @@ class MsMediaSource {
         // If current time has exceeded next segment start time, delete current cache
         this.currentSegmentIndex += 1;
         this.videoElement.currentTime = nextStart;
-        this.removeOffset = 0;
         this.sourceBuffer.remove(0, currentEnd);
         this.videoElement.play();
         this.skipDistance = MsMediaSource.skipCount;
@@ -298,14 +327,25 @@ class MsMediaSource {
             return;
         }
 
-        let segmentBuffer = new Uint8Array();
+        // Optimized: calculate total size first, then allocate once
+        let totalSize = 0;
         for (let i = 0; i < len; i++) {
-            segmentBuffer = MsMediaSource.makeBuffer(segmentBuffer, new Uint8Array(this.frameBuffer[0].data));
-            this.frameBuffer.shift();
-            if (this.frameBuffer.length === 0) {
-                break;
-            }
+            totalSize += this.frameBuffer[i].data.byteLength;
         }
+
+        // Allocate buffer once instead of repeatedly
+        const segmentBuffer = new Uint8Array(totalSize);
+        let offset = 0;
+
+        // Copy all frames in one pass
+        for (let i = 0; i < len; i++) {
+            const frameData = new Uint8Array(this.frameBuffer[i].data);
+            segmentBuffer.set(frameData, offset);
+            offset += frameData.byteLength;
+        }
+
+        // Clear buffer after copying (more efficient than repeated shift())
+        this.frameBuffer = [];
 
         try {
             this.sourceBuffer.appendBuffer(segmentBuffer);
@@ -334,7 +374,6 @@ class MsMediaSource {
             this.initFlag = MsMediaSource.statusWait;
             if (this.initMse(objData.codec)) {
                 this.initFlag = MsMediaSource.statusNormal;
-                this.removeOffset = 0;
             } else {
                 this.initFlag = MsMediaSource.statusError;
             }
@@ -342,6 +381,13 @@ class MsMediaSource {
 
         if (document.hidden) {
             this.skipDistance = MsMediaSource.skipCount;
+        }
+
+        // Buffer size limit: prevent memory overflow
+        if (this.frameBuffer.length >= this.MAX_FRAME_BUFFER_SIZE) {
+            // Drop oldest frames if buffer is full (backpressure)
+            console.warn(`Frame buffer full (${this.frameBuffer.length}), dropping oldest frames`);
+            this.frameBuffer.splice(0, Math.floor(this.MAX_FRAME_BUFFER_SIZE * 0.3)); // Drop 30%
         }
 
         this.frameBuffer.push(objData);
@@ -358,10 +404,15 @@ class MsMediaSource {
             this.initFlag = MsMediaSource.statusWait;
             if (this.initMse(objData.codec)) {
                 this.initFlag = MsMediaSource.statusNormal;
-                this.removeOffset = 0;
             } else {
                 this.initFlag = MsMediaSource.statusError;
             }
+        }
+
+        // Buffer size limit for audio as well
+        if (this.frameBuffer.length >= this.MAX_FRAME_BUFFER_SIZE) {
+            console.warn(`Audio frame buffer full (${this.frameBuffer.length}), dropping oldest frames`);
+            this.frameBuffer.splice(0, Math.floor(this.MAX_FRAME_BUFFER_SIZE * 0.3));
         }
 
         this.frameBuffer.push(objData);
@@ -391,7 +442,6 @@ class MsMediaSource {
                 // Ignore errors during buffer clearing
             }
         }
-        this.removeOffset = 0;
         this.currentSegmentIndex = 0;
     }
 
@@ -408,7 +458,6 @@ class MsMediaSource {
         this.sourceBuffer = null;
         this.frameBuffer = [];
         this.updateend = 1;
-        this.removeOffset = 0;
         this.mimeCodec = "";
         this.initFlag = MsMediaSource.statusIdel;
     }

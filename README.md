@@ -114,7 +114,7 @@ make                        # Build all
 - pnpm 9+
 - STM32CubeProgrammer(v2.19.0)
 - STM32_SigningTool_CLI(v2.19.0)
-- stedgeai(v2.2,stedgeai0202.stneuralart)
+- stedgeai(v3.0,stedgeai0300.stneuralart)
 
 ```bash
 # 1. Check environment

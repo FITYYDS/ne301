@@ -123,7 +123,7 @@ static const ms_mqtt_config_t ms_mqtt_default_config = {
         .port = 8884,
         .client_id = "ms_mqtt_client",
         .clean_session = 1,
-        .keepalive = 600,
+        .keepalive = 60,
     },
     .authentication = {
         .username = NULL,
