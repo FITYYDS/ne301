@@ -117,6 +117,18 @@ void Error_Handler(void);
 #define ALA_IN_GPIO_Port GPIOB
 #define KEY_Pin GPIO_PIN_13
 #define KEY_GPIO_Port GPIOC
+#define TFT_BL_Pin GPIO_PIN_2
+#define TFT_BL_GPIO_Port GPIOB
+#define TFT_RST_Pin GPIO_PIN_0
+#define TFT_RST_GPIO_Port GPIOB
+#define TFT_CLK_Pin GPIO_PIN_5
+#define TFT_CLK_GPIO_Port GPIOA
+#define TFT_CS_Pin GPIO_PIN_0
+#define TFT_CS_GPIO_Port GPIOA
+#define TFT_MOSI_Pin GPIO_PIN_7
+#define TFT_MOSI_GPIO_Port GPIOA
+#define TFT_DC_Pin GPIO_PIN_4
+#define TFT_DC_GPIO_Port GPIOB
 
 #define PWR_USB_3V3_Pin GPIO_PIN_13
 #define PWR_USB_3V3_GPIO_Port GPIOG

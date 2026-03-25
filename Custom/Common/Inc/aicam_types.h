@@ -273,6 +273,21 @@ typedef enum {
 } aicam_trigger_type_t;
 
 /**
+ * @brief Capture trigger source types
+ */
+typedef enum {
+    AICAM_CAPTURE_TRIGGER_UNKNOWN    = 0,  ///< Unknown / unspecified
+    AICAM_CAPTURE_TRIGGER_RTC        = 1,  ///< RTC timer scheduled capture
+    AICAM_CAPTURE_TRIGGER_PIR        = 2,  ///< PIR motion sensor
+    AICAM_CAPTURE_TRIGGER_WEB        = 3,  ///< Web page manual capture
+    AICAM_CAPTURE_TRIGGER_REMOTE     = 4,  ///< Remote MQTT command capture
+    AICAM_CAPTURE_TRIGGER_GPIO       = 5,  ///< External GPIO trigger
+    AICAM_CAPTURE_TRIGGER_BUTTON     = 6,  ///< Physical button press
+    AICAM_CAPTURE_TRIGGER_SCHEDULE   = 7,  ///< Software scheduler
+    AICAM_CAPTURE_TRIGGER_MAX
+} aicam_capture_trigger_t;
+
+/**
  * @brief Capture modes
  */
 typedef enum {

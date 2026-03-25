@@ -91,6 +91,9 @@
  #define NVS_KEY_IMAGE_VFLIP             "img_vflip"
  #define NVS_KEY_IMAGE_AEC               "img_aec"
  #define NVS_KEY_IMAGE_SKIP_FRAMES       "img_skip"
+ #define NVS_KEY_IMAGE_FAST_SKIP_FRAMES  "img_fast_skip"
+ #define NVS_KEY_IMAGE_FAST_RESOLUTION   "img_fast_res"
+ #define NVS_KEY_IMAGE_FAST_JPEG_QUALITY "img_fast_jq"
  #define NVS_KEY_LIGHT_CONNECTED         "light_conn"
  #define NVS_KEY_LIGHT_MODE              "light_mode"
  #define NVS_KEY_LIGHT_START_HOUR        "light_s_h"
@@ -100,7 +103,63 @@
  #define NVS_KEY_LIGHT_BRIGHTNESS        "light_brt"
  #define NVS_KEY_LIGHT_AUTO_TRIGGER      "light_auto"
  #define NVS_KEY_LIGHT_THRESHOLD         "light_thr"
- 
+
+// ISP configuration key names
+#define NVS_KEY_ISP_VALID               "isp_valid"
+// StatRemoval
+#define NVS_KEY_ISP_SR_ENABLE           "isp_sr_en"
+#define NVS_KEY_ISP_SR_HEADLINES        "isp_sr_hl"
+#define NVS_KEY_ISP_SR_VALIDLINES       "isp_sr_vl"
+// Demosaicing
+#define NVS_KEY_ISP_DEMO_ENABLE         "isp_dm_en"
+#define NVS_KEY_ISP_DEMO_TYPE           "isp_dm_type"
+#define NVS_KEY_ISP_DEMO_PEAK           "isp_dm_peak"
+#define NVS_KEY_ISP_DEMO_LINEV          "isp_dm_lv"
+#define NVS_KEY_ISP_DEMO_LINEH          "isp_dm_lh"
+#define NVS_KEY_ISP_DEMO_EDGE           "isp_dm_edge"
+// Contrast
+#define NVS_KEY_ISP_CONTRAST_ENABLE     "isp_ctr_en"
+#define NVS_KEY_ISP_CONTRAST_LUT        "isp_ctr_lut"
+// StatArea
+#define NVS_KEY_ISP_STAT_X              "isp_stat_x"
+#define NVS_KEY_ISP_STAT_Y              "isp_stat_y"
+#define NVS_KEY_ISP_STAT_W              "isp_stat_w"
+#define NVS_KEY_ISP_STAT_H              "isp_stat_h"
+// Sensor Gain/Exposure
+#define NVS_KEY_ISP_SENSOR_GAIN         "isp_s_gain"
+#define NVS_KEY_ISP_SENSOR_EXPO         "isp_s_expo"
+// BadPixel
+#define NVS_KEY_ISP_BPA_ENABLE          "isp_bpa_en"
+#define NVS_KEY_ISP_BPA_THRESH          "isp_bpa_th"
+#define NVS_KEY_ISP_BP_ENABLE           "isp_bp_en"
+#define NVS_KEY_ISP_BP_STRENGTH         "isp_bp_str"
+// BlackLevel
+#define NVS_KEY_ISP_BL_ENABLE           "isp_bl_en"
+#define NVS_KEY_ISP_BL_R                "isp_bl_r"
+#define NVS_KEY_ISP_BL_G                "isp_bl_g"
+#define NVS_KEY_ISP_BL_B                "isp_bl_b"
+// AEC
+#define NVS_KEY_ISP_AEC_ENABLE          "isp_aec_en"
+#define NVS_KEY_ISP_AEC_EXPCOMP         "isp_aec_ec"
+#define NVS_KEY_ISP_AEC_AFLK            "isp_aec_af"
+// AWB (stored as binary blob due to size)
+#define NVS_KEY_ISP_AWB_ENABLE          "isp_awb_en"
+#define NVS_KEY_ISP_AWB_DATA            "isp_awb_dat"
+// ISP Gain
+#define NVS_KEY_ISP_GAIN_ENABLE         "isp_g_en"
+#define NVS_KEY_ISP_GAIN_R              "isp_g_r"
+#define NVS_KEY_ISP_GAIN_G              "isp_g_g"
+#define NVS_KEY_ISP_GAIN_B              "isp_g_b"
+// Color Conversion
+#define NVS_KEY_ISP_CCM_ENABLE          "isp_ccm_en"
+#define NVS_KEY_ISP_CCM_DATA            "isp_ccm_dat"
+// Gamma
+#define NVS_KEY_ISP_GAMMA_ENABLE        "isp_gamma_en"
+// Sensor Delay
+#define NVS_KEY_ISP_SENSOR_DELAY        "isp_s_dly"
+// Lux Reference
+#define NVS_KEY_ISP_LUX_DATA            "isp_lux_dat"
+
 // Network service configuration key names
 #define NVS_KEY_NETWORK_AP_SLEEP_TIME   "net_ap_sleep"
 #define NVS_KEY_NETWORK_SSID            "net_ssid"
@@ -120,6 +179,7 @@
 #define NVS_KEY_CELLULAR_PIN            "cell_pin"
 #define NVS_KEY_CELLULAR_AUTH           "cell_auth"
 #define NVS_KEY_CELLULAR_ROAMING        "cell_roam"
+#define NVS_KEY_CELLULAR_OPERATOR       "cell_operator"
 
 // PoE/Ethernet configuration key names
 #define NVS_KEY_POE_IP_MODE             "poe_ip_mode"
@@ -262,6 +322,7 @@
 aicam_result_t json_config_save_device_info_config_to_nvs(const device_info_config_t *config);
 aicam_result_t json_config_save_device_service_image_config_to_nvs(const image_config_t *config);
 aicam_result_t json_config_save_device_service_light_config_to_nvs(const light_config_t *config);
+aicam_result_t json_config_save_isp_config_to_nvs(const isp_config_t *config);
 aicam_result_t json_config_save_network_service_config_to_nvs(const network_service_config_t *config);
 aicam_result_t json_config_save_poe_config_to_nvs(const poe_config_persist_t *config);
 aicam_result_t json_config_load_poe_config_from_nvs(poe_config_persist_t *config);

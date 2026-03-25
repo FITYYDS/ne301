@@ -25,6 +25,8 @@
 /* USER CODE END 0 */
 
 I2C_HandleTypeDef hi2c1;
+DMA_HandleTypeDef handle_HPDMA1_Channel11;
+DMA_HandleTypeDef handle_HPDMA1_Channel10;
 
 /* I2C1 init function */
 void MX_I2C1_Init(void)
@@ -75,6 +77,7 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+  DMA_IsolationConfigTypeDef IsolationConfiginput = {0};
   if(i2cHandle->Instance==I2C1)
   {
   /* USER CODE BEGIN I2C1_MspInit 0 */
@@ -84,7 +87,7 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
   /** Initializes the peripherals clock
   */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_I2C1;
-    PeriphClkInitStruct.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
+    PeriphClkInitStruct.I2c1ClockSelection = RCC_I2C1CLKSOURCE_CLKP;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       Error_Handler();
@@ -97,13 +100,90 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
     */
     GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_5;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
     HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
     /* I2C1 clock enable */
     __HAL_RCC_I2C1_CLK_ENABLE();
+
+    /* I2C1 DMA Init */
+    /* HPDMA1_REQUEST_I2C1_RX Init */
+    handle_HPDMA1_Channel11.Instance = HPDMA1_Channel11;
+    handle_HPDMA1_Channel11.Init.Request = HPDMA1_REQUEST_I2C1_RX;
+    handle_HPDMA1_Channel11.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+    handle_HPDMA1_Channel11.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    handle_HPDMA1_Channel11.Init.SrcInc = DMA_SINC_FIXED;
+    handle_HPDMA1_Channel11.Init.DestInc = DMA_DINC_FIXED;
+    handle_HPDMA1_Channel11.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel11.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel11.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_HPDMA1_Channel11.Init.SrcBurstLength = 1;
+    handle_HPDMA1_Channel11.Init.DestBurstLength = 1;
+    handle_HPDMA1_Channel11.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT1|DMA_DEST_ALLOCATED_PORT0;
+    handle_HPDMA1_Channel11.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+    handle_HPDMA1_Channel11.Init.Mode = DMA_NORMAL;
+    if (HAL_DMA_Init(&handle_HPDMA1_Channel11) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(i2cHandle, hdmarx, handle_HPDMA1_Channel11);
+
+    IsolationConfiginput.CidFiltering = DMA_ISOLATION_ON;
+    IsolationConfiginput.StaticCid = DMA_CHANNEL_STATIC_CID_1;
+    if (HAL_DMA_SetIsolationAttributes(&handle_HPDMA1_Channel11, &IsolationConfiginput) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* set GPDMA1 channel 11 used by I2C1 */
+    if (HAL_DMA_ConfigChannelAttributes(&handle_HPDMA1_Channel11,DMA_CHANNEL_SEC|DMA_CHANNEL_PRIV|DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC)!= HAL_OK )
+    {
+      Error_Handler();
+    }
+
+    /* HPDMA1_REQUEST_I2C1_TX Init */
+    handle_HPDMA1_Channel10.Instance = HPDMA1_Channel10;
+    handle_HPDMA1_Channel10.Init.Request = HPDMA1_REQUEST_I2C1_TX;
+    handle_HPDMA1_Channel10.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+    handle_HPDMA1_Channel10.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    handle_HPDMA1_Channel10.Init.SrcInc = DMA_SINC_FIXED;
+    handle_HPDMA1_Channel10.Init.DestInc = DMA_DINC_FIXED;
+    handle_HPDMA1_Channel10.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel10.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel10.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_HPDMA1_Channel10.Init.SrcBurstLength = 1;
+    handle_HPDMA1_Channel10.Init.DestBurstLength = 1;
+    handle_HPDMA1_Channel10.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
+    handle_HPDMA1_Channel10.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+    handle_HPDMA1_Channel10.Init.Mode = DMA_NORMAL;
+    if (HAL_DMA_Init(&handle_HPDMA1_Channel10) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(i2cHandle, hdmatx, handle_HPDMA1_Channel10);
+
+    IsolationConfiginput.CidFiltering = DMA_ISOLATION_ON;
+    IsolationConfiginput.StaticCid = DMA_CHANNEL_STATIC_CID_1;
+    if (HAL_DMA_SetIsolationAttributes(&handle_HPDMA1_Channel10, &IsolationConfiginput) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* set GPDMA1 channel 10 used by I2C1 */
+    if (HAL_DMA_ConfigChannelAttributes(&handle_HPDMA1_Channel10,DMA_CHANNEL_SEC|DMA_CHANNEL_PRIV|DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC)!= HAL_OK )
+    {
+      Error_Handler();
+    }
+
+    /* I2C1 interrupt Init */
+    HAL_NVIC_SetPriority(I2C1_EV_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(I2C1_EV_IRQn);
+    HAL_NVIC_SetPriority(I2C1_ER_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(I2C1_ER_IRQn);
   /* USER CODE BEGIN I2C1_MspInit 1 */
 
   /* USER CODE END I2C1_MspInit 1 */
@@ -128,6 +208,14 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
     HAL_GPIO_DeInit(GPIOE, GPIO_PIN_6);
 
     HAL_GPIO_DeInit(GPIOE, GPIO_PIN_5);
+
+    /* I2C1 DMA DeInit */
+    HAL_DMA_DeInit(i2cHandle->hdmarx);
+    HAL_DMA_DeInit(i2cHandle->hdmatx);
+
+    /* I2C1 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(I2C1_EV_IRQn);
+    HAL_NVIC_DisableIRQ(I2C1_ER_IRQn);
 
   /* USER CODE BEGIN I2C1_MspDeInit 1 */
 

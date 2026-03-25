@@ -3,7 +3,6 @@
 #include "storage.h"
 #include "drtc.h"
 #include "camera.h"
-#include "uvc.h"
 #include "enc.h"
 #include "draw.h"
 // #include "ai_process.h"
@@ -24,6 +23,9 @@
 #include "u0_module.h"
 #include "system_top.h"
 #include "upgrade_manager.h"
+#include "SensorExt/i2c_tool/i2c_tool.h"
+#include "SensorExt/tft_st7789v/tft_st7789vw.h"
+#include "SensorExt/sensor_exemple/sensor_exemple.h"
 
 bool driver_core_init(void)
 {
@@ -54,11 +56,11 @@ bool driver_core_init(void)
     // wifi_register();
     // tls_test_register();
     // cat1_register();
-#if VIDEO_SEND_UVC
-    uvc_register();
-#endif
     system_top_register();
-    
+    i2c_tool_register();
+    tft_st7789vw_register_commands();
+    sensor_exemple_register_commands();
+
     LOG_DRV_DEBUG("driver_core_init end \r\n");
     driver_test_main();
     set_slot_boot_success(FIRMWARE_APP, true);

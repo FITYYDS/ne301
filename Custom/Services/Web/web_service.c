@@ -20,6 +20,7 @@
 #include "api_ota_module.h"
 #include "api_rtmp_module.h"
 #include "api_preview_module.h"
+#include "api_isp_module.h"
 #include <string.h>
 
 /* ==================== Web Service Context ==================== */
@@ -83,6 +84,7 @@ aicam_result_t web_service_init(void *config)
     web_api_register_ota_module();
     web_api_register_rtmp_module();
     web_api_register_preview_module();
+    web_api_register_isp_module();
 
     // Initialize static resources
     result = web_asset_adapter_init((const uint8_t*)WEB_ASSETS_FLASH_ADDRESS);

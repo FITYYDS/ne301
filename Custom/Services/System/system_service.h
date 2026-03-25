@@ -641,7 +641,8 @@ typedef struct {
     aicam_bool_t enable_ai;
     uint32_t chunk_size;
     aicam_bool_t store_to_sd;
-    aicam_bool_t fast_fail_mqtt;  // AICAM_TRUE: quick fail if MQTT not connected
+    aicam_bool_t fast_fail_mqtt;              // AICAM_TRUE: quick fail if MQTT not connected
+    aicam_capture_trigger_t trigger_type;     // Capture trigger source (default: UNKNOWN)
 } system_capture_request_t;
 
 typedef struct {
@@ -665,7 +666,8 @@ typedef struct {
  */
 aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai, 
                                                      uint32_t chunk_size,
-                                                     aicam_bool_t store_to_sd);
+                                                     aicam_bool_t store_to_sd,
+                                                     aicam_capture_trigger_t trigger_type);
 
 /**
  * @brief Unified capture request entry with defaults and concurrency guard

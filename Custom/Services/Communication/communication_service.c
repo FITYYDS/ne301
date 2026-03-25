@@ -145,6 +145,7 @@ static void on_poe_ready(const char *if_name, aicam_result_t result);
 static void update_type_info_cache(void);
 static communication_type_t get_highest_priority_connected_type(void);
 static const char* get_interface_name_for_type(communication_type_t type);
+static void check_and_handle_hardware_change(void);
 
 /* ==================== Startup Connection Decision ==================== */
 static void check_all_ready_and_decide(void);
@@ -820,6 +821,7 @@ aicam_result_t communication_service_init(void *config)
         strncpy(g_communication_service.cellular_settings.pin_code, net_cfg.cellular.pin_code,
                 sizeof(g_communication_service.cellular_settings.pin_code) - 1);
         g_communication_service.cellular_settings.authentication = net_cfg.cellular.authentication;
+        g_communication_service.cellular_settings.operator = net_cfg.cellular.operator;
         
         LOG_SVC_INFO("Loaded communication config from NVS: preferred_type=%d, auto_priority=%d",
                      g_communication_service.preferred_type,
@@ -1736,9 +1738,11 @@ static void make_startup_connection_decision(void)
         }
         
         if (!hw_available) {
-            LOG_SVC_WARN("Preferred type %s hardware not available!", 
+            LOG_SVC_WARN("Preferred type %s hardware not available, auto-fallback", 
                         communication_type_to_string(target_type));
-            // Still set as selected, user needs to change preference
+            communication_set_preferred_type(COMM_TYPE_NONE);
+            target_type = get_highest_priority_available_type();
+            LOG_SVC_INFO("Fallback to: %s", communication_type_to_string(target_type));
         }
     }
     // Case 2: No preferred type set, use priority
@@ -1924,7 +1928,16 @@ static void update_type_info_cache(void)
     }
     
 #if NETIF_4G_CAT1_IS_ENABLE
-    // Cellular type
+    // Cellular type — dynamically recheck hardware availability
+    if (g_communication_service.cellular_available && g_communication_service.startup_decision_made) {
+        netif_state_t cell_hw_state = nm_get_netif_state(NETIF_NAME_4G_CAT1);
+        if (cell_hw_state == NETIF_STATE_DEINIT) {
+            g_communication_service.cellular_available = AICAM_FALSE;
+            g_communication_service.cellular_initialized = AICAM_FALSE;
+            LOG_SVC_WARN("Cellular hardware no longer available (netif DEINIT)");
+        }
+    }
+
     g_communication_service.type_info[COMM_TYPE_CELLULAR].type = COMM_TYPE_CELLULAR;
     g_communication_service.type_info[COMM_TYPE_CELLULAR].priority = 2;  // Medium priority
     g_communication_service.type_info[COMM_TYPE_CELLULAR].available = g_communication_service.cellular_available;
@@ -1958,7 +1971,16 @@ static void update_type_info_cache(void)
 #endif
 
 #if NETIF_ETH_WAN_IS_ENABLE
-    // PoE type
+    // PoE type — only mark unavailable when hardware is truly gone (DEINIT)
+    if (g_communication_service.poe_available && g_communication_service.startup_decision_made) {
+        netif_state_t poe_hw_state = nm_get_netif_state(NETIF_NAME_ETH_WAN);
+        if (poe_hw_state == NETIF_STATE_DEINIT) {
+            g_communication_service.poe_available = AICAM_FALSE;
+            g_communication_service.poe_initialized = AICAM_FALSE;
+            LOG_SVC_WARN("PoE hardware no longer available (netif DEINIT)");
+        }
+    }
+
     g_communication_service.type_info[COMM_TYPE_POE].type = COMM_TYPE_POE;
     g_communication_service.type_info[COMM_TYPE_POE].priority = 3;  // Highest priority
     g_communication_service.type_info[COMM_TYPE_POE].available = g_communication_service.poe_available;
@@ -2002,6 +2024,84 @@ static void update_type_info_cache(void)
     // Set is_default flag based on active type
     for (int i = 0; i < COMM_TYPE_MAX; i++) {
         g_communication_service.type_info[i].is_default = (g_communication_service.type_info[i].type == connected);
+    }
+
+    // Check for hardware removal and handle fallback
+    if (g_communication_service.startup_decision_made) {
+        check_and_handle_hardware_change();
+    }
+}
+
+/**
+ * @brief Detect hardware change and auto-fallback selected type
+ * @note Two cases:
+ *   1) Hardware removed (available=FALSE): clear preferred_type, fallback selected, try WiFi
+ *   2) Connection lost (available=TRUE but disconnected): only fallback selected, keep preferred
+ *      so user can still manually switch back to the original type
+ */
+static void check_and_handle_hardware_change(void)
+{
+    communication_type_t sel = g_communication_service.selected_type;
+
+    if (sel == COMM_TYPE_NONE || sel == COMM_TYPE_WIFI) {
+        return;
+    }
+
+    aicam_bool_t sel_available = g_communication_service.type_info[sel].available;
+    communication_status_t sel_status = g_communication_service.type_info[sel].status;
+
+    // Case 1: Hardware truly removed (unavailable)
+    if (!sel_available) {
+        LOG_SVC_WARN("=== Hardware removal detected: %s is no longer available ===",
+                     communication_type_to_string(sel));
+
+        if (g_communication_service.preferred_type == sel) {
+            g_communication_service.preferred_type = COMM_TYPE_NONE;
+            g_communication_service.config.preferred_type = COMM_TYPE_NONE;
+            network_service_config_t net_cfg;
+            if (json_config_get_network_service_config(&net_cfg) == AICAM_OK) {
+                net_cfg.preferred_comm_type = (uint32_t)COMM_TYPE_NONE;
+                json_config_set_network_service_config(&net_cfg);
+            }
+            LOG_SVC_INFO("Cleared stale preferred type (was %s)", communication_type_to_string(sel));
+        }
+
+        communication_type_t fallback = get_highest_priority_available_type();
+        g_communication_service.selected_type = fallback;
+        LOG_SVC_INFO("Auto-fallback selected type: %s -> %s",
+                     communication_type_to_string(sel), communication_type_to_string(fallback));
+
+        if (g_communication_service.active_type == COMM_TYPE_NONE && fallback == COMM_TYPE_WIFI) {
+            if (g_communication_service.wifi_sta_ready &&
+                g_communication_service.type_info[COMM_TYPE_WIFI].status != COMM_STATUS_CONNECTED) {
+                LOG_SVC_INFO("Attempting WiFi auto-connect after hardware removal");
+                try_connect_known_networks();
+            }
+        }
+        return;
+    }
+
+    // Case 2: Hardware present but connection lost — auto-switch to a connected type
+    //         Keep preferred_type and available so user can manually switch back
+    if (sel_status != COMM_STATUS_CONNECTED && sel_status != COMM_STATUS_CONNECTING) {
+        communication_type_t connected = g_communication_service.active_type;
+        if (connected != COMM_TYPE_NONE && connected != sel) {
+            g_communication_service.selected_type = connected;
+            LOG_SVC_INFO("Connection lost on %s, auto-switch selected to connected %s",
+                         communication_type_to_string(sel), communication_type_to_string(connected));
+        } else if (connected == COMM_TYPE_NONE) {
+            communication_type_t fallback = get_highest_priority_available_type();
+            if (fallback != sel) {
+                g_communication_service.selected_type = fallback;
+                LOG_SVC_INFO("Connection lost on %s, fallback selected to %s",
+                             communication_type_to_string(sel), communication_type_to_string(fallback));
+                if (fallback == COMM_TYPE_WIFI && g_communication_service.wifi_sta_ready &&
+                    g_communication_service.type_info[COMM_TYPE_WIFI].status != COMM_STATUS_CONNECTED) {
+                    LOG_SVC_INFO("Attempting WiFi auto-connect after connection loss");
+                    try_connect_known_networks();
+                }
+            }
+        }
     }
 }
 
@@ -2734,6 +2834,7 @@ aicam_result_t communication_cellular_set_settings(const cellular_connection_set
     strncpy(cellular_cfg.cellular_cfg.pin, settings->pin_code, sizeof(cellular_cfg.cellular_cfg.pin) - 1);
     cellular_cfg.cellular_cfg.authentication = (uint8_t)settings->authentication;
     cellular_cfg.cellular_cfg.is_enable_roam = settings->enable_roaming ? 1 : 0;
+    cellular_cfg.cellular_cfg.isp_selected = settings->operator;
     
     aicam_result_t result = nm_set_netif_cfg(NETIF_NAME_4G_CAT1, &cellular_cfg);
     
@@ -2781,9 +2882,10 @@ aicam_result_t communication_cellular_save_settings(void)
     strncpy(net_cfg.cellular.pin_code, g_communication_service.cellular_settings.pin_code,
             sizeof(net_cfg.cellular.pin_code) - 1);
     net_cfg.cellular.pin_code[sizeof(net_cfg.cellular.pin_code) - 1] = '\0';
-    
+
     net_cfg.cellular.authentication = (uint8_t)g_communication_service.cellular_settings.authentication;
     net_cfg.cellular.enable_roaming = g_communication_service.cellular_settings.enable_roaming;
+    net_cfg.cellular.operator = g_communication_service.cellular_settings.operator;
     
     result = json_config_set_network_service_config(&net_cfg);
     if (result != AICAM_OK) {

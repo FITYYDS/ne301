@@ -26,6 +26,7 @@ export interface SetCellularReq {
     pin_code?: string;
     authentication?: number;
     enable_roaming?: boolean;
+    operator?: number;
     save?: boolean;
 }
 

@@ -86,9 +86,10 @@ static volatile aicam_bool_t g_capture_in_progress = AICAM_FALSE;
 static volatile aicam_bool_t g_fast_fail_mqtt_policy = AICAM_FALSE;
 static const system_capture_request_t g_capture_defaults = {
     .enable_ai = AICAM_TRUE,
-    .chunk_size = 0,        // auto chunk
+    .chunk_size = 0,
     .store_to_sd = AICAM_TRUE,
-    .fast_fail_mqtt = AICAM_FALSE
+    .fast_fail_mqtt = AICAM_FALSE,
+    .trigger_type = AICAM_CAPTURE_TRIGGER_UNKNOWN
 };
  
  static uint64_t get_timestamp_ms(void)
@@ -981,7 +982,7 @@ static aicam_result_t unregister_pir_runtime_callback(void);
  * @brief Async wakeup task - handles image capture and upload based on work mode
  * @param controller System controller pointer
  */
- static void wakeup_task_async(system_controller_t *controller)
+ static void wakeup_task_async(system_controller_t *controller, aicam_capture_trigger_t trigger_type)
  {
      LOG_SVC_INFO("=== Wakeup Task Started ===");
      LOG_SVC_INFO("Current work mode: %d", controller->current_work_mode);
@@ -992,11 +993,11 @@ static aicam_result_t unregister_pir_runtime_callback(void);
      {
         LOG_SVC_INFO("Image mode detected - starting capture and upload to MQTT");
         
-        //Use the new unified interface for capture and upload
         system_capture_request_t req = {
             .enable_ai = AICAM_TRUE,
             .chunk_size = 0,
-            .store_to_sd = AICAM_TRUE
+            .store_to_sd = AICAM_TRUE,
+            .trigger_type = trigger_type
         };
         aicam_result_t ret = system_service_capture_request(&req, NULL);
         
@@ -1069,28 +1070,28 @@ static void default_capture_callback(capture_trigger_type_t trigger_type, void *
             
         case CAPTURE_TRIGGER_RTC_WAKEUP:
             LOG_SVC_INFO("RTC wakeup trigger detected - scheduled capture");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_RTC);
             LOG_SVC_INFO("RTC wakeup trigger detected - scheduled capture completed");
             system_service_task_completed();
             break;
         
         case CAPTURE_TRIGGER_RTC:
             LOG_SVC_INFO("RTC timer trigger detected - scheduled capture");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_RTC);
             LOG_SVC_INFO("RTC timer trigger detected - scheduled capture completed");
             break;
             
         case CAPTURE_TRIGGER_PIR:
             // PIR wakeup from sleep: trigger capture and mark task completed (will enter sleep after)
             LOG_SVC_INFO("PIR wakeup detected - triggering capture (will enter sleep after completion)");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_PIR);
             LOG_SVC_INFO("PIR wakeup trigger capture completed");
             system_service_task_completed();
             break;
             
         case CAPTURE_TRIGGER_BUTTON:
             LOG_SVC_INFO("Button pressed - manual capture");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_BUTTON);
             system_service_task_completed();
             // TODO: Implement button trigger capture logic
             // Example: trigger_manual_capture();
@@ -1414,7 +1415,7 @@ static void pir_value_change_callback(uint32_t pir_value)
         
         // Runtime PIR trigger: directly call wakeup_task_async without system_service_task_completed()
         // This ensures the system does not enter sleep after runtime trigger
-        wakeup_task_async(controller);
+        wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_PIR);
         LOG_SVC_INFO("PIR runtime trigger capture completed (system will remain active)");
     } else {
         LOG_SVC_DEBUG("PIR value changed but doesn't match trigger type (value: %u, trigger_type: %d)", 
@@ -2815,6 +2816,12 @@ aicam_result_t system_service_request_sleep(uint32_t duration_sec)
         return AICAM_ERROR_NOT_INITIALIZED;
     }
 
+    //should check if the system is in low power mode
+    if (g_system_service_ctx.controller->power_config.current_mode != POWER_MODE_LOW_POWER) {
+        LOG_SVC_INFO("System is not in low power mode, cannot request sleep");
+        return AICAM_OK;
+    }
+
     LOG_SVC_INFO("Sleep requested with duration: %u seconds", duration_sec);
     g_system_service_ctx.pending_sleep_duration = duration_sec;
     g_system_service_ctx.sleep_pending = true;
@@ -2899,6 +2906,7 @@ aicam_result_t system_service_capture_request(const system_capture_request_t *re
         resolved.enable_ai = request->enable_ai;
         resolved.store_to_sd = request->store_to_sd;
         resolved.fast_fail_mqtt = request->fast_fail_mqtt;
+        resolved.trigger_type = request->trigger_type;
         if (request->chunk_size > 0) {
             resolved.chunk_size = request->chunk_size;
         }
@@ -2915,7 +2923,8 @@ aicam_result_t system_service_capture_request(const system_capture_request_t *re
     aicam_result_t ret = system_service_capture_and_upload_mqtt(
         resolved.enable_ai,
         resolved.chunk_size,
-        resolved.store_to_sd);
+        resolved.store_to_sd,
+        resolved.trigger_type);
     uint64_t duration_ms = rtc_get_uptime_ms() - start_ms;
 
     g_capture_in_progress = AICAM_FALSE;
@@ -2983,7 +2992,7 @@ static aicam_result_t generate_inference_image(const uint8_t *jpeg_buffer,
     ai_jpeg_decode_config_t decode_config = {
         .width = jpeg_params.ImageWidth,
         .height = jpeg_params.ImageHeight,
-        .chroma_subsampling = JPEG_444_SUBSAMPLING,
+        .chroma_subsampling = jpeg_params.ChromaSubsampling,
         .quality = jpeg_params.ImageQuality
     };
 
@@ -3041,8 +3050,8 @@ static aicam_result_t generate_inference_image(const uint8_t *jpeg_buffer,
     ai_jpeg_encode_config_t encode_config = {
         .width = decode_config.width,
         .height = decode_config.height,
-        .chroma_subsampling = JPEG_420_SUBSAMPLING,
-        .quality = 90
+        .chroma_subsampling = decode_config.chroma_subsampling,
+        .quality = jpeg_params.ImageQuality
     };
 
     ret = ai_jpeg_encode(rgb_data, raw_size, &encode_config, output_jpeg, output_jpeg_size);
@@ -3114,7 +3123,8 @@ static aicam_result_t generate_inference_json(const nn_result_t *nn_result,
  */
 aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai, 
                                                      uint32_t chunk_size,
-                                                     aicam_bool_t store_to_sd)
+                                                     aicam_bool_t store_to_sd,
+                                                     aicam_capture_trigger_t trigger_type)
 {
     if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
         LOG_SVC_ERROR("System service not initialized");
@@ -3169,7 +3179,6 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
 
     //store image to sd card if sd card is connected
     if(store_to_sd && device_service_storage_is_sd_connected()){
-        printf("xxx1\r\n");
         step_start_time = rtc_get_uptime_ms();
         LOG_SVC_INFO("[TIMING] Step 1.1: Storing images to SD card...");
         uint32_t timestamp = (uint32_t)rtc_get_timeStamp();
@@ -3291,6 +3300,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     metadata.height = jpeg_enc_param.ImageHeight;
     metadata.size = (uint32_t)jpeg_size;
     metadata.quality = jpeg_enc_param.ImageQuality;
+    metadata.trigger_type = trigger_type;
     step_end_time = rtc_get_uptime_ms();
     step_duration = step_end_time - step_start_time;
     LOG_SVC_INFO("[TIMING] Step 2 COMPLETED: Metadata prepared (duration: %lu ms)", 
@@ -3398,7 +3408,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             }
         } else {
             // Large image - chunked upload
-            uint32_t actual_chunk_size = (chunk_size > 0) ? chunk_size : (10 * 1024); // Default 10KB
+            uint32_t actual_chunk_size = (chunk_size > 0) ? chunk_size : (100 * 1024); // Default 100KB
             LOG_SVC_INFO("[TIMING] Using chunked upload (size: %u bytes, chunk: %u bytes)", 
                         jpeg_size, actual_chunk_size);
             

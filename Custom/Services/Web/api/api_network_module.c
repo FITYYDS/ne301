@@ -1349,6 +1349,7 @@ aicam_result_t network_cellular_status_handler(http_handler_context_t *ctx) {
                 cJSON_AddStringToObject(settings_json, "pin_code", settings.pin_code);
                 cJSON_AddNumberToObject(settings_json, "authentication", settings.authentication);
                 cJSON_AddBoolToObject(settings_json, "enable_roaming", settings.enable_roaming);
+                cJSON_AddNumberToObject(settings_json, "operator", settings.operator);
                 cJSON_AddItemToObject(response_json, "settings", settings_json);
             }
         }
@@ -1395,6 +1396,7 @@ aicam_result_t network_cellular_settings_handler(http_handler_context_t *ctx) {
             cJSON_AddStringToObject(response_json, "pin_code", settings.pin_code);
             cJSON_AddNumberToObject(response_json, "authentication", settings.authentication);
             cJSON_AddBoolToObject(response_json, "enable_roaming", settings.enable_roaming);
+            cJSON_AddNumberToObject(response_json, "operator", settings.operator);
         }
     } else if (strcmp(method, "POST") == 0) {
         // POST - update settings
@@ -1442,8 +1444,15 @@ aicam_result_t network_cellular_settings_handler(http_handler_context_t *ctx) {
         if (roaming_item && cJSON_IsBool(roaming_item)) {
             settings.enable_roaming = cJSON_IsTrue(roaming_item) ? AICAM_TRUE : AICAM_FALSE;
         }
-    
-        
+
+        cJSON* operator_item = cJSON_GetObjectItem(request_json, "operator");
+        if (operator_item && cJSON_IsNumber(operator_item)) {
+            int op = (int)cJSON_GetNumberValue(operator_item);
+            if (op >= 0 && op <= 4) {
+                settings.operator = (uint8_t)op;
+            }
+        }
+
         // Apply settings
         aicam_result_t result = communication_cellular_set_settings(&settings);
         if (result != AICAM_OK) {

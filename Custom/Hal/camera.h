@@ -6,6 +6,7 @@
 #include "dev_manager.h"
 #include "pwr.h"
 #include "aicam_error.h"
+#include "isp_services.h"
 
 /* Define sensor info */
 #define SENSOR_IMX335_WIDTH 2592
@@ -67,6 +68,8 @@ typedef void (*nn_put_buffer)(void);
 typedef enum {
     CAM_CMD_SET_SENSOR_PARAM        = CAMERA_CMD_BASE,
     CAM_CMD_GET_SENSOR_PARAM,
+    CAM_CMD_SET_ISP_PARAM,
+    CAM_CMD_GET_ISP_PARAM,
     CAM_CMD_SET_PIPE_CTRL,
     CAM_CMD_SET_PIPE1_PARAM,
     CAM_CMD_SET_PIPE2_PARAM,
@@ -170,6 +173,7 @@ typedef struct {
     osSemaphoreId_t sem_pipe1;
     osSemaphoreId_t sem_pipe2;
     sensor_params_t sensor_param;
+    ISP_IQParamTypeDef isp_iq_param;
     pipe_params_t pipe1_param;
     pipe_params_t pipe2_param;
     pipe_buffer_t *pipe1_buffer;
@@ -187,4 +191,11 @@ typedef struct {
 
 int camera_register(void);
 int camera_unregister(void);
+
+/**
+ * @brief Get ISP handle for ISP API module
+ * @return ISP handle pointer, or NULL if not initialized
+ */
+ISP_HandleTypeDef* camera_get_isp_handle(void);
+
 #endif

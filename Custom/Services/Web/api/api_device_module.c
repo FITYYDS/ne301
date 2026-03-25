@@ -363,6 +363,9 @@ aicam_result_t device_image_config_handler(http_handler_context_t *ctx) {
         cJSON_AddBoolToObject(response_json, "horizontal_flip", camera_config.image_config.horizontal_flip);
         cJSON_AddBoolToObject(response_json, "vertical_flip", camera_config.image_config.vertical_flip);
         cJSON_AddNumberToObject(response_json, "aec", camera_config.image_config.aec);
+        cJSON_AddNumberToObject(response_json, "fast_capture_skip_frames", camera_config.image_config.fast_capture_skip_frames);
+        cJSON_AddNumberToObject(response_json, "fast_capture_resolution", camera_config.image_config.fast_capture_resolution);
+        cJSON_AddNumberToObject(response_json, "fast_capture_jpeg_quality", camera_config.image_config.fast_capture_jpeg_quality);
         
         // Send response
         char* json_string = cJSON_Print(response_json);
@@ -395,6 +398,9 @@ aicam_result_t device_image_config_handler(http_handler_context_t *ctx) {
             cJSON_Delete(request_json);
             return api_response_error(ctx, API_ERROR_INTERNAL_ERROR, "Failed to get current image configuration");
         }
+
+        // Keep a copy to detect whether pipeline-affecting fields changed
+        image_config_t old_image_config = image_config;
         
         // Update brightness if provided
         cJSON* brightness_item = cJSON_GetObjectItem(request_json, "brightness");
@@ -442,16 +448,60 @@ aicam_result_t device_image_config_handler(http_handler_context_t *ctx) {
             }
         }
 
+        // Update fast capture skip frames if provided (0-300 to match CAM_CMD_SET_STARTUP_SKIP_FRAMES)
+        cJSON* fast_skip_item = cJSON_GetObjectItem(request_json, "fast_capture_skip_frames");
+        if (fast_skip_item && cJSON_IsNumber(fast_skip_item)) {
+            double skip_value = cJSON_GetNumberValue(fast_skip_item);
+            if (skip_value >= 0.0 && skip_value <= 300.0) {
+                image_config.fast_capture_skip_frames = (uint32_t)skip_value;
+            } else {
+                cJSON_Delete(request_json);
+                return api_response_error(ctx, API_ERROR_INVALID_REQUEST, "fast_capture_skip_frames must be between 0 and 300");
+            }
+        }
+
+        // Update fast capture resolution if provided (0:1280x720, 1:1920x1080, 2:2688x1520)
+        cJSON* fast_res_item = cJSON_GetObjectItem(request_json, "fast_capture_resolution");
+        if (fast_res_item && cJSON_IsNumber(fast_res_item)) {
+            double res_value = cJSON_GetNumberValue(fast_res_item);
+            if (res_value >= 0.0 && res_value <= 2.0) {
+                image_config.fast_capture_resolution = (uint32_t)res_value;
+            }
+        }
+
+        // Update fast capture JPEG quality if provided
+        cJSON* fast_jq_item = cJSON_GetObjectItem(request_json, "fast_capture_jpeg_quality");
+        if (fast_jq_item && cJSON_IsNumber(fast_jq_item)) {
+            double jq_value = cJSON_GetNumberValue(fast_jq_item);
+            if (jq_value >= 1 && jq_value <= 100.0) {
+                image_config.fast_capture_jpeg_quality = (uint32_t)jq_value;
+            }
+        }
+
         cJSON_Delete(request_json);
 
-        //stop pipeline
-        ai_pipeline_stop();
+        // Determine whether changes require restarting AI pipeline
+        aicam_bool_t need_restart_pipeline = AICAM_FALSE;
+        if (old_image_config.brightness != image_config.brightness ||
+            old_image_config.contrast != image_config.contrast ||
+            old_image_config.horizontal_flip != image_config.horizontal_flip ||
+            old_image_config.vertical_flip != image_config.vertical_flip ||
+            old_image_config.aec != image_config.aec) {
+            need_restart_pipeline = AICAM_TRUE;
+        }
 
-        // Apply the updated configuration
+        if (need_restart_pipeline) {
+            // Stop pipeline before applying camera-related changes
+            ai_pipeline_stop();
+        }
+
+        // Apply the updated configuration (always updates config + persistence)
         result = device_service_image_set_config(&image_config);
 
-        //start pipeline
-        ai_pipeline_start();
+        if (need_restart_pipeline) {
+            // Restart pipeline only when necessary
+            ai_pipeline_start();
+        }
         
         // Create success response
         cJSON* response_json = cJSON_CreateObject();
@@ -465,6 +515,9 @@ aicam_result_t device_image_config_handler(http_handler_context_t *ctx) {
         cJSON_AddBoolToObject(response_json, "horizontal_flip", image_config.horizontal_flip);
         cJSON_AddBoolToObject(response_json, "vertical_flip", image_config.vertical_flip);
         cJSON_AddNumberToObject(response_json, "aec", image_config.aec);
+        cJSON_AddNumberToObject(response_json, "fast_capture_skip_frames", image_config.fast_capture_skip_frames);
+        cJSON_AddNumberToObject(response_json, "fast_capture_resolution", image_config.fast_capture_resolution);
+        cJSON_AddNumberToObject(response_json, "fast_capture_jpeg_quality", image_config.fast_capture_jpeg_quality);
         
         // Send response
         char* json_string = cJSON_Print(response_json);
@@ -777,6 +830,9 @@ aicam_result_t device_camera_config_handler(http_handler_context_t *ctx) {
             cJSON_AddBoolToObject(image_config_json, "horizontal_flip", camera_config.image_config.horizontal_flip);
             cJSON_AddBoolToObject(image_config_json, "vertical_flip", camera_config.image_config.vertical_flip);
             cJSON_AddNumberToObject(image_config_json, "aec", camera_config.image_config.aec);
+            cJSON_AddNumberToObject(image_config_json, "fast_capture_skip_frames", camera_config.image_config.fast_capture_skip_frames);
+            cJSON_AddNumberToObject(image_config_json, "fast_capture_resolution", camera_config.image_config.fast_capture_resolution);
+            cJSON_AddNumberToObject(image_config_json, "fast_capture_jpeg_quality", camera_config.image_config.fast_capture_jpeg_quality);
             cJSON_AddItemToObject(response_json, "image_config", image_config_json);
         }
         
@@ -908,6 +964,9 @@ aicam_result_t device_camera_config_handler(http_handler_context_t *ctx) {
             cJSON_AddBoolToObject(image_config_response, "horizontal_flip", camera_config.image_config.horizontal_flip);
             cJSON_AddBoolToObject(image_config_response, "vertical_flip", camera_config.image_config.vertical_flip);
             cJSON_AddNumberToObject(image_config_response, "aec", camera_config.image_config.aec);
+            cJSON_AddNumberToObject(image_config_response, "fast_capture_skip_frames", camera_config.image_config.fast_capture_skip_frames);
+            cJSON_AddNumberToObject(image_config_response, "fast_capture_resolution", camera_config.image_config.fast_capture_resolution);
+            cJSON_AddNumberToObject(image_config_response, "fast_capture_jpeg_quality", camera_config.image_config.fast_capture_jpeg_quality);
             cJSON_AddItemToObject(response_json, "image_config", image_config_response);
         }
         

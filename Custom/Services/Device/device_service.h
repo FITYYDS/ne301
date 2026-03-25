@@ -326,6 +326,13 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
 aicam_result_t device_service_camera_get_jpeg_params(jpegc_params_t *jpeg_params);
 
 /**
+ * @brief Get JPEG encode parameters
+ * @param jpeg_enc_param Pointer to jpegc_params_t structure
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t device_service_camera_get_jpeg_enc_param(jpegc_params_t *jpeg_enc_param);
+
+/**
  * @brief Free JPEG buffer
  * @param buffer Pointer to JPEG buffer
  * @return aicam_result_t Operation result

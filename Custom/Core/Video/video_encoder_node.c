@@ -12,7 +12,6 @@
 #include "pixel_format_map.h"
 #include <string.h>
 #include <stdio.h>
-#include "uvc.h"
 #include "websocket_stream_server.h"
 #include "camera.h"
 #include "h264encapi.h"

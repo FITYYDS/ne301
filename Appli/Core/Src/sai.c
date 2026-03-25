@@ -20,19 +20,20 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "sai.h"
+#include "common_utils.h"
 
 /* USER CODE BEGIN 0 */
-
+ 
 /* USER CODE END 0 */
 
-SAI_HandleTypeDef hsai_BlockA1;
-SAI_HandleTypeDef hsai_BlockB1;
-DMA_NodeTypeDef Node_GPDMA1_Channel6;
-DMA_QListTypeDef List_GPDMA1_Channel6;
-DMA_HandleTypeDef handle_GPDMA1_Channel6;
-DMA_NodeTypeDef Node_GPDMA1_Channel5;
-DMA_QListTypeDef List_GPDMA1_Channel5;
-DMA_HandleTypeDef handle_GPDMA1_Channel5;
+SAI_HandleTypeDef hsai_BlockA1  ALIGN_32 UNCACHED;
+SAI_HandleTypeDef hsai_BlockB1  ALIGN_32 UNCACHED;
+DMA_NodeTypeDef   Node_GPDMA1_Channel6      ALIGN_32 UNCACHED;
+DMA_QListTypeDef  List_GPDMA1_Channel6      ALIGN_32 UNCACHED;
+DMA_HandleTypeDef handle_GPDMA1_Channel6    ALIGN_32 UNCACHED;
+DMA_NodeTypeDef   Node_GPDMA1_Channel5      ALIGN_32 UNCACHED;
+DMA_QListTypeDef  List_GPDMA1_Channel5      ALIGN_32 UNCACHED;
+DMA_HandleTypeDef handle_GPDMA1_Channel5    ALIGN_32 UNCACHED;
 
 /* SAI1 init function */
 void MX_SAI1_Init(void)
@@ -105,7 +106,7 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* saiHandle)
   */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SAI1;
     PeriphClkInitStruct.Sai1ClockSelection = RCC_SAI1CLKSOURCE_IC7;
-    PeriphClkInitStruct.ICSelection[RCC_IC7].ClockSelection = RCC_ICCLKSOURCE_PLL2;
+    PeriphClkInitStruct.ICSelection[RCC_IC7].ClockSelection = RCC_ICCLKSOURCE_PLL4;
     PeriphClkInitStruct.ICSelection[RCC_IC7].ClockDivider = 125;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
@@ -130,7 +131,7 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* saiHandle)
     GPIO_InitStruct.Pin = GPIO_PIN_2;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF6_SAI1;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
@@ -230,14 +231,14 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* saiHandle)
     GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_12|GPIO_PIN_2;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF6_SAI1;
     HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
     GPIO_InitStruct.Pin = GPIO_PIN_3;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF6_SAI1;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
