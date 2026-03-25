@@ -5,6 +5,8 @@
 #include "debug.h"
 #include "mem.h"
 #include "stm32n6xx_hal.h"
+#include "isp_param_conf.h"
+#include "isp_api.h"
 
 // Constant definitions
 #define CAMERA_TASK_DELAY_MS            1000
@@ -41,10 +43,10 @@ static const char *sensor_names[] = {
     "CMW_OS04C10",
 };
 
-
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
-#include "isp_api.h"
-#include "isp_param_conf.h"
+#ifdef ISP_ENABLE_UVC
+#include "usbx_conf.h"
+#endif
 
 extern CMW_Sensor_if_t Camera_Drv;
 extern DCMIPP_HandleTypeDef hcamera_dcmipp;
@@ -64,8 +66,8 @@ ISP_StatusTypeDef GetSensorInfo(uint32_t camera_instance, ISP_SensorInfoTypeDef 
     if (CMW_CAMERA_GetSensorInfo(info) != CMW_ERROR_NONE)
         return ISP_ERR_SENSORINFO;
 
-    info->width = g_camera.pipe1_param.width;
-    info->height = g_camera.pipe1_param.height;
+    // info->width = g_camera.pipe1_param.width;
+    // info->height = g_camera.pipe1_param.height;
     return ISP_OK;
 }
 
@@ -172,6 +174,146 @@ ISP_StatusTypeDef Camera_StopPreview(void *pDcmipp)
     // printf("Camera_StopPreview\r\n");
     return ISP_OK;
 }
+
+#ifdef ISP_ENABLE_UVC
+/* UVC frame buffer for RGB888 -> YUV422 (YUYV) conversion */
+static uint8_t *uvc_frame_buf = NULL;
+static uint32_t uvc_frame_buf_size = 0;
+
+typedef struct {
+    osThreadId_t thread_id;
+    osSemaphoreId_t sem;
+    uint8_t *pipe2_buf;
+    int pipe2_size;
+} uvc_task_ctx_t;
+
+static uvc_task_ctx_t g_uvc_ctx = {0};
+
+/* Clamp helper for conversion */
+static inline uint8_t clamp_u8(int32_t v)
+{
+    if (v < 0) {
+        return 0;
+    }
+    if (v > 255) {
+        return 255;
+    }
+    return (uint8_t)v;
+}
+
+/* Convert a RGB888 frame to YUV422 (YUYV) format.
+ * src: RGB888 buffer (3 bytes per pixel)
+ * dst: YUYV buffer (4 bytes per 2 pixels)
+ * width, height: frame resolution
+ */
+static void rgb888_to_yuv422_yuyv(const uint8_t *src, uint8_t *dst, uint32_t width, uint32_t height)
+{
+    const uint32_t pixel_count = width * height;
+    uint32_t i = 0;
+    uint32_t dst_index = 0;
+
+    while (i + 1U < pixel_count) {
+        uint32_t src_index0 = i * 3U;
+        uint32_t src_index1 = (i + 1U) * 3U;
+
+        int32_t r0 = src[src_index0 + 0];
+        int32_t g0 = src[src_index0 + 1];
+        int32_t b0 = src[src_index0 + 2];
+
+        int32_t r1 = src[src_index1 + 0];
+        int32_t g1 = src[src_index1 + 1];
+        int32_t b1 = src[src_index1 + 2];
+
+        /* Fixed-point BT.601 conversion */
+        int32_t y0 = ( 77 * r0 + 150 * g0 +  29 * b0) >> 8;
+        int32_t y1 = ( 77 * r1 + 150 * g1 +  29 * b1) >> 8;
+        int32_t u  = ((-43 * r0 -  85 * g0 + 128 * b0) >> 8) + 128;
+        int32_t v  = ((128 * r0 - 107 * g0 -  21 * b0) >> 8) + 128;
+
+        dst[dst_index + 0] = clamp_u8(y0);
+        dst[dst_index + 1] = clamp_u8(u);
+        dst[dst_index + 2] = clamp_u8(y1);
+        dst[dst_index + 3] = clamp_u8(v);
+
+        dst_index += 4U;
+        i += 2U;
+    }
+
+    /* Handle odd pixel count: duplicate last pixel chroma */
+    if (i < pixel_count) {
+        uint32_t src_index = i * 3U;
+        int32_t r = src[src_index + 0];
+        int32_t g = src[src_index + 1];
+        int32_t b = src[src_index + 2];
+
+        int32_t y = ( 77 * r + 150 * g +  29 * b) >> 8;
+        int32_t u = ((-43 * r -  85 * g + 128 * b) >> 8) + 128;
+        int32_t v = ((128 * r - 107 * g -  21 * b) >> 8) + 128;
+
+        dst[dst_index + 0] = clamp_u8(y);
+        dst[dst_index + 1] = clamp_u8(u);
+        dst[dst_index + 2] = clamp_u8(y);
+        dst[dst_index + 3] = clamp_u8(v);
+    }
+}
+
+static void uvcSendTask(void *argument)
+{
+    (void)argument;
+
+    for (;;) {
+        if (osSemaphoreAcquire(g_uvc_ctx.sem, osWaitForever) != osOK) {
+            continue;
+        }
+
+        uint8_t *pipe2_buf = g_uvc_ctx.pipe2_buf;
+        int buf_size = g_uvc_ctx.pipe2_size;
+
+        if (pipe2_buf == NULL || buf_size <= 0 ||
+            g_camera.pipe2_param.width <= 0 || g_camera.pipe2_param.height <= 0) {
+            g_uvc_ctx.pipe2_buf = NULL;
+            g_uvc_ctx.pipe2_size = 0;
+            continue;
+        }
+
+        uint32_t width = (uint32_t)g_camera.pipe2_param.width;
+        uint32_t height = (uint32_t)g_camera.pipe2_param.height;
+        uint32_t required_size = width * height * 2U; /* YUYV: 2 bytes per pixel */
+
+        if (uvc_frame_buf == NULL || uvc_frame_buf_size < required_size) {
+            if (uvc_frame_buf != NULL) {
+                hal_mem_free(uvc_frame_buf);
+                uvc_frame_buf = NULL;
+                uvc_frame_buf_size = 0;
+            }
+            uvc_frame_buf = hal_mem_alloc_aligned(required_size,
+                                                  CAMERA_MEMORY_ALIGNMENT,
+                                                  MEM_LARGE);
+            if (uvc_frame_buf == NULL) {
+                LOG_DRV_ERROR("UVC frame buffer alloc failed (size=%lu)\r\n",
+                              (unsigned long)required_size);
+                device_ioctl(g_camera.dev, CAM_CMD_RETURN_PIPE2_BUFFER, pipe2_buf, 0);
+                g_uvc_ctx.pipe2_buf = NULL;
+                g_uvc_ctx.pipe2_size = 0;
+                continue;
+            }
+            uvc_frame_buf_size = required_size;
+        }
+
+        rgb888_to_yuv422_yuyv(pipe2_buf, uvc_frame_buf, width, height);
+
+        int uvc_ret = usb_uvc_show_frame(uvc_frame_buf, (int)required_size);
+        if (uvc_ret != 0) {
+            LOG_DRV_DEBUG("usb_uvc_show_frame returned %d\r\n", uvc_ret);
+        }
+
+        device_ioctl(g_camera.dev, CAM_CMD_RETURN_PIPE2_BUFFER, pipe2_buf, 0);
+
+        g_uvc_ctx.pipe2_buf = NULL;
+        g_uvc_ctx.pipe2_size = 0;
+    }
+}
+#endif
 
 static uint8_t *isp_tool_buf = NULL;
 
@@ -284,6 +426,7 @@ ISP_AppliHelpersTypeDef appliHelpers = {
 };
 #endif
 
+
 void buffer_reset(pipe_buffer_t *bufs, int nb, camera_dq_t *dq)
 {
     for (int i = 0; i < nb; ++i) {
@@ -390,7 +533,8 @@ pipe_buffer_t* buffer_get_latest_ready(pipe_buffer_t *bufs, int nb, camera_dq_t 
 
 static void CAM_setSensorInfo(CMW_Sensor_Name_t sensor, camera_t *camera)
 {
-    switch (sensor) {
+    CMW_Sensor_Name_t sensor_id = sensor;
+    switch (sensor_id) {
         case CMW_VD66GY_Sensor:
             camera->sensor_param.width = SENSOR_VD66GY_WIDTH;
             camera->sensor_param.height = SENSOR_VD66GY_HEIGHT;
@@ -418,9 +562,6 @@ static void CAM_setSensorInfo(CMW_Sensor_Name_t sensor, camera_t *camera)
             camera->sensor_param.mirror_flip = SENSOR_OS04C10_FLIP;
             camera->sensor_param.name = sensor_names[4];
             camera->sensor_param.fps = CAMERA_FPS;
-        // #ifndef ISP_MW_TUNING_TOOL_SUPPORT
-            camera->sensor_param.aec = 1;
-        // #endif
             break;
         default:
             break;
@@ -429,6 +570,23 @@ static void CAM_setSensorInfo(CMW_Sensor_Name_t sensor, camera_t *camera)
     LOG_DRV_DEBUG("Detected %s \r\n", camera->sensor_param.name);
     LOG_DRV_DEBUG("Sensor Image: %dx%d, MirrorFlip: %d ",
     camera->sensor_param.width, camera->sensor_param.height, camera->sensor_param.mirror_flip);
+
+    // Initialize ISP IQ parameters based on detected sensor
+    switch (sensor_id) {
+        case CMW_IMX335_Sensor:
+            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_IMX335, sizeof(ISP_IQParamTypeDef));
+            break;
+        case CMW_VD66GY_Sensor:
+            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_VD66GY, sizeof(ISP_IQParamTypeDef));
+            break;
+        case CMW_OS04C10_Sensor:
+            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_OS04C10, sizeof(ISP_IQParamTypeDef));
+            break;
+        default:
+            // Use OS04C10 as default
+            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_OS04C10, sizeof(ISP_IQParamTypeDef));
+            break;
+    }
 }
 
 /* Keep display output aspect ratio using crop area */
@@ -574,21 +732,40 @@ static int DCMIPP_ReduceSpurious(DCMIPP_HandleTypeDef *hdcmipp)
 
 int CAM_Init(camera_t *camera)
 {
-    CMW_CameraInit_t cam_conf;
+    CMW_CameraInit_t cam_conf = {0};
     CMW_Sensor_Name_t sensor;
+    ISP_SensorInfoTypeDef info = {0};
     int ret;
-    ret = CMW_CAMERA_Init(&cam_conf);
+
+    /* Let camera middleware auto-configure sensor; provide basic runtime preferences */
+    cam_conf.width = 0;
+    cam_conf.height = 0;
+    cam_conf.fps = CAMERA_FPS;
+    cam_conf.mirror_flip = CMW_MIRRORFLIP_NONE;
+
+    ret = CMW_CAMERA_Init(&cam_conf, NULL);
     if(ret != CMW_ERROR_NONE){
         return ret;
     }
-    sensor_width = cam_conf.width;
-    sensor_height = cam_conf.height;
+
+    /* Query actual sensor resolution from middleware */
+    ret = CMW_CAMERA_GetSensorInfo(&info);
+    if (ret != CMW_ERROR_NONE){
+        return ret;
+    }
+    sensor_width = (int)info.width;
+    sensor_height = (int)info.height;
 
     ret = CMW_CAMERA_GetSensorName(&sensor);
     if(ret != CMW_ERROR_NONE){
         return ret;
     }
     CAM_setSensorInfo(sensor, camera);
+
+#ifndef ISP_MW_TUNING_TOOL_SUPPORT
+    // Set ISP initialization parameters before starting camera
+    CMW_CAMERA_SetISPInitParam(&camera->isp_iq_param);
+#endif
 
     CMW_CAMERA_SetMirrorFlip(camera->sensor_param.mirror_flip);
     DCMIPP_IpPlugInit(CMW_CAMERA_GetDCMIPPHandle());
@@ -720,69 +897,12 @@ int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
   return HAL_OK;
 }
 
-static int camera_SetBrightness(int val)
+void CMW_CAMERA_PIPE_ErrorCallback(uint32_t pipe)
 {
-// #ifdef ISP_MW_TUNING_TOOL_SUPPORT
-//     (void) val;
-// #else
-    int exposure, gain;
-    int ret;
-
-    // printf("Set Brightness: %d\r\n", val);
-    if (val <= 0) {
-        val = 0;
-    }
-
-    if (val >= 100) {
-        val = 100;
-    }
-
-    if (val <= 50) {
-        exposure = EXPOSURE_MIN + (EXPOSURE_MAX - EXPOSURE_MIN) * val / 50;
-        gain = GAIN_MIN;
-    } else {
-        exposure = EXPOSURE_MAX;
-        gain = GAIN_MIN + (GAIN_MAX - GAIN_MIN) * (val - 50) / 50;
-    }
-    ret = CMW_CAMERA_SetExposure(exposure);
-    if(ret != CMW_ERROR_NONE){
-        return ret;
-    }
-    ret = CMW_CAMERA_SetGain(gain);
-    if(ret != CMW_ERROR_NONE){
-        return ret;
-    }
-// #endif
-    return CMW_ERROR_NONE;
+    /* Handle DCMIPP pipe error without asserting.
+     * For now just log and keep running; detailed recovery can be added if needed. */
 }
 
-static int camera_sensor_set(sensor_params_t *sensor_param)
-{
-// #ifndef ISP_MW_TUNING_TOOL_SUPPORT
-    int ret;
-
-    // printf("AEC: %d, Brightness: %d, Contrast: %d\r\n", sensor_param->aec, sensor_param->brightness, sensor_param->contrast);
-    if(sensor_param->aec == 0){
-        ret = CMW_CAMERA_SetAEC(sensor_param->aec);
-        if(ret != CMW_ERROR_NONE){
-            return ret;
-        }
-        ret = camera_SetBrightness(sensor_param->brightness);
-        if(ret != CMW_ERROR_NONE){
-            return ret;
-        } 
-    }
-
-    if(sensor_param->contrast != 0){
-        ret = CMW_CAMERA_SetContrast(sensor_param->contrast);
-        if(ret != CMW_ERROR_NONE){
-            return ret;
-        }
-    }
-// #endif
-
-    return CMW_ERROR_NONE;
-}
 static int pipe_start_common(camera_t *camera, uint32_t pipe_id, pipe_buffer_t **pipe_buffer, 
                             pipe_params_t *pipe_param, camera_dq_t *dq, PIPE_STATE_E *pipe_state)
 {
@@ -811,18 +931,25 @@ static int pipe_start_common(camera_t *camera, uint32_t pipe_id, pipe_buffer_t *
         buffer = buffer_acquire(*pipe_buffer, pipe_param->buffer_nb, dq);
         if(buffer != NULL){
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
-            if(!isp_is_init){
-                (void) ISP_IQParamCacheInit; /* unused */
-                ret = ISP_Init(&hIsp, &hcamera_dcmipp, 0, &appliHelpers, &ISP_IQParamCacheInit_OS04C10);
-                if (ret) LOG_DRV_ERROR("ISP_Init error: %d\r\n", ret);
-                isp_is_init = 1;
+            if (pipe_id == DCMIPP_PIPE2) {
+                #ifdef ISP_ENABLE_UVC
+                    /* Define the preview size and fps for the UVC streaming */
+                    usb_uvc_init(pipe_param->width, pipe_param->height, pipe_param->fps);
+                #endif
+            
+                if(!isp_is_init){
+                    (void) ISP_IQParamCacheInit; /* unused */
+                    ret = ISP_Init(&hIsp, &hcamera_dcmipp, 0, &appliHelpers, &camera->isp_iq_param);
+                    if (ret) LOG_DRV_ERROR("ISP_Init error: %d\r\n", ret);
+                    isp_is_init = 1;
+                }
+                if(!isp_is_start){
+                    ret = ISP_Start(&hIsp);
+                    if (ret) LOG_DRV_ERROR("ISP start failed: %d\r\n", ret);
+                    isp_is_start = 1;
+                }
             }
-            if(!isp_is_start){
-                ret = ISP_Start(&hIsp);
-                if (ret) LOG_DRV_ERROR("ISP start failed: %d\r\n", ret);
-                isp_is_start = 1;
-            }
-    #endif
+#endif
             camera->skip_frame_counter = camera->startup_skip_frames;
             // clear possible residual hardware error flags before startup
             DCMIPP_HandleTypeDef *hdcmipp = CMW_CAMERA_GetDCMIPPHandle();
@@ -990,12 +1117,6 @@ static int camera_start(void *priv)
         }
     }
 
-    if(camera_sensor_set(&camera->sensor_param) != CMW_ERROR_NONE){
-        camera->mtx_isr = 0;
-        osMutexRelease(camera->mtx_id);
-        return AICAM_ERROR;
-    }
-
     camera->state.camera_state = CAMERA_START;
     camera->mtx_isr = 0;
     osMutexRelease(camera->mtx_id);
@@ -1026,12 +1147,6 @@ static int camera_stop(void *priv)
         pipe2_stop(camera);
     }
 
-    if(CMW_CAMERA_Stop() != CMW_ERROR_NONE){
-        camera->mtx_isr = 0;
-        osMutexRelease(camera->mtx_id);
-        LOG_DRV_DEBUG("camera stop failed \r\n");
-        return AICAM_ERROR_BUSY;
-    }
     camera->state.camera_state = CAMERA_STOP;
     camera->mtx_isr = 0;
     osMutexRelease(camera->mtx_id);
@@ -1057,6 +1172,26 @@ static void cameraProcess(void *argument)
         if (osSemaphoreAcquire(camera->sem_isp, CAMERA_TASK_DELAY_MS) == osOK) {
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
             if (isp_is_start) {
+            #ifdef ISP_ENABLE_UVC
+                /* When UVC is enabled, just fetch latest PIPE2 frame and notify
+                 * UVC task. Conversion and usb_uvc_show_frame are done in the
+                 * dedicated UVC thread. */
+                if (g_camera.dev != NULL &&
+                    g_camera.state.pipe2_state == PIPE_START &&
+                    g_uvc_ctx.sem != NULL &&
+                    g_uvc_ctx.pipe2_buf == NULL) {
+                    uint8_t *pipe2_buf = NULL;
+                    int buf_size = device_ioctl(g_camera.dev,
+                                                CAM_CMD_GET_PIPE2_BUFFER,
+                                                (uint8_t *)&pipe2_buf, 0);
+
+                    if (buf_size > 0 && pipe2_buf != NULL) {
+                        g_uvc_ctx.pipe2_buf = pipe2_buf;
+                        g_uvc_ctx.pipe2_size = buf_size;
+                        osSemaphoreRelease(g_uvc_ctx.sem);
+                    }
+                }
+            #endif
                 ret = ISP_BackgroundProcess(&hIsp);
                 if (ret != ISP_OK) {
                     LOG_DRV_ERROR("ISP background process failed: %d\r\n", ret);
@@ -1093,15 +1228,13 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
     switch (cam_cmd)
     {
         case CAM_CMD_SET_SENSOR_PARAM:
-// #ifndef ISP_MW_TUNING_TOOL_SUPPORT
             if(ubuf == NULL || arg != sizeof(sensor_params_t)){
                 ret = AICAM_ERROR_INVALID_PARAM;
                 break;
             }
             sensor_params_t temp_param;
             memcpy(&temp_param, ubuf, sizeof(sensor_params_t));
-            //printf("[CAM_CMD_SET_SENSOR_PARAM] brightness: %d, contrast: %d, mirror_flip: %d, aec: %lu\r\n",
-            //        temp_param.brightness, temp_param.contrast, temp_param.mirror_flip, temp_param.aec);
+
             if(temp_param.mirror_flip != camera->sensor_param.mirror_flip){
                 if(CMW_CAMERA_SetMirrorFlip(temp_param.mirror_flip) != CMW_ERROR_NONE){
                     ret = AICAM_ERROR_INVALID_PARAM;
@@ -1110,55 +1243,7 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                     camera->sensor_param.mirror_flip = temp_param.mirror_flip;
                 }
             }
-            // Save old AEC state to detect transition
-            uint32_t old_aec = camera->sensor_param.aec;
-            
-            if(temp_param.aec != camera->sensor_param.aec){
-                if(CMW_CAMERA_SetAEC(temp_param.aec) != CMW_ERROR_NONE){
-                    ret = AICAM_ERROR_INVALID_PARAM;
-                    break;
-                }else{
-                    camera->sensor_param.aec = temp_param.aec;
-                }
-            }
 
-            // Handle brightness setting
-            if(camera->sensor_param.aec == 0){
-                // AEC disabled (1->0), always apply brightness to ensure hardware values are correct
-                if((old_aec == 1 && temp_param.aec == 0) || 
-                   (temp_param.brightness != camera->sensor_param.brightness)){
-                    if(camera_SetBrightness(temp_param.brightness) != CMW_ERROR_NONE){
-                        ret = AICAM_ERROR_INVALID_PARAM;
-                        break;
-                    }
-                    else{
-                        camera->sensor_param.brightness = temp_param.brightness;
-                    }
-                }
-            }
-            else{
-                // AEC enabled, update brightness if it has changed
-                if(camera->sensor_param.brightness != temp_param.brightness){
-                    if(camera_SetBrightness(temp_param.brightness) != CMW_ERROR_NONE){
-                        ret = AICAM_ERROR_INVALID_PARAM;
-                        break;
-                    }
-                    else{
-                        camera->sensor_param.brightness = temp_param.brightness;
-                    }
-                }
-            }
-
-
-            if(temp_param.contrast != camera->sensor_param.contrast){
-                if(CMW_CAMERA_SetContrast(temp_param.contrast) != CMW_ERROR_NONE){
-                    ret = AICAM_ERROR_INVALID_PARAM;
-                    break;
-                }else{
-                    camera->sensor_param.contrast = temp_param.contrast;
-                }
-            }
-// #endif
             ret = AICAM_OK;
             break;
         
@@ -1167,7 +1252,26 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
                 ret = AICAM_ERROR_INVALID_PARAM;
                 break;
             }
+
             memcpy(ubuf, &camera->sensor_param, sizeof(sensor_params_t));
+            ret = AICAM_OK;
+            break;
+
+        case CAM_CMD_SET_ISP_PARAM:
+            if(ubuf == NULL || arg != sizeof(ISP_IQParamTypeDef)){
+                ret = AICAM_ERROR_INVALID_PARAM;
+                break;
+            }
+            memcpy(&camera->isp_iq_param, ubuf, sizeof(ISP_IQParamTypeDef));
+            ret = AICAM_OK;
+            break;
+
+        case CAM_CMD_GET_ISP_PARAM:
+            if(ubuf == NULL || arg != sizeof(ISP_IQParamTypeDef)){
+                ret = AICAM_ERROR_INVALID_PARAM;
+                break;
+            }
+            memcpy(ubuf, &camera->isp_iq_param, sizeof(ISP_IQParamTypeDef));
             ret = AICAM_OK;
             break;
 
@@ -1471,7 +1575,7 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
             break;
 
         case CAM_CMD_SET_STARTUP_SKIP_FRAMES:
-            if (arg > 0 && arg <= 300) {  // Limit to reasonable range (max ~10s at 30fps)
+            if (arg >= 0 && arg <= 300) {  // Limit to reasonable range (max ~10s at 30fps)
                 camera->startup_skip_frames = (int)arg;
                 ret = AICAM_OK;
             } else {
@@ -1596,6 +1700,17 @@ static int camera_init(void *priv)
 
     camera->device_ctrl_pipe = CAMERA_CTRL_PIPE1_BIT | CAMERA_CTRL_PIPE2_BIT;
     camera->camera_processId = osThreadNew(cameraProcess, camera, &cameraTask_attributes);
+#ifdef ISP_ENABLE_UVC
+    g_uvc_ctx.sem = osSemaphoreNew(1, 0, NULL);
+    if (g_uvc_ctx.sem != NULL) {
+        const osThreadAttr_t uvcTask_attributes = {
+            .name = "uvcSendTask",
+            .priority = (osPriority_t)osPriorityBelowNormal,
+            .stack_size = 2 * 1024
+        };
+        g_uvc_ctx.thread_id = osThreadNew(uvcSendTask, NULL, &uvcTask_attributes);
+    }
+#endif
     return 0;
 }
 
@@ -1612,6 +1727,22 @@ static int camera_deinit(void *priv)
         osThreadTerminate(camera->camera_processId);
         camera->camera_processId = NULL;
     }
+
+#ifdef ISP_ENABLE_UVC
+    if (g_uvc_ctx.thread_id != NULL) {
+        osThreadTerminate(g_uvc_ctx.thread_id);
+        g_uvc_ctx.thread_id = NULL;
+    }
+    if (g_uvc_ctx.sem != NULL) {
+        osSemaphoreDelete(g_uvc_ctx.sem);
+        g_uvc_ctx.sem = NULL;
+    }
+    if (uvc_frame_buf != NULL) {
+        hal_mem_free(uvc_frame_buf);
+        uvc_frame_buf = NULL;
+        uvc_frame_buf_size = 0;
+    }
+#endif
 
     if (camera->pwr_handle != 0) {
         pwr_manager_release(camera->pwr_handle);
@@ -1697,3 +1828,22 @@ int camera_unregister(void)
     }
     return AICAM_OK;
 }
+
+#ifdef ISP_MW_TUNING_TOOL_SUPPORT
+ISP_HandleTypeDef* camera_get_isp_handle(void)
+{
+    if (isp_is_init) {
+        return &hIsp;
+    }
+    return NULL;
+}
+#else
+ISP_HandleTypeDef* camera_get_isp_handle(void)
+{
+    if (g_camera.is_init == false || (g_camera.state.pipe2_state != PIPE_START && g_camera.state.pipe1_state != PIPE_START)) {
+        LOG_DRV_ERROR("ISP not initialized or pipe not started \r\n");
+        return NULL;
+    }
+    return CMW_CAMERA_GetISPHandle();
+}
+#endif

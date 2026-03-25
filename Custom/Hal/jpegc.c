@@ -30,8 +30,8 @@ const osThreadAttr_t jpegcTask_attributes = {
 #define BYTES_PER_PIXEL    2
 #endif
 
-#define ENC_CHUNK_SIZE_IN   ((uint32_t)(MAX_INPUT_WIDTH * BYTES_PER_PIXEL * MAX_INPUT_LINES))
-#define ENC_CHUNK_SIZE_OUT  ((uint32_t) (1024 * 4))
+#define ENC_CHUNK_SIZE_IN_MAX   ((uint32_t)(MAX_INPUT_WIDTH * BYTES_PER_PIXEL * MAX_INPUT_LINES))
+#define ENC_CHUNK_SIZE_OUT      ((uint32_t) (1024 * 4))
 
 #define JPEG_BUFFER_EMPTY       0
 #define JPEG_BUFFER_FULL        1
@@ -49,7 +49,7 @@ JPEG_ConfTypeDef Conf;
 //encode
 JPEG_RGBToYCbCr_Convert_Function pRGBToYCbCr_Convert_Function;
 
-uint8_t MCU_Data_InBuffer0[ENC_CHUNK_SIZE_IN] ALIGN_32 UNCACHED;
+uint8_t MCU_Data_InBuffer0[ENC_CHUNK_SIZE_IN_MAX] ALIGN_32 UNCACHED;
 
 uint8_t JPEG_Data_OutBuffer0[ENC_CHUNK_SIZE_OUT] ALIGN_32 UNCACHED;
 
@@ -83,6 +83,57 @@ uint32_t Input_frameSize;
 __IO uint32_t Input_frameIndex;
 static JPEG_ConfTypeDef       JPEG_Info;
 
+/**
+ * @brief Get the maximum input lines based on chroma subsampling
+ * @param chroma_subsampling Chroma subsampling mode
+ * @return Number of input lines (16 for 420, 8 for 422/444)
+ */
+static uint32_t jpegc_get_max_input_lines(uint32_t chroma_subsampling)
+{
+    if (chroma_subsampling == JPEG_420_SUBSAMPLING) {
+        return 16;
+    } else {
+        /* JPEG_422_SUBSAMPLING and JPEG_444_SUBSAMPLING use 8 lines */
+        return 8;
+    }
+}
+
+/**
+ * @brief Automatically select appropriate chroma subsampling based on resolution
+ * @param width Image width
+ * @param height Image height
+ * @param color_space Color space
+ * @return Selected chroma subsampling mode
+ */
+static uint32_t jpegc_auto_select_chroma_subsampling(uint32_t width, uint32_t height, uint32_t color_space)
+{
+    /* If not YCbCr color space, return default */
+    if (color_space != JPEG_YCBCR_COLORSPACE) {
+        return JPEG_420_SUBSAMPLING;
+    }
+    
+    /* Check if resolution meets requirements for each subsampling mode */
+    /* JPEG_420_SUBSAMPLING: width and height must be multiples of 16 */
+    if ((width % 16 == 0) && (height % 16 == 0)) {
+        return JPEG_420_SUBSAMPLING;
+    }
+    
+    /* JPEG_422_SUBSAMPLING: width must be multiple of 16, height must be multiple of 8 */
+    if ((width % 16 == 0) && (height % 8 == 0)) {
+        return JPEG_422_SUBSAMPLING;
+    }
+    
+    /* JPEG_444_SUBSAMPLING: width and height must be multiples of 8 */
+    if ((width % 8 == 0) && (height % 8 == 0)) {
+        return JPEG_444_SUBSAMPLING;
+    }
+    
+    /* If resolution doesn't meet any requirement, round down to nearest valid size */
+    /* For safety, use 444 which has the least strict requirements */
+    LOG_DRV_WARN("Resolution %dx%d doesn't meet JPEG requirements, using JPEG_444_SUBSAMPLING", width, height);
+    return JPEG_444_SUBSAMPLING;
+}
+
 static int RGB_GetInfo(JPEG_ConfTypeDef *pInfo, jpegc_t *jpegc)
 {
     /* Read Images Sizes */
@@ -105,6 +156,56 @@ static int RGB_GetInfo(JPEG_ConfTypeDef *pInfo, jpegc_t *jpegc)
     return 0;
 }
 
+/*
+ * @brief Calculate a safe JPEG encode output buffer size based on image parameters.
+ *        This avoids using a fixed size buffer that can overflow on high resolutions
+ *        or high quality settings.
+ */
+static uint32_t jpegc_calc_enc_buffer_size(const jpegc_params_t *params)
+{
+    /* Use an integer heuristic:
+     * - Base bytes-per-pixel (Bpp) grows with quality:
+     *   bpp_x100 in [20, 90] => 0.20 ~ 0.90 Bpp for quality 1~100
+     *   (roughly matching typical JPEG output sizes from low to high quality)
+     * - estimated_bytes = pixels * bpp_x100 / 100
+     * - Clamp between a minimum size and a hard upper bound
+     */
+    uint32_t bpp_x100 = 0;
+    uint64_t pixels = (uint64_t)params->ImageWidth * (uint64_t)params->ImageHeight;
+
+    /* Clamp quality to HAL allowed range to avoid overflow in intermediate math */
+    uint32_t q = params->ImageQuality;
+    if (q < JPEG_IMAGE_QUALITY_MIN) {
+        q = JPEG_IMAGE_QUALITY_MIN;
+    } else if (q > JPEG_IMAGE_QUALITY_MAX) {
+        q = JPEG_IMAGE_QUALITY_MAX;
+    }
+
+    if (q < 40) {
+        // 0.10 ~ 0.30 Bpp
+        bpp_x100 = 10U + (20U * q) / 40U;
+    } else if (q < 80) {
+        // 0.3 ~ 0.6 Bpp
+        bpp_x100 = 30U + (30U * (q - 40U)) / 40U;
+    } else {
+        // 0.65 ~ 1.20 Bpp
+        bpp_x100 = 65U + (55U * (q - 80U)) / 20U;
+    }
+
+    uint64_t estimated = pixels * (uint64_t)bpp_x100 / 100ULL;
+
+    if (estimated < JPEG_ENCODE_OUTPUT_BUFFER_MIN_SIZE) {
+        estimated = JPEG_ENCODE_OUTPUT_BUFFER_MIN_SIZE;
+    }
+
+    /* Hard upper cap: JPEG_ENCODE_OUTPUT_BUFFER_MAX_SIZE */
+    if (estimated > (uint64_t)JPEG_ENCODE_OUTPUT_BUFFER_MAX_SIZE) {
+        estimated = (uint64_t)JPEG_ENCODE_OUTPUT_BUFFER_MAX_SIZE;
+    }
+
+    return (uint32_t)estimated;
+}
+
 
 /**
   * @brief  Encode_DMA
@@ -115,7 +216,7 @@ static int RGB_GetInfo(JPEG_ConfTypeDef *pInfo, jpegc_t *jpegc)
   */
 static int JPEG_Encode_DMA(JPEG_HandleTypeDef *hjpeg, jpegc_t *jpegc)
 {
-    pJpegBuffer =(uint32_t *)jpegc->enc_output_buffer;
+    pJpegBuffer = (uint32_t *)jpegc->enc_output_buffer;
     uint32_t DataBufferSize = 0;
     jpegc->enc_output_buffer_size = 0;
     /* Reset all Global variables */
@@ -138,7 +239,9 @@ static int JPEG_Encode_DMA(JPEG_HandleTypeDef *hjpeg, jpegc_t *jpegc)
     RGB_InputImageIndex = 0;
     RGB_InputImageAddress = (uint32_t)jpegc->enc_input_buffer;
     RGB_InputImageSize_Bytes = Conf.ImageWidth * Conf.ImageHeight * BYTES_PER_PIXEL;
-    DataBufferSize= Conf.ImageWidth * MAX_INPUT_LINES * BYTES_PER_PIXEL;
+    /* Get max input lines based on chroma subsampling */
+    uint32_t max_input_lines = jpegc_get_max_input_lines(Conf.ChromaSubsampling);
+    DataBufferSize= Conf.ImageWidth * max_input_lines * BYTES_PER_PIXEL;
     if(RGB_InputImageIndex < RGB_InputImageSize_Bytes)
     {
         /* Pre-Processing */
@@ -168,10 +271,38 @@ static uint32_t JPEG_EncodeOutputHandler(JPEG_HandleTypeDef *hjpeg)
 
     if(Jpeg_OUT_BufferTab.State == JPEG_BUFFER_FULL)
     {
-        /* Copy encoded shunk from Jpeg_OUT_BufferTab to JpegBuffer */
-        memcpy(pJpegBuffer, Jpeg_OUT_BufferTab.DataBuffer ,Jpeg_OUT_BufferTab.DataBufferSize);
-        pJpegBuffer += Jpeg_OUT_BufferTab.DataBufferSize / 4;
-        g_jpegc.enc_output_buffer_size += Jpeg_OUT_BufferTab.DataBufferSize;
+        /* Check remaining capacity to avoid overflowing the user buffer */
+        uint32_t remaining = 0;
+        if (g_jpegc.enc_output_buffer_capacity > g_jpegc.enc_output_buffer_size) {
+            remaining = g_jpegc.enc_output_buffer_capacity - g_jpegc.enc_output_buffer_size;
+        }
+
+        uint32_t copy_size = Jpeg_OUT_BufferTab.DataBufferSize;
+
+        if (copy_size > remaining) {
+            /* Truncate to available space and stop the encoding to prevent overflow */
+            copy_size = remaining;
+            if (copy_size > 0) {
+                memcpy(pJpegBuffer, Jpeg_OUT_BufferTab.DataBuffer, copy_size);
+                pJpegBuffer += copy_size / 4;
+                g_jpegc.enc_output_buffer_size += copy_size;
+            }
+            LOG_DRV_ERROR("jpegc encode output buffer overflow: required %lu bytes, capacity %lu bytes\r\n",
+                          (unsigned long)(g_jpegc.enc_output_buffer_size + Jpeg_OUT_BufferTab.DataBufferSize),
+                          (unsigned long)g_jpegc.enc_output_buffer_capacity);
+            /* Safely stop JPEG HW/DMA to avoid further writes */
+            HAL_JPEG_Abort(hjpeg);
+            
+            Jpeg_HWEncodingEnd = 1;
+            Jpeg_OUT_BufferTab.State = JPEG_BUFFER_EMPTY;
+            Jpeg_OUT_BufferTab.DataBufferSize = 0;
+            return 1;
+        }
+
+        /* Copy encoded chunk from Jpeg_OUT_BufferTab to JpegBuffer */
+        memcpy(pJpegBuffer, Jpeg_OUT_BufferTab.DataBuffer ,copy_size);
+        pJpegBuffer += copy_size / 4;
+        g_jpegc.enc_output_buffer_size += copy_size;
         Jpeg_OUT_BufferTab.State = JPEG_BUFFER_EMPTY;
         Jpeg_OUT_BufferTab.DataBufferSize = 0;
         if(Jpeg_HWEncodingEnd != 0)
@@ -197,7 +328,9 @@ static uint32_t JPEG_EncodeOutputHandler(JPEG_HandleTypeDef *hjpeg)
   */
 static void JPEG_EncodeInputHandler(JPEG_HandleTypeDef *hjpeg)
 {
-    uint32_t DataBufferSize = Conf.ImageWidth * MAX_INPUT_LINES * BYTES_PER_PIXEL;
+    /* Get max input lines based on chroma subsampling */
+    uint32_t max_input_lines = jpegc_get_max_input_lines(Conf.ChromaSubsampling);
+    uint32_t DataBufferSize = Conf.ImageWidth * max_input_lines * BYTES_PER_PIXEL;
 
     if((Jpeg_IN_BufferTab.State == JPEG_BUFFER_EMPTY) && (MCU_BlockIndex <= MCU_TotalNb))
     {
@@ -575,9 +708,47 @@ static int jpegc_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsign
                 break;
             }
             memcpy(&jpegc->enc_params, ubuf, sizeof(jpegc_params_t));
+            
+            /* Automatically adjust chroma subsampling if current setting doesn't meet resolution requirements */
+            uint32_t original_chroma = jpegc->enc_params.ChromaSubsampling;
+            uint32_t auto_chroma = jpegc_auto_select_chroma_subsampling(
+                jpegc->enc_params.ImageWidth,
+                jpegc->enc_params.ImageHeight,
+                jpegc->enc_params.ColorSpace
+            );
+            
+            /* Check if original chroma subsampling is valid */
+            JPEG_ConfTypeDef test_conf;
+            test_conf.ImageWidth = jpegc->enc_params.ImageWidth;
+            test_conf.ImageHeight = jpegc->enc_params.ImageHeight;
+            test_conf.ChromaSubsampling = jpegc->enc_params.ChromaSubsampling;
+            test_conf.ColorSpace = jpegc->enc_params.ColorSpace;
+            
+            int is_valid = (((test_conf.ImageWidth % 8) == 0) && ((test_conf.ImageHeight % 8) == 0) && \
+                (((test_conf.ImageWidth % 16) == 0) || (test_conf.ColorSpace != JPEG_YCBCR_COLORSPACE) || (test_conf.ChromaSubsampling == JPEG_444_SUBSAMPLING)) && \
+                (((test_conf.ImageHeight % 16) == 0) || (test_conf.ColorSpace != JPEG_YCBCR_COLORSPACE) || (test_conf.ChromaSubsampling != JPEG_420_SUBSAMPLING)));
+            
+            if (!is_valid) {
+                /* Original chroma subsampling doesn't meet requirements, use auto-selected one */
+                jpegc->enc_params.ChromaSubsampling = auto_chroma;
+                LOG_DRV_WARN("Chroma subsampling %d doesn't meet resolution %dx%d requirements, auto-adjusted to %d",
+                           original_chroma, jpegc->enc_params.ImageWidth, jpegc->enc_params.ImageHeight, auto_chroma);
+            }
+            
+            /* Allocate or resize encode output buffer based on resolution to avoid overflow */
+            uint32_t required_size = jpegc_calc_enc_buffer_size(&jpegc->enc_params);
+
+            if (jpegc->enc_output_buffer != NULL && jpegc->enc_output_buffer_capacity < required_size) {
+                hal_mem_free(jpegc->enc_output_buffer);
+                jpegc->enc_output_buffer = NULL;
+                jpegc->enc_output_buffer_size = 0;
+                jpegc->enc_output_buffer_capacity = 0;
+            }
+
             if(jpegc->enc_output_buffer == NULL){
-                jpegc->enc_output_buffer = (unsigned char *)hal_mem_alloc_aligned(JPEG_ENCODE_OUTPUT_BUFFER_SIZE, 32, MEM_LARGE);
-                LOG_DRV_DEBUG("jpegc enc output buffer addr:0x%x, size:%d \r\n", jpegc->enc_output_buffer, JPEG_ENCODE_OUTPUT_BUFFER_SIZE);
+                jpegc->enc_output_buffer = (unsigned char *)hal_mem_alloc_aligned(required_size, 32, MEM_LARGE);
+                jpegc->enc_output_buffer_capacity = (jpegc->enc_output_buffer != NULL) ? required_size : 0;
+                LOG_DRV_INFO("jpegc enc output buffer addr:0x%x, size:%d \r\n", jpegc->enc_output_buffer, required_size);
             }
             if(jpegc->enc_output_buffer == NULL){
                 ret = AICAM_ERROR_NO_MEMORY;
@@ -771,6 +942,7 @@ static int jpegc_init(void *priv)
     jpegc->enc_input_buffer = NULL;
     jpegc->enc_output_buffer = NULL;
     jpegc->enc_output_buffer_size = 0;
+    jpegc->enc_output_buffer_capacity = 0;
 
     jpegc->dec_params.ColorSpace = JPEG_YCBCR_COLORSPACE;
     jpegc->dec_params.ChromaSubsampling = JPEG_444_SUBSAMPLING;

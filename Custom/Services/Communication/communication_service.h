@@ -84,6 +84,7 @@ typedef struct {
     char pin_code[16];                      // SIM PIN code
     cellular_auth_type_t authentication;    // Authentication type
     aicam_bool_t enable_roaming;            // Enable roaming
+    uint8_t operator;                       // Mobile operator (0: Auto, 1: China Mobile, 2: China Unicom, 3: China Telecom, 4: American Verizon)
 } cellular_connection_settings_t;
 
 /**

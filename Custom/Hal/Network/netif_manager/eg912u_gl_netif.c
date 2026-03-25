@@ -553,6 +553,7 @@ int eg912u_netif_info(netif_info_t *netif_info)
     netif_info->type = NETIF_TYPE_4G;
     netif_info->state = eg912u_netif_state();
     if (netif_info->state == NETIF_STATE_DOWN) eg912u_update_info(0);
+    else if (netif_info->state == NETIF_STATE_UP) modem_device_get_config(&eg912u_modem_config);
     netif_info->rssi = eg912u_modem_info.rssi;
     memcpy(netif_info->ip_addr, &eg912u_netif.ip_addr, sizeof(netif_info->ip_addr));
     memcpy(netif_info->gw, &eg912u_netif.gw, sizeof(netif_info->gw));

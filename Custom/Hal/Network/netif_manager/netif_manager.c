@@ -659,11 +659,14 @@ void nm_print_netif_info(const char *if_name, netif_info_t *netif_info)
     } else if (netif_info->type == NETIF_TYPE_4G) {
         printf("MODEL: %s\r\n", netif_info->cellular_info.model_name);
         printf("IMEI: %s\r\n", netif_info->cellular_info.imei);
+        printf("APN CONTEXT ID: %d\r\n", netif_info->cellular_cfg.apn_context_id);
         printf("APN: %s\r\n", netif_info->cellular_cfg.apn);
         printf("USER: %s\r\n", netif_info->cellular_cfg.user);
         printf("PASSWD: %s\r\n", netif_info->cellular_cfg.passwd);
         printf("AUTH: %d\r\n", netif_info->cellular_cfg.authentication);
         printf("ROAMING: %d\r\n", netif_info->cellular_cfg.is_enable_roam);
+        printf("ISP SELECTED: %d\r\n", netif_info->cellular_cfg.isp_selected);
+        printf("PPP CONTEXT ID: %d\r\n", netif_info->cellular_cfg.ppp_context_id);
         printf("OPERATOR: %s\r\n", netif_info->cellular_info.operator);
         printf("SIM STATUS: %s\r\n", netif_info->cellular_info.sim_status);
         printf("SIM ICCID: %s\r\n", netif_info->cellular_info.iccid);

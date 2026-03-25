@@ -21,7 +21,6 @@
 #include <stddef.h>
 #include <string.h>
 #include "cmw_os04c10.h"
-#include "cmw_camera.h"
 #include "os04c10_reg.h"
 #include "os04c10.h"
 #include "isp_param_conf.h"
@@ -29,22 +28,26 @@
 
 #ifndef ISP_MW_TUNING_TOOL_SUPPORT
 static int isp_is_initialized = 0;
+extern const ISP_IQParamTypeDef *user_isp_init_param;
 #endif
 
 static int CMW_OS04C10_GetResType(uint32_t width, uint32_t height, uint32_t*res)
 {
-  if (width == 1920 && height == 1080)
-  {
-    *res = OS04C10_R1920x1080;
-  }
-  else if (width == 2688 && height == 1520)
-  {
-    *res = OS04C10_R2688x1520;
-  }
-  else
-  {
-    return CMW_ERROR_WRONG_PARAM;
-  }
+  // if (width == 1920 && height == 1080)
+  // {
+  //   *res = OS04C10_R1920x1080;
+  // }
+  // else if (width == 2688 && height == 1520)
+  // {
+  //   *res = OS04C10_R2688x1520;
+  // }
+  // else
+  // {
+  //   return CMW_ERROR_WRONG_PARAM;
+  // }
+
+  *res = OS04C10_R2688x1520;
+  
   return 0;
 }
 
@@ -164,6 +167,7 @@ static int32_t CMW_OS04C10_SetTestPattern(void *io_ctx, int32_t mode)
   return CMW_ERROR_NONE;
 }
 
+/* 
 static int32_t CMW_OS04C10_SetAEC(void *io_ctx, uint32_t enable)
 {
 #ifndef ISP_MW_TUNING_TOOL_SUPPORT
@@ -203,11 +207,18 @@ static int32_t CMW_OS04C10_SetContrast(void *io_ctx, int32_t Saturation)
 #endif
   return CMW_ERROR_NONE;
 }
+*/
 
 static int32_t CMW_OS04C10_Init(void *io_ctx, CMW_Sensor_Init_t *initSensor)
 {
   int ret = CMW_ERROR_NONE;
   uint32_t resolution;
+  CMW_OS04C10_config_t *sensor_config;
+  sensor_config = (CMW_OS04C10_config_t*)(initSensor->sensor_config);
+  if (sensor_config == NULL)
+  {
+    return CMW_ERROR_WRONG_PARAM;
+  }
 
   ret = CMW_OS04C10_GetResType(initSensor->width, initSensor->height, &resolution);
   if (ret)
@@ -221,13 +232,19 @@ static int32_t CMW_OS04C10_Init(void *io_ctx, CMW_Sensor_Init_t *initSensor)
     return CMW_ERROR_WRONG_PARAM;
   }
 
-  ret = OS04C10_Init(&((CMW_OS04C10_t *)io_ctx)->ctx_driver, resolution, initSensor->pixel_format);
+  ret = OS04C10_Init(&((CMW_OS04C10_t *)io_ctx)->ctx_driver, resolution, sensor_config->pixel_format);
   if (ret != OS04C10_OK)
   {
     return CMW_ERROR_COMPONENT_FAILURE;
   }
 
   return CMW_ERROR_NONE;
+}
+
+void CMW_OS04C10_SetDefaultSensorValues(CMW_OS04C10_config_t *os04c10_config)
+{
+  assert(os04c10_config != NULL);
+  os04c10_config->pixel_format = CMW_PIXEL_FORMAT_RAW10;
 }
 
 static int32_t CMW_OS04C10_Start(void *io_ctx)
@@ -240,7 +257,9 @@ static int32_t CMW_OS04C10_Start(void *io_ctx)
   __attribute__((unused)) ISP_StatAreaTypeDef isp_stat_area = {0};
   (void) ISP_IQParamCacheInit; /* unused */
   if (isp_is_initialized == 0) {
-    ret = ISP_Init(&((CMW_OS04C10_t *)io_ctx)->hIsp, ((CMW_OS04C10_t *)io_ctx)->hdcmipp, 0, &((CMW_OS04C10_t *)io_ctx)->appliHelpers,/* &isp_stat_area,*/ &ISP_IQParamCacheInit_OS04C10);
+    // Use user-provided ISP init param if available, otherwise use default
+    const ISP_IQParamTypeDef *init_param = (user_isp_init_param != NULL) ? user_isp_init_param : &ISP_IQParamCacheInit_OS04C10;
+    ret = ISP_Init(&((CMW_OS04C10_t *)io_ctx)->hIsp, ((CMW_OS04C10_t *)io_ctx)->hdcmipp, 0, &((CMW_OS04C10_t *)io_ctx)->appliHelpers,/* &isp_stat_area,*/ init_param);
     if (ret != ISP_OK)
     {
       return CMW_ERROR_COMPONENT_FAILURE;
@@ -362,7 +381,7 @@ int CMW_OS04C10_Probe(CMW_OS04C10_t *io_ctx, CMW_Sensor_if_t *os04c10_if)
   os04c10_if->SetMirrorFlip = CMW_OS04C10_SetMirrorFlip;
   os04c10_if->GetSensorInfo = CMW_OS04C10_GetSensorInfo;
   os04c10_if->SetTestPattern = CMW_OS04C10_SetTestPattern;
-  os04c10_if->SetAEC = CMW_OS04C10_SetAEC;
-  os04c10_if->SetContrast = CMW_OS04C10_SetContrast;
+  // os04c10_if->SetAEC = CMW_OS04C10_SetAEC;
+  // os04c10_if->SetContrast = CMW_OS04C10_SetContrast;
   return ret;
 }

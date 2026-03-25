@@ -11,16 +11,16 @@
 #define ENC_DEFAULT_CHROMA_SAMPLING     JPEG_420_SUBSAMPLING   /* Select Chroma Sampling: JPEG_420_SUBSAMPLING, JPEG_422_SUBSAMPLING, JPEG_444_SUBSAMPLING   */
 #define ENC_DEFAULT_COLOR_SPACE         JPEG_YCBCR_COLORSPACE  /* Select Color Space: JPEG_YCBCR_COLORSPACE, JPEG_GRAYSCALE_COLORSPACE, JPEG_CMYK_COLORSPACE */
 #define ENC_DEFAULT_IMAGE_QUALITY       80                     /* Set Image Quality for Jpeg Encoding */
-#define MAX_INPUT_WIDTH                 1280                    /* Set the Maximum of BMP images Width to be tested */
+#define MAX_INPUT_WIDTH                 2688                   /* Set the Maximum of BMP images Width to be tested */
 #define MAX_INPUT_LINES                 16                     /* Set Input buffer lines to 16 for YCbCr420, and 8 for YCbCr422 and YCbCr444 (to save RAM space) */
-
 
 #define DEFAULT_IMAGE_WIDTH  ((uint32_t)1280)
 #define DEFAULT_IMAGE_HEIGHT ((uint32_t)720)
 
-#define DEC_MAX_BUFFER_SIZE  ((uint32_t) (1280 * 720 * 2))
-
-#define JPEG_ENCODE_OUTPUT_BUFFER_SIZE  (400 * 1024)
+/* Minimum JPEG encode output buffer size (used as a lower bound) */
+#define JPEG_ENCODE_OUTPUT_BUFFER_MIN_SIZE  (200 * 1024)
+/* Maximum JPEG encode output buffer size (hard upper bound to avoid excessive allocations) */
+#define JPEG_ENCODE_OUTPUT_BUFFER_MAX_SIZE  (8 * 1024 * 1024)
 typedef enum {
     JPEG_MODE_IDLE = 0,
     JPEG_MODE_ENC = 1,           
@@ -57,7 +57,12 @@ typedef struct {
     uint32_t ColorSpace;               /*!< Image Color space : gray-scale, YCBCR, RGB or CMYK
                                            This parameter can be a value of @ref JPEG_ColorSpace */
     uint32_t ChromaSubsampling;        /*!< Chroma Subsampling in case of YCBCR or CMYK color space, 0-> 4:4:4 , 1-> 4:2:2, 2 -> 4:1:1, 3 -> 4:2:0
-                                            This parameter can be a value of @ref JPEG_ChromaSubsampling */
+                                            This parameter can be a value of @ref JPEG_ChromaSubsampling
+                                            NOTE: If the specified chroma subsampling doesn't meet resolution requirements,
+                                            it will be automatically adjusted:
+                                            - JPEG_420_SUBSAMPLING: requires width and height to be multiples of 16
+                                            - JPEG_422_SUBSAMPLING: requires width to be multiple of 16, height multiple of 8
+                                            - JPEG_444_SUBSAMPLING: requires width and height to be multiples of 8 */
     uint32_t ImageHeight;              /*!< Image height : number of lines */
     uint32_t ImageWidth;               /*!< Image width : number of pixels per line */
     uint32_t ImageQuality;             /*!< Quality of the JPEG encoding : from 1 to 100 */
@@ -78,6 +83,7 @@ typedef struct {
     uint8_t *enc_input_buffer;
     uint8_t *enc_output_buffer;
     uint32_t enc_output_buffer_size;
+    uint32_t enc_output_buffer_capacity;
 
     uint8_t *dec_input_buffer;
     uint32_t dec_input_buffer_size;

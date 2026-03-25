@@ -185,7 +185,7 @@ ULONG                   ed_status;
 }
 #endif
 
-#ifndef ISP_MW_TUNING_TOOL_SUPPORT
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -1196,4 +1196,3 @@ UX_SLAVE_ENDPOINT       *endpoint;
     }
 }
 #endif /* defined(USBD_HAL_ISOINCOMPLETE_CALLBACK) */
-#endif /* ISP_MW_TUNING_TOOL_SUPPORT */

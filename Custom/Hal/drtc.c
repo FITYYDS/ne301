@@ -140,44 +140,41 @@ static void RTC_init(void)
     // }
 }
 
+/*
+ * Days since 1970-01-01 from (year, month, day). Formula from Howard Hinnant's date algorithms
+ * (https://howardhinnant.github.io/date_algorithms.html). O(1), no loops.
+ * March-based internally; 719468 aligns serial 0 with 1970-01-01.
+ */
+static int64_t days_from_civil(unsigned int year, unsigned int mon, unsigned int day)
+{
+    int y = (int)year;
+    y -= (mon <= 2U) ? 1 : 0;
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned int yoe = (unsigned int)(y - era * 400);
+    unsigned int doy = (153U * (mon > 2U ? mon - 3U : mon + 9U) + 2U) / 5U + day - 1U;
+    unsigned int doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;
+    return (int64_t)era * 146097LL + (int64_t)doe - 719468LL;
+}
+
 uint64_t time_to_timeStamp(unsigned int year, unsigned int mon, unsigned int day,
                            unsigned int hour, unsigned int min, unsigned int sec)
 {
-    /* Parameter validation */
-    if (mon < 1 || mon > 12 || day < 1 || day > 31 || 
+    if (mon < 1 || mon > 12 || day < 1 || day > 31 ||
         hour > 23 || min > 59 || sec > 59) {
         return 0;
     }
 
-    /* Adjust month to March-based year (March = month 1, February = month 12 of previous year) */
-    unsigned int adjusted_mon = mon;
-    unsigned int adjusted_year = year;
-    if (adjusted_mon <= 2) {
-        adjusted_mon += 10;
-        adjusted_year -= 1;
-    }
+    int64_t d = days_from_civil(year, mon, day);
+    uint64_t days = (d >= 0) ? (uint64_t)d : 0ULL;
 
-    /* Calculate days since epoch (1970-01-01) using formula:
-     * days = (year/4 - year/100 + year/400 + 367*month/12 + day) + year*365 - 719499
-     * where 719499 is the number of days from epoch to 1970-01-01
-     */
-    uint64_t days = (uint64_t)(adjusted_year / 4U - adjusted_year / 100U + adjusted_year / 400U + 
-                                367U * adjusted_mon / 12U + day)
-                    + (uint64_t)adjusted_year * 365U - 719499U;
+    uint64_t local_sec = ((uint64_t)days * 24U + (uint64_t)hour) * 60U + (uint64_t)min;
+    local_sec = local_sec * 60U + (uint64_t)sec;
 
-    /* Calculate local timestamp in seconds */
-    uint64_t timestamp = ((days * 24U + hour) * 60U + min) * 60U + sec;
-
-    /* Convert local timestamp to UTC timestamp, guard against underflow */
-    int64_t timezone_offset = (int64_t)g_rtc.timezone * 3600LL;
-    int64_t utc_timestamp = (int64_t)timestamp - timezone_offset;
-    
-    /* Clamp to 0 if result would be negative */
-    if (utc_timestamp < 0) {
-        utc_timestamp = 0;
-    }
-
-    return (uint64_t)utc_timestamp;
+    int64_t tz_off = (int64_t)g_rtc.timezone * 3600LL;
+    int64_t utc = (int64_t)local_sec - tz_off;
+    if (utc < 0)
+        utc = 0;
+    return (uint64_t)utc;
 }
 
 void timeStamp_to_time(uint64_t timestamp, RTC_TIME_S *rtc_time)

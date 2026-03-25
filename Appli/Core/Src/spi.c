@@ -27,6 +27,9 @@
 
 SPI_HandleTypeDef hspi2;
 SPI_HandleTypeDef hspi4;
+SPI_HandleTypeDef hspi6;
+DMA_HandleTypeDef handle_HPDMA1_Channel9;
+DMA_HandleTypeDef handle_HPDMA1_Channel8;
 DMA_HandleTypeDef handle_HPDMA1_Channel5;
 DMA_HandleTypeDef handle_HPDMA1_Channel4;
 DMA_HandleTypeDef handle_HPDMA1_Channel3;
@@ -37,6 +40,7 @@ DMA_HandleTypeDef handle_GPDMA1_Channel10;
 DMA_HandleTypeDef handle_GPDMA1_Channel11;
 
 osSemaphoreId_t sem_spi2 = NULL;
+osSemaphoreId_t sem_spi6 = NULL;
 
 /* SPI2 init function */
 void MX_SPI2_Init(void)
@@ -129,6 +133,54 @@ void MX_SPI4_Init(void)
   /* USER CODE BEGIN SPI4_Init 2 */
 
   /* USER CODE END SPI4_Init 2 */
+
+}
+
+/* SPI6 init function */
+void MX_SPI6_Init(void)
+{
+
+  /* USER CODE BEGIN SPI6_Init 0 */
+
+  /* USER CODE END SPI6_Init 0 */
+
+  /* USER CODE BEGIN SPI6_Init 1 */
+
+  /* USER CODE END SPI6_Init 1 */
+  hspi6.Instance = SPI6;
+  hspi6.Init.Mode = SPI_MODE_MASTER;
+  hspi6.Init.Direction = SPI_DIRECTION_2LINES_TXONLY;
+  hspi6.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi6.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi6.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi6.Init.NSS = SPI_NSS_HARD_OUTPUT;
+  hspi6.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi6.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi6.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi6.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi6.Init.CRCPolynomial = 0x7;
+  hspi6.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  hspi6.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
+  hspi6.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
+  hspi6.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
+  hspi6.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
+  hspi6.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi6.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
+  hspi6.Init.IOSwap = SPI_IO_SWAP_DISABLE;
+  hspi6.Init.ReadyMasterManagement = SPI_RDY_MASTER_MANAGEMENT_INTERNALLY;
+  hspi6.Init.ReadyPolarity = SPI_RDY_POLARITY_HIGH;
+  if (HAL_SPI_Init(&hspi6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI6_Init 2 */
+  if (sem_spi6 == NULL) {
+    sem_spi6 = osSemaphoreNew(1, 0, NULL);
+    if (sem_spi6 == NULL) {
+      Error_Handler();
+    }
+  }
+  /* USER CODE END SPI6_Init 2 */
 
 }
 
@@ -633,6 +685,122 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
 
   /* USER CODE END SPI4_MspInit 1 */
   }
+  else if(spiHandle->Instance==SPI6)
+  {
+    /* USER CODE BEGIN SPI6_MspInit 0 */
+
+    /* USER CODE END SPI6_MspInit 0 */
+
+    /** Initializes the peripherals clock
+    */
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SPI6;
+    PeriphClkInitStruct.Spi6ClockSelection = RCC_SPI6CLKSOURCE_CLKP;
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* SPI6 clock enable */
+    __HAL_RCC_SPI6_CLK_ENABLE();
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    /**SPI6 GPIO Configuration
+    PA5     ------> SPI6_SCK
+    PA0     ------> SPI6_NSS
+    PA7     ------> SPI6_MOSI
+    */
+    GPIO_InitStruct.Pin = TFT_CLK_Pin | TFT_MOSI_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF8_SPI6;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = TFT_CS_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF5_SPI6;
+    HAL_GPIO_Init(TFT_CS_GPIO_Port, &GPIO_InitStruct);
+
+    /* SPI6 DMA Init */
+    /* HPDMA1_REQUEST_SPI6_RX Init */
+    handle_HPDMA1_Channel9.Instance = HPDMA1_Channel9;
+    handle_HPDMA1_Channel9.Init.Request = HPDMA1_REQUEST_SPI6_RX;
+    handle_HPDMA1_Channel9.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+    handle_HPDMA1_Channel9.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    handle_HPDMA1_Channel9.Init.SrcInc = DMA_SINC_FIXED;
+    handle_HPDMA1_Channel9.Init.DestInc = DMA_DINC_INCREMENTED;
+    handle_HPDMA1_Channel9.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel9.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel9.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_HPDMA1_Channel9.Init.SrcBurstLength = 1;
+    handle_HPDMA1_Channel9.Init.DestBurstLength = 1;
+    handle_HPDMA1_Channel9.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT1|DMA_DEST_ALLOCATED_PORT0;
+    handle_HPDMA1_Channel9.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+    handle_HPDMA1_Channel9.Init.Mode = DMA_NORMAL;
+    if (HAL_DMA_Init(&handle_HPDMA1_Channel9) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(spiHandle, hdmarx, handle_HPDMA1_Channel9);
+
+    IsolationConfiginput.CidFiltering = DMA_ISOLATION_ON;
+    IsolationConfiginput.StaticCid = DMA_CHANNEL_STATIC_CID_1;
+    if (HAL_DMA_SetIsolationAttributes(&handle_HPDMA1_Channel9, &IsolationConfiginput) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* set GPDMA1 channel 9 used by SPI6 */
+    if (HAL_DMA_ConfigChannelAttributes(&handle_HPDMA1_Channel9,DMA_CHANNEL_SEC|DMA_CHANNEL_PRIV|DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC)!= HAL_OK )
+    {
+      Error_Handler();
+    }
+
+    /* HPDMA1_REQUEST_SPI6_TX Init */
+    handle_HPDMA1_Channel8.Instance = HPDMA1_Channel8;
+    handle_HPDMA1_Channel8.Init.Request = HPDMA1_REQUEST_SPI6_TX;
+    handle_HPDMA1_Channel8.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+    handle_HPDMA1_Channel8.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    handle_HPDMA1_Channel8.Init.SrcInc = DMA_SINC_INCREMENTED;
+    handle_HPDMA1_Channel8.Init.DestInc = DMA_DINC_FIXED;
+    handle_HPDMA1_Channel8.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel8.Init.DestDataWidth = DMA_DEST_DATAWIDTH_BYTE;
+    handle_HPDMA1_Channel8.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+    handle_HPDMA1_Channel8.Init.SrcBurstLength = 1;
+    handle_HPDMA1_Channel8.Init.DestBurstLength = 1;
+    handle_HPDMA1_Channel8.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0|DMA_DEST_ALLOCATED_PORT1;
+    handle_HPDMA1_Channel8.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+    handle_HPDMA1_Channel8.Init.Mode = DMA_NORMAL;
+    if (HAL_DMA_Init(&handle_HPDMA1_Channel8) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(spiHandle, hdmatx, handle_HPDMA1_Channel8);
+
+    IsolationConfiginput.CidFiltering = DMA_ISOLATION_ON;
+    IsolationConfiginput.StaticCid = DMA_CHANNEL_STATIC_CID_1;
+    if (HAL_DMA_SetIsolationAttributes(&handle_HPDMA1_Channel8, &IsolationConfiginput) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* set GPDMA1 channel 8 used by SPI6 */
+    if (HAL_DMA_ConfigChannelAttributes(&handle_HPDMA1_Channel8,DMA_CHANNEL_SEC|DMA_CHANNEL_PRIV|DMA_CHANNEL_SRC_SEC|DMA_CHANNEL_DEST_SEC)!= HAL_OK )
+    {
+      Error_Handler();
+    }
+
+    /* SPI6 interrupt Init */
+    HAL_NVIC_SetPriority(SPI6_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(SPI6_IRQn);
+    /* USER CODE BEGIN SPI6_MspInit 1 */
+
+    /* USER CODE END SPI6_MspInit 1 */
+  }
 }
 
 void HAL_SPI_MspDeInit(SPI_HandleTypeDef* spiHandle)
@@ -698,6 +866,31 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* spiHandle)
 
   /* USER CODE END SPI4_MspDeInit 1 */
   }
+  else if(spiHandle->Instance==SPI6)
+  {
+  /* USER CODE BEGIN SPI6_MspDeInit 0 */
+
+  /* USER CODE END SPI6_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_SPI6_CLK_DISABLE();
+
+    /**SPI6 GPIO Configuration
+    PA5     ------> SPI6_SCK
+    PA0     ------> SPI6_NSS
+    PA7     ------> SPI6_MOSI
+    */
+    HAL_GPIO_DeInit(GPIOA, TFT_CLK_Pin|TFT_CS_Pin|TFT_MOSI_Pin);
+
+    /* SPI6 DMA DeInit */
+    HAL_DMA_DeInit(spiHandle->hdmarx);
+    HAL_DMA_DeInit(spiHandle->hdmatx);
+
+    /* SPI6 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(SPI6_IRQn);
+  /* USER CODE BEGIN SPI6_MspDeInit 1 */
+
+  /* USER CODE END SPI6_MspDeInit 1 */
+  }
 }
 
 /* USER CODE BEGIN 1 */
@@ -711,12 +904,21 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
   }
 }
 
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  if (hspi->Instance == SPI6 && sem_spi6 != NULL) {
+    osSemaphoreRelease(sem_spi6);
+  }
+}
+
 void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 {
   if (hspi->Instance == SPI4) {
     printf("SPI4 Error=%lx\r\n", hspi->ErrorCode);
   } else if (hspi->Instance == SPI2) {
     printf("SPI2 Error=%lx\r\n", hspi->ErrorCode);
+  } else if (hspi->Instance == SPI6) {
+    printf("SPI6 Error=%lx\r\n", hspi->ErrorCode);
   }
 }
 
@@ -869,3 +1071,83 @@ int SPI2_ReadBytes(uint8_t *rBytes, uint16_t rLength, uint32_t timeout)
   // return status;
 }
 /* USER CODE END 1 */
+
+/* USER CODE BEGIN Additional_SPI6_Wrapper */
+
+/**
+ * @brief Simple blocking transmit helper for SPI6.
+ *
+ * This wrapper provides a consistent interface similar to SPI2 helpers,
+ * but currently uses blocking HAL transfers for robustness. It is
+ * intended to be used by high‑level drivers such as the ST7789VW TFT
+ * driver. DMA optimization can be added later if needed.
+ *
+ * @param data    Pointer to TX buffer.
+ * @param length  Number of bytes to transmit.
+ * @param timeout Timeout in RTOS ticks or milliseconds (passed to HAL).
+ * @return 0 on success, negative on error.
+ */
+int SPI6_WriteBytes(const uint8_t *data, uint32_t length, uint32_t timeout)
+{
+  HAL_StatusTypeDef status;
+  uint32_t offset = 0U;
+
+  if (data == NULL || length == 0U) {
+    return 0;
+  }
+
+  while (offset < length) {
+    uint32_t remaining = length - offset;
+    /* HAL_SPI_Transmit size parameter is uint16_t. */
+    uint16_t chunk = (remaining > 0xFFFFU) ? 0xFFFFU : (uint16_t)remaining;
+
+    status = HAL_SPI_Transmit(&hspi6,
+                              (uint8_t *)(data + offset),
+                              chunk,
+                              timeout);
+    if (status != HAL_OK) {
+      printf("SPI6_WriteBytes failed(status = %d)!\r\n", status);
+      return -1;
+    }
+
+    offset += chunk;
+  }
+
+  return 0;
+}
+
+/**
+ * @brief SPI6 transmit using DMA (blocking until complete or error).
+ *
+ * Uses HAL_SPI_Transmit_DMA and waits on sem_spi6. Intended for TFT
+ * bulk data (e.g. fill_rect / draw_bitmap line buffer). Buffer must
+ * remain valid until the function returns.
+ *
+ * @param data    Pointer to TX buffer.
+ * @param length  Number of bytes to transmit (max 65535 per call).
+ * @param timeout Timeout in ms for semaphore wait.
+ * @return 0 on success, -1 on error.
+ */
+int SPI6_WriteBytesDMA(const uint8_t *data, uint32_t length, uint32_t timeout)
+{
+  HAL_StatusTypeDef status;
+
+  if (data == NULL || length == 0U || sem_spi6 == NULL) {
+    return (length == 0U) ? 0 : -1;
+  }
+  if (length > 0xFFFFU) {
+    return -1;
+  }
+
+  status = HAL_SPI_Transmit_DMA(&hspi6, (uint8_t *)data, (uint16_t)length);
+  if (status != HAL_OK) {
+    return -1;
+  }
+  if (osSemaphoreAcquire(sem_spi6, timeout) != osOK) {
+    (void)HAL_SPI_Abort(&hspi6);
+    return -1;
+  }
+  return 0;
+}
+
+/* USER CODE END Additional_SPI6_Wrapper */

@@ -1,16 +1,33 @@
-import { useEffect, useState, useRef } from 'preact/hooks';
+import { useEffect, useState, useRef } from 'react';
 import { useLingui } from '@lingui/react';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import Slider from '@/components/slider';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/tooltip';
+// import Slider from '@/components/slider'; // ISP group (temporarily disabled)
 import { useSystemInfo } from '@/store/systemInfo';
 import deviceTool from '@/services/api/deviceTool';
 import H264Player from '@/lib/MSE/h264Player';
 import Loading from '@/components/loading';
 import hardwareManagement from '@/services/api/hardware-management';
+import SvgIcon from '@/components/svg-icon';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { getWebSocketUrl } from '@/utils';
 
 export default function Graphics() {
@@ -24,6 +41,34 @@ export default function Graphics() {
   const [flipHorizontal, setFlipHorizontal] = useState(false);
   const [flipVertical, setFlipVertical] = useState(false);
   const [aec, setAec] = useState(0);
+  const [fastSkipFrames, setFastSkipFrames] = useState(0);
+  const [fastResolution, setFastResolution] = useState(0);
+  const [fastJpegQuality, setFastJpegQuality] = useState(85);
+  const [cameraSectionOpen, setCameraSectionOpen] = useState(true);
+  const [captureSectionOpen, setCaptureSectionOpen] = useState(true);
+  const [luxRefDialogOpen, setLuxRefDialogOpen] = useState(false);
+  const [luxRefForm, setLuxRefForm] = useState({
+    calibFactor: 0,
+    hlRef: 0,
+    hlExpo1: 0,
+    hlLum1: 0,
+    hlExpo2: 0,
+    hlLum2: 0,
+    llRef: 0,
+    llExpo1: 0,
+    llLum1: 0,
+    llExpo2: 0,
+    llLum2: 0,
+  });
+  // ISP state (temporarily disabled with ISP group)
+  // const [ispSectionOpen, setIspSectionOpen] = useState(true);
+  // const [ispExposureModeAuto, setIspExposureModeAuto] = useState(true);
+  // const [ispExposureComp, setIspExposureComp] = useState(0);
+  // const [ispAntiFlicker, setIspAntiFlicker] = useState<0 | 50 | 60>(0);
+  // const [ispSensorDelay, setIspSensorDelay] = useState(0);
+  // const [ispEstimatedLux, setIspEstimatedLux] = useState<number | null>(null);
+  // const [ispManualSensorGain, setIspManualSensorGain] = useState(0);
+  // const [ispManualExposureTime, setIspManualExposureTime] = useState(0);
   const playerRef = useRef<HTMLVideoElement>(null);
   const [playerLoading, setPlayerLoading] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -89,6 +134,16 @@ export default function Graphics() {
       setFlipHorizontal(res.data.horizontal_flip);
       setFlipVertical(res.data.vertical_flip);
       setAec(res.data.aec);
+      if (typeof res.data.fast_capture_skip_frames === 'number') {
+        setFastSkipFrames(res.data.fast_capture_skip_frames);
+      }
+      if (typeof res.data.fast_capture_resolution === 'number') {
+        setFastResolution(res.data.fast_capture_resolution);
+      }
+      if (typeof res.data.fast_capture_jpeg_quality === 'number') {
+        setFastJpegQuality(res.data.fast_capture_jpeg_quality);
+      }
+      // TODO: when ISP APIs are wired, hydrate ISP exposure state from /api/v1/isp/aec, /aec/manual, /sensor_delay, /statistics, etc.
     } catch (error) {
       console.error(error);
     } finally {
@@ -99,6 +154,55 @@ export default function Graphics() {
     initHardwareInfo();
   }, []);
 
+  const handleFastCaptureChange = (type: 'fast_skip_frames' | 'fast_jpeg_quality', rawValue: number) => {
+    let value = rawValue;
+    if (Number.isNaN(value)) {
+      value = 0;
+    }
+    if (type === 'fast_skip_frames') {
+      if (value < 0) value = 0;
+      else if (value > 300) value = 300;
+      setFastSkipFrames(value);
+    } else if (type === 'fast_jpeg_quality') {
+      if (value < 1) value = 1;
+      else if (value > 100) value = 100;
+      setFastJpegQuality(value);
+    }
+  };
+
+  const postFastCapture = async (type: 'fast_skip_frames' | 'fast_jpeg_quality', rawValue: number) => {
+    // Keep exactly aligned with deviceTool: always submit the incoming value for this request
+    let value = rawValue;
+    if (Number.isNaN(value)) {
+      value = 0;
+    }
+    if (type === 'fast_skip_frames') {
+      if (value < 0) value = 0;
+      else if (value > 300) value = 300;
+    } else {
+      if (value < 0) value = 0;
+      else if (value > 100) value = 100;
+    }
+
+    const nextSkip = type === 'fast_skip_frames' ? value : fastSkipFrames;
+    const nextQuality = type === 'fast_jpeg_quality' ? value : fastJpegQuality;
+
+    try {
+      await setHardwareInfoReq({
+        brightness,
+        contrast,
+        horizontal_flip: flipHorizontal,
+        vertical_flip: flipVertical,
+        aec,
+        fast_capture_skip_frames: nextSkip,
+        fast_capture_resolution: fastResolution,
+        fast_capture_jpeg_quality: nextQuality,
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const handleSetHardwareInfo = async (type: string, value: number) => {
     // compute next state first to avoid sending outdated values
     let nextBrightness = brightness;
@@ -106,6 +210,9 @@ export default function Graphics() {
     let nextFlipHorizontal = flipHorizontal;
     let nextFlipVertical = flipVertical;
     let nextAec = aec;
+    let nextFastSkipFrames = fastSkipFrames;
+    let nextFastResolution = fastResolution;
+    let nextFastJpegQuality = fastJpegQuality;
 
     switch (type) {
       case 'brightness':
@@ -128,6 +235,10 @@ export default function Graphics() {
         nextAec = value;
         setAec(value);
         break;
+      case 'fast_resolution':
+        nextFastResolution = value;
+        setFastResolution(value);
+        break;
       default:
         break;
     }
@@ -139,11 +250,18 @@ export default function Graphics() {
         horizontal_flip: nextFlipHorizontal,
         vertical_flip: nextFlipVertical,
         aec: nextAec,
+        fast_capture_skip_frames: nextFastSkipFrames,
+        fast_capture_resolution: nextFastResolution,
+        fast_capture_jpeg_quality: nextFastJpegQuality,
       });
     } catch (error) {
       console.error(error);
     }
   };
+
+  // const handleIspExposureModeChange = (auto: boolean) => {
+  //   setIspExposureModeAuto(auto);
+  // };
 
   return (
     <div>
@@ -180,122 +298,638 @@ export default function Graphics() {
                   </div>
                 )}
               </div>
-              <Separator />
               {loading ? (
                 skeletonScreen()
               ) : (
                 <>
-                  <div className="flex justify-between gap-2 md:gap-4">
-                    <Label>{i18n._('sys.hardware_management.aec')}</Label>
-                    <Switch
-                      checked={aec === 1}
-                      onCheckedChange={(checked) => handleSetHardwareInfo('aec', checked ? 1 : 0)}
-                    />
-                  </div>
-                { aec !== 1 && (
-                    <>
-                      <Separator />
-                  <div className="flex justify-between gap-2 md:gap-4">
-                    <div className="flex  items-center gap-2">
-                      <Label>{i18n._('sys.hardware_management.brightness')}</Label>
-                    </div>
-                    <div className="flex grow-1 items-center gap-2">
-                      <Slider
-                        disabled={aec === 1}
-                        className={` flex-1 ${aec === 1 ? 'opacity-50' : ''}`}
-                        value={brightness}
-                        onChange={value => setBrightness(value)}
-                        onChangeEnd={value => handleSetHardwareInfo('brightness', value)}
-                        max={100}
-                        step={1}
-                      />
-                      <Input
-                        className="w-[65px]"
-                        type="number"
-                        value={brightness}
-                        min={0}
-                        max={100}
-                        step={1}
-                        disabled={aec === 1}
-                        onChange={e => {
-                          const input = e.target as HTMLInputElement;
-                          const n = Math.round(Number(input.value));
-                          const clamped = Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0));
-                          input.value = String(clamped);
-                          setBrightness(clamped);
-                        }}
-                        onBlur={e => handleSetHardwareInfo('brightness', Math.max(0, Math.min(100, Number.isNaN(Number((e.target as HTMLInputElement).value)) ? 0 : Number((e.target as HTMLInputElement).value))))}
-                      />
-                    </div>
+                  <Separator />
+                  {/* Camera configuration (flip etc.) */}
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      className="flex justify-between items-center w-full text-left"
+                      onClick={() => setCameraSectionOpen(!cameraSectionOpen)}
+                    >
+                      <Label>{i18n._('sys.hardware_management.camera_config')}</Label>
+                      <span className="w-4 h-4 text-gray-500">
+                        <SvgIcon
+                          icon="right"
+                          className={`w-4 h-4 transition-transform duration-200 ${
+                            cameraSectionOpen ? 'rotate-90' : 'rotate-0'
+                          }`}
+                        />
+                      </span>
+                    </button>
+                    {cameraSectionOpen && (
+                      <div className="border border-gray-200 border-solid p-4 rounded-md mt-2 flex flex-col gap-2">
+                        <div className="flex justify-between">
+                          <Label>
+                            {i18n._('sys.hardware_management.flip_horizontal')}
+                          </Label>
+                          <Switch
+                            checked={flipHorizontal}
+                            onCheckedChange={() => handleSetHardwareInfo(
+                              'flip_horizontal',
+                              flipHorizontal ? 1 : 0
+                            )}
+                          />
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between">
+                          <Label>
+                            {i18n._('sys.hardware_management.flip_vertical')}
+                          </Label>
+                          <Switch
+                            checked={flipVertical}
+                            onCheckedChange={() => handleSetHardwareInfo(
+                              'flip_vertical',
+                              flipVertical ? 1 : 0
+                            )}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <Separator />
-                  <div className="flex justify-between gap-2 md:gap-4">
-                    <div className="flex items-center gap-2">
-                      <Label>{i18n._('sys.hardware_management.contrast')}</Label>
-                    </div>
-                    <div className="flex grow-1 items-center gap-2">
-                      <Slider
-                        disabled={aec === 1}
-                        className={`flex-1 md:w-2xs ${aec === 1 ? 'opacity-50' : ''}`}
-                        value={contrast > 100 ? 100 : contrast < 0 ? 0 : contrast}
-                        onChange={value => setContrast(value)}
-                        onChangeEnd={value => handleSetHardwareInfo('contrast', value)}
-                        max={100}
-                        step={1}
-                      />
-                      <Input
-                        className="w-[65px]"
-                        type="number"
-                        value={contrast}
-                        min={0}
-                        max={100}
-                        step={1}
-                        disabled={aec === 1}
-                        onChange={e => {
-                          const input = e.target as HTMLInputElement;
-                          const n = Math.round(Number(input.value));
-                          const clamped = Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0));
-                          input.value = String(clamped);
-                          setContrast(clamped);
-                        }}
-                        onBlur={e => handleSetHardwareInfo('contrast', Math.max(0, Math.min(100, Number.isNaN(Number((e.target as HTMLInputElement).value)) ? 0 : Number((e.target as HTMLInputElement).value))))}
-                      />
-                    </div>
+                  {/* Capture configuration (fast capture) */}
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      className="flex justify-between items-center w-full text-left"
+                      onClick={() => setCaptureSectionOpen(!captureSectionOpen)}
+                    >
+                      <div className="flex items-center gap-2">
+                      <Label>{i18n._('sys.hardware_management.capture_config')}</Label>
+                      <Tooltip mbEnhance>
+                        <TooltipTrigger>
+                          <div className="w-4 flex justify-center items-center">
+                            <SvgIcon
+                              className="w-4 h-4"
+                              icon="info"
+                            />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-80 text-pretty">
+                          <div>
+                            <p>
+                              {i18n._(
+                                'sys.hardware_management.capture_config_tip'
+                              )}
+                            </p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                      </div>
+                      <span className="w-4 h-4 text-gray-500">
+                        <SvgIcon
+                          icon="right"
+                          className={`w-4 h-4 transition-transform duration-200 ${
+                            captureSectionOpen ? 'rotate-90' : 'rotate-0'
+                          }`}
+                        />
+                      </span>
+                    </button>
+                    {captureSectionOpen && (
+                      <div className="border border-gray-200 border-solid p-4 rounded-md mt-2 flex flex-col gap-2">
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>
+                            {i18n._('sys.hardware_management.fast_capture_skip_frames')}
+                          </Label>
+                          <Input
+                            className="w-24 text-right"
+                            type="number"
+                            min={0}
+                            max={300}
+                            value={fastSkipFrames}
+                            onChange={(e) => {
+                              const raw = parseInt((e.target as HTMLInputElement).value || '0', 10);
+                              handleFastCaptureChange('fast_skip_frames', raw);
+                              // set input value to input element
+                              (e.target as HTMLInputElement).value = String(fastSkipFrames);
+                            }}
+                            onBlur={(e) => {
+                              const raw = parseInt((e.target as HTMLInputElement).value || '0', 10);
+                              postFastCapture('fast_skip_frames', raw);
+                              // set input value to input element
+                              (e.target as HTMLInputElement).value = String(fastSkipFrames);
+                            }}
+                          />
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>
+                            {i18n._('sys.hardware_management.fast_capture_resolution')}
+                          </Label>
+                          <Select
+                            value={String(fastResolution)}
+                            onValueChange={(value) => {
+                              const v = Number(value || 0);
+                              handleSetHardwareInfo('fast_resolution', v);
+                            }}
+                          >
+                            <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="0">1280x720</SelectItem>
+                              <SelectItem value="1">1920x1080</SelectItem>
+                              <SelectItem value="2">2688x1520</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <div className="flex items-center gap-2">
+                            <Label>
+                              {i18n._('sys.hardware_management.fast_capture_jpeg_quality')}
+                            </Label>
+                            <Tooltip mbEnhance>
+                              <TooltipTrigger>
+                                <div className="w-4 flex justify-center items-center">
+                                  <SvgIcon
+                                    className="w-4 h-4"
+                                    icon="info"
+                                  />
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-80 text-pretty">
+                                <div>
+                                  <p>
+                                    {i18n._(
+                                      'sys.hardware_management.capture_jpeg_quality_tip'
+                                    )}
+                                  </p>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                          <Input
+                            className="w-24 text-right"
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={fastJpegQuality}
+                            onChange={(e) => {
+                              const raw = parseInt((e.target as HTMLInputElement).value || '0', 10);
+                              handleFastCaptureChange('fast_jpeg_quality', raw);
+                              // set input value to input element
+                              (e.target as HTMLInputElement).value = String(fastJpegQuality); 
+                            }}
+                            onBlur={(e) => {
+                              const raw = parseInt((e.target as HTMLInputElement).value || '0', 10);
+                              postFastCapture('fast_jpeg_quality', raw);
+                              // set input value to input element
+                              (e.target as HTMLInputElement).value = String(fastJpegQuality);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                    </>
-                  )}
                   <Separator />
-                  <div className="flex justify-between">
-                    <Label>
-                      {i18n._('sys.hardware_management.flip_horizontal')}
-                    </Label>
-                    <Switch
-                      checked={flipHorizontal}
-                      onCheckedChange={() => handleSetHardwareInfo(
-                        'flip_horizontal',
-                        flipHorizontal ? 1 : 0
-                      )}
-                    />
+                  {/* ISP configuration (temporarily disabled)
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      className="flex justify-between items-center w-full text-left"
+                      onClick={() => setIspSectionOpen(!ispSectionOpen)}
+                    >
+                      <Label>{i18n._('sys.hardware_management.isp_config')}</Label>
+                      <span className="w-4 h-4 text-gray-500">
+                        <SvgIcon
+                          icon="right"
+                          className={`w-4 h-4 transition-transform duration-200 ${
+                            ispSectionOpen ? 'rotate-90' : 'rotate-0'
+                          }`}
+                        />
+                      </span>
+                    </button>
+                    {ispSectionOpen && (
+                      <div className="border border-gray-200 border-solid p-4 rounded-md mt-2 flex flex-col gap-3">
+                        // Exposure block 
+                        <div className="flex flex-col gap-3">
+                          <div className="flex justify-between gap-4 items-center">
+                            <Label>{i18n._('sys.hardware_management.isp_exposure_mode')}</Label>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                className={`px-3 py-1 rounded border text-sm ${
+                                  ispExposureModeAuto ? 'bg-primary text-white border-primary' : 'bg-white text-text-primary border-gray-200'
+                                }`}
+                                onClick={() => handleIspExposureModeChange(true)}
+                              >
+                                {i18n._('sys.hardware_management.isp_exposure_mode_auto')}
+                              </button>
+                              <button
+                                type="button"
+                                className={`px-3 py-1 rounded border text-sm ${
+                                  !ispExposureModeAuto ? 'bg-primary text-white border-primary' : 'bg-white text-text-primary border-gray-200'
+                                }`}
+                                onClick={() => handleIspExposureModeChange(false)}
+                              >
+                                {i18n._('sys.hardware_management.isp_exposure_mode_manual')}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex justify-between gap-4 items-center">
+                            <Label>{i18n._('sys.hardware_management.isp_exposure_comp')}</Label>
+                            <Select
+                              disabled={!ispExposureModeAuto}
+                              value={String(ispExposureComp)}
+                              onValueChange={(value) => {
+                                const v = Number(value || 0);
+                                setIspExposureComp(v);
+                              }}
+                            >
+                              <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent w-28">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="-2">-2.0 EV</SelectItem>
+                                <SelectItem value="-1.5">-1.5 EV</SelectItem>
+                                <SelectItem value="-1">-1.0 EV</SelectItem>
+                                <SelectItem value="-0.5">-0.5 EV</SelectItem>
+                                <SelectItem value="0">0 EV</SelectItem>
+                                <SelectItem value="0.5">+0.5 EV</SelectItem>
+                                <SelectItem value="1">+1.0 EV</SelectItem>
+                                <SelectItem value="1.5">+1.5 EV</SelectItem>
+                                <SelectItem value="2">+2.0 EV</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex justify-between gap-4 items-center">
+                            <Label>{i18n._('sys.hardware_management.isp_anti_flicker')}</Label>
+                            <Select
+                              disabled={!ispExposureModeAuto}
+                              value={String(ispAntiFlicker)}
+                              onValueChange={(value) => {
+                                const v = Number(value || 0) as 0 | 50 | 60;
+                                setIspAntiFlicker(v);
+                              }}
+                            >
+                              <SelectTrigger className="border-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent w-28">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="0">{i18n._('sys.hardware_management.isp_anti_flicker_off')}</SelectItem>
+                                <SelectItem value="50">{i18n._('sys.hardware_management.isp_anti_flicker_50')}</SelectItem>
+                                <SelectItem value="60">{i18n._('sys.hardware_management.isp_anti_flicker_60')}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex justify-between gap-4 items-center">
+                            <Label>{i18n._('sys.hardware_management.isp_sensor_delay')}</Label>
+                            <Input
+                              className="w-24 text-right"
+                              type="number"
+                              min={0}
+                              value={ispSensorDelay}
+                              onChange={(e) => {
+                                const v = Number((e.target as HTMLInputElement).value || 0);
+                                const clamped = v < 0 ? 0 : v;
+                                setIspSensorDelay(clamped);
+                              }}
+                            />
+                          </div>
+                          <div className="flex justify-between gap-4 items-center">
+                            <Label>{i18n._('sys.hardware_management.isp_estimated_lux')}</Label>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm text-text-primary min-w-[3rem] text-right">
+                                {ispEstimatedLux != null ? ispEstimatedLux : '--'}
+                              </span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="inline-flex items-center justify-center gap-2 shrink-0 px-3"
+                                onClick={() => setLuxRefDialogOpen(true)}
+                              >
+                                <span>{i18n._('sys.hardware_management.isp_lux_setting')}</span>
+                              </Button>
+                            </div>
+                          </div>
+                          <Separator />
+                          <div className="flex flex-col gap-2">
+                            <div className="flex justify-between gap-4 items-center">
+                              <Label>{i18n._('sys.hardware_management.isp_sensor_gain')} (dB)</Label>
+                              <Input
+                                className="w-24 text-right"
+                                type="number"
+                                min={0}
+                                disabled={ispExposureModeAuto}
+                                value={ispManualSensorGain}
+                                onChange={(e) => {
+                                  const v = Number((e.target as HTMLInputElement).value || 0);
+                                  const clamped = v < 0 ? 0 : v;
+                                  setIspManualSensorGain(clamped);
+                                }}
+                              />
+                            </div>
+                            <Slider
+                              className="mt-2 mb-4"
+                              min={0}
+                              max={100}
+                              step={1}
+                              disabled={ispExposureModeAuto}
+                              value={ispManualSensorGain}
+                              onChange={(v) => {
+                                const clamped = v < 0 ? 0 : v;
+                                setIspManualSensorGain(clamped);
+                              }}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <div className="flex justify-between gap-4 items-center">
+                              <Label>{i18n._('sys.hardware_management.isp_exposure_time')} (µs)</Label>
+                              <Input
+                                className="w-24 text-right"
+                                type="number"
+                                min={0}
+                                disabled={ispExposureModeAuto}
+                                value={ispManualExposureTime}
+                                onChange={(e) => {
+                                  const v = Number((e.target as HTMLInputElement).value || 0);
+                                  const clamped = v < 0 ? 0 : v;
+                                  setIspManualExposureTime(clamped);
+                                }}
+                              />
+                            </div>
+                            <Slider
+                              className="mt-2 mb-4"
+                              min={0}
+                              max={100000}
+                              step={1000}
+                              disabled={ispExposureModeAuto}
+                              value={ispManualExposureTime}
+                              onChange={(v) => {
+                                const clamped = v < 0 ? 0 : v;
+                                setIspManualExposureTime(clamped);
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_awb')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/awb
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_demosaicing')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/demosaicing
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_black_level')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/black_level
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_bad_pixel')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/bad_pixel
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_gain')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/gain
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_color_conv')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/color_conv
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_contrast_gamma')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/contrast, /api/v1/isp/gamma
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_stat')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/stat_area, /api/v1/isp/stat_removal
+                          </span>
+                        </div>
+                        <Separator />
+                        <div className="flex justify-between gap-4 items-center">
+                          <Label>{i18n._('sys.hardware_management.isp_lux_sensor')}</Label>
+                          <span className="text-sm text-gray-500">
+                            /api/v1/isp/lux_ref, /api/v1/isp/sensor_delay
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <Separator />
-                  <div className="flex justify-between">
-                    <Label>
-                      {i18n._('sys.hardware_management.flip_vertical')}
-                    </Label>
-                    <Switch
-                      checked={flipVertical}
-                      onCheckedChange={() => handleSetHardwareInfo(
-                        'flip_vertical',
-                        flipVertical ? 1 : 0
-                      )}
-                    />
-                  </div>
+                  {/* ISP configuration (layout-only for now) */}
                 </>
               )}
             </>
           )}
         </div>
       )}
+      {/* LuxRef configuration dialog */}
+      <Dialog open={luxRefDialogOpen} onOpenChange={setLuxRefDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{i18n._('sys.hardware_management.lux_ref_title') ?? 'Lux Calibration Setup'}</DialogTitle>
+          </DialogHeader>
+          <div className="mt-8 space-y-6">
+            {/* Sensor calibration factor */}
+            <div className="space-y-2">
+              <Label>{i18n._('sys.hardware_management.lux_ref_calib_factor') ?? 'Sensor calibration factor'}</Label>
+              <Input
+                className="max-w-xs"
+                type="number"
+                step={0.001}
+                value={luxRefForm.calibFactor}
+                onChange={(e) =>
+                  setLuxRefForm((prev) => ({
+                    ...prev,
+                    calibFactor: Number((e.target as HTMLInputElement).value || 0),
+                  }))
+                }
+              />
+            </div>
+            {/* High lux conditions */}
+            <div className="space-y-3">
+              <Label className="font-semibold">
+                {i18n._('sys.hardware_management.lux_ref_high_title') ?? 'High lux conditions'}
+              </Label>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_hl_ref') ?? 'High lux reference (lx)'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.hlRef}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        hlRef: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_hl_expo1') ?? '1st ref exposure time (µs)'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.hlExpo1}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        hlExpo1: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_hl_lum1') ?? '1st ref luminance'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.hlLum1}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        hlLum1: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_hl_expo2') ?? '2nd ref exposure time (µs)'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.hlExpo2}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        hlExpo2: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_hl_lum2') ?? '2nd ref luminance'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.hlLum2}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        hlLum2: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+            {/* Low lux conditions */}
+            <div className="space-y-3">
+              <Label className="font-semibold">
+                {i18n._('sys.hardware_management.lux_ref_low_title') ?? 'Low lux conditions'}
+              </Label>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_ll_ref') ?? 'Low lux reference (lx)'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.llRef}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        llRef: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_ll_expo1') ?? '1st ref exposure time (µs)'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.llExpo1}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        llExpo1: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_ll_lum1') ?? '1st ref luminance'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.llLum1}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        llLum1: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_ll_expo2') ?? '2nd ref exposure time (µs)'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.llExpo2}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        llExpo2: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>{i18n._('sys.hardware_management.lux_ref_ll_lum2') ?? '2nd ref luminance'}</Label>
+                  <Input
+                    type="number"
+                    value={luxRefForm.llLum2}
+                    onChange={(e) =>
+                      setLuxRefForm((prev) => ({
+                        ...prev,
+                        llLum2: Number((e.target as HTMLInputElement).value || 0),
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="mt-6">
+            <Button
+              variant="outline"
+              onClick={() => setLuxRefDialogOpen(false)}
+            >
+              {i18n._('common.cancel') ?? 'Cancel'}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                // TODO: wire to /api/v1/isp/lux_ref save
+                setLuxRefDialogOpen(false);
+              }}
+            >
+              {i18n._('common.save') ?? 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

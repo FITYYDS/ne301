@@ -4,14 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "mem.h"
 #include "sai.h"
-#include "i2c.h"
 #include "common_utils.h"
 #include "generic_file.h"
 #include "debug.h"
+#include "SensorExt/nau881x/nau881x_dev.h"
+#include "SensorExt/i2c_driver/i2c_driver.h"
 
-
-extern I2C_HandleTypeDef hi2c4;
 extern SAI_HandleTypeDef hsai_BlockA1;
 extern SAI_HandleTypeDef hsai_BlockB1;
 static codec_t g_codec = {0};
@@ -34,13 +34,14 @@ const osThreadAttr_t codecTask_attributes = {
     .stack_size = 4 * 1024
 };
 
-#define AUDIO_BUFFER_SIZE (4096)  // Number of samples
-
-static uint16_t RecordBuff[AUDIO_BUFFER_SIZE] ALIGN_32 UNCACHED;
-static int8_t activeBuffer = -1; // -1: no data, 0: Buff1 ready, 1: Buff2 ready
-
-#define PLAY_BUFFER_SIZE (4096)
-static uint16_t PlayBuff[PLAY_BUFFER_SIZE] ALIGN_32 UNCACHED;
+#define AUDIO_BUFFER_SIZE   (4096 * 8)
+#define AUDIO_HALF_SIZE     (AUDIO_BUFFER_SIZE / 2)
+static uint8_t RecordBuff[AUDIO_BUFFER_SIZE] ALIGN_32 UNCACHED;
+static volatile int8_t activeBuffer = -1; // -1: no data, 0: Buff1 ready, 1: Buff2 ready
+ 
+#define PLAY_BUFFER_SIZE    (4096 * 8)
+#define PLAY_HALF_SIZE      (PLAY_BUFFER_SIZE / 2)
+static uint8_t PlayBuff[PLAY_BUFFER_SIZE] ALIGN_32 UNCACHED;
 static volatile int8_t playActiveBuffer = -1; // -1: no data, 0: Buff1 ready, 1: Buff2 ready
 
 void fill_WavHeader(uint8_t* header, uint32_t pcm_data_bytes, 
@@ -92,13 +93,13 @@ void NAU881x_StartRecord(NAU881x_t* nau881x)
     NAU881x_Set_MicBias_Enable(nau881x, 1);
 
     // 2. Select MIC input
-    NAU881x_Set_PGA_Input(nau881x, NAU881X_INPUT_MICP);
+    NAU881x_Set_PGA_Input(nau881x, NAU881X_INPUT_MICP | NAU881X_INPUT_MICN);
 
     // 3. Enable PGA
     NAU881x_Set_PGA_Enable(nau881x, 1);
 
     // 4. Set PGA gain (adjustable)
-    NAU881x_Set_PGA_Gain(nau881x, 32); // 12dB
+    NAU881x_Set_PGA_Gain(nau881x, 48); // 12dB
 
     // 5. Enable BOOST
     NAU881x_Set_Boost_Enable(nau881x, 1);
@@ -110,11 +111,11 @@ void NAU881x_StartRecord(NAU881x_t* nau881x)
     // 7. Enable high-pass filter (remove DC/low-frequency noise)
     NAU881x_Set_ADC_HighPassFilter(nau881x, 1, 0, 0x01);
 
-    // 8. Set I2S interface format
-    NAU881x_Set_AudioInterfaceFormat(nau881x, NAU881X_AUDIO_IFACE_FMT_I2S, NAU881X_AUDIO_IFACE_WL_16BITS);
+    // // 8. Set I2S interface format
+    // NAU881x_Set_AudioInterfaceFormat(nau881x, NAU881X_AUDIO_IFACE_FMT_I2S, NAU881X_AUDIO_IFACE_WL_16BITS);
 
-    // 9. Configure master clock (codec as slave mode, STM32 as I2S master)
-    NAU881x_Set_Clock(nau881x, 0, NAU881X_BCLKDIV_8, NAU881X_MCLKDIV_1, NAU881X_CLKSEL_MCLK);
+    // // 9. Configure master clock (codec as slave mode, STM32 as I2S master)
+    // NAU881x_Set_Clock(nau881x, 0, NAU881X_BCLKDIV_8, NAU881X_MCLKDIV_1, NAU881X_CLKSEL_MCLK);
 }
 
 void NAU881x_SetMicVolume_Percent(NAU881x_t* nau881x, uint8_t percent)
@@ -144,6 +145,10 @@ void NAU881x_SetSpeakerVolume_Percent(NAU881x_t* nau881x, uint8_t percent)
     uint8_t regval = (uint8_t)(1 + (percent - 1) * 62 / 99); // 1~63
     // 0dB is 57, -57dB is 0, +6dB is 63
     int8_t vol_db = -57 + (regval * 1); // Step 1dB
+    // Avoid driving speaker amplifier above 0 dB to reduce loud-level distortion / clicks
+    if (vol_db > 0) {
+        vol_db = 0;
+    }
     NAU881x_Set_Speaker_Volume_db(nau881x, vol_db);
 }
 
@@ -172,38 +177,29 @@ void NAU881x_StopRecord(NAU881x_t* nau881x)
 
 void NAU881x_StartPlayback(NAU881x_t* nau881x)
 {
-    // Enable DAC
-    NAU881x_Set_DAC_Enable(nau881x, 1);
-    // Set DAC volume
     NAU881x_Set_DAC_Gain(nau881x, 0xFF);
-    // Enable speaker output
-    NAU881x_Set_Output_Enable(nau881x, NAU881X_OUTPUT_SPK);
-    // Select DAC as speaker signal source
+    NAU881x_Set_DAC_SoftMute(nau881x, 0);
     NAU881x_Set_Speaker_Source(nau881x, NAU881X_OUTPUT_FROM_DAC);
-    // Enable speaker boost
-    NAU881x_Set_Speaker_Boost(nau881x, 1);
-    // Set speaker volume to 0dB
     NAU881x_Set_Speaker_Volume_db(nau881x, 0);
-
-    // Configure I2S format to 16bit
-    NAU881x_Set_AudioInterfaceFormat(nau881x, NAU881X_AUDIO_IFACE_FMT_I2S, NAU881X_AUDIO_IFACE_WL_16BITS);
-    // Configure master clock
-    NAU881x_Set_Clock(nau881x, 0, NAU881X_BCLKDIV_8, NAU881X_MCLKDIV_1, NAU881X_CLKSEL_MCLK);
+    NAU881x_Set_Speaker_Mute(nau881x, 0);
+    /* VDDSPK=5V: enable SPK boost for full output swing (OUTPUT_CTRL bit 2) */
+    NAU881x_Set_Speaker_Boost(nau881x, 1);
+    NAU881x_Set_Mono_Boost(nau881x, 1);  /* VDDSPK 5V: MOUTBST=1 per Power Up table */
+    NAU881x_Set_Output_Enable(nau881x, NAU881X_OUTPUT_SPK);
 }
 
 void NAU881x_StopPlayback(NAU881x_t* nau881x)
 {
-    // Disable speaker output
-    NAU881x_Set_Output_Enable(nau881x, 0);
-    // Disable DAC
-    NAU881x_Set_DAC_Enable(nau881x, 0);
+    NAU881x_Set_Speaker_Mute(nau881x, 1);
+    NAU881x_Set_DAC_SoftMute(nau881x, 1);
+    NAU881x_Set_Output_Enable(nau881x, NAU881X_OUTPUT_NONE);
 }
 
 nau881x_status_t NAU881x_Enable_Mic_Bypass_To_SPK(NAU881x_t* nau881x)
 {
     nau881x_status_t status = NAU881X_STATUS_OK;
 
-    NAU881x_Set_PGA_Input(nau881x, NAU881X_INPUT_MICP);
+    NAU881x_Set_PGA_Input(nau881x, NAU881X_INPUT_MICP | NAU881X_INPUT_MICN);
     // 2. Enable PGA
     NAU881x_Set_PGA_Enable(nau881x, 1);
     // 3. PGA gain maximum
@@ -229,7 +225,7 @@ nau881x_status_t NAU881x_Disable_Mic_Bypass_To_SPK(NAU881x_t* nau881x)
 {
     nau881x_status_t status = NAU881X_STATUS_OK;
 
-    NAU881x_Set_PGA_Input(nau881x, NAU881X_INPUT_MICP);
+    NAU881x_Set_PGA_Input(nau881x, NAU881X_INPUT_MICP | NAU881X_INPUT_MICN);
     NAU881x_Set_PGA_Enable(nau881x, 1);
     NAU881x_Set_PGA_Gain(nau881x, 0x3F); // 35.25dB
     NAU881x_Set_Boost_Enable(nau881x, 1);
@@ -304,46 +300,7 @@ void HAL_SAI_ErrorCallback(SAI_HandleTypeDef *hsai)
   }
 }
 
-static int codec_i2c_write(uint16_t DevAddr, uint8_t Reg, uint16_t value)
-{
-    uint8_t buf[2];
-    buf[0] = ((Reg & 0x7F) << 1) | ((value >> 8) & 0x01);
-    buf[1] = value & 0xFF;
-
-    // LOG_SIMPLE("[I2C][WRITE] DevAddr=0x%02X Reg=0x%02X Value=0x%04X Buf[0]=0x%02X Buf[1]=0x%02X\r\n", 
-    //     DevAddr, Reg, value, buf[0], buf[1]);
-    
-    if(HAL_I2C_Master_Transmit(&hi2c4, DevAddr, buf, 2, 1000) == HAL_OK) {
-        // LOG_SIMPLE("[I2C][WRITE] Success\r\n");
-        return 0;
-    } else {
-        // LOG_SIMPLE("[I2C][WRITE] Failed\r\n");
-        return -1;
-    }
-}
-
-static uint16_t codec_i2c_read(uint16_t DevAddr, uint8_t Reg)
-{
-    uint8_t reg_addr = (Reg & 0x7F) << 1;
-    uint8_t buf[2] = {0};
-
-    // LOG_SIMPLE("[I2C][READ] DevAddr=0x%02X Reg=0x%02X reg_addr=0x%02X\r\n", 
-    //     DevAddr, Reg, reg_addr);
-
-    if (HAL_I2C_Master_Transmit(&hi2c4, DevAddr, &reg_addr, 1, 1000) != HAL_OK) {
-        // LOG_SIMPLE("[I2C][READ] Transmit RegAddr Failed\r\n");
-        return 0xFFFF;
-    }
-    if (HAL_I2C_Master_Receive(&hi2c4, DevAddr, buf, 2, 1000) != HAL_OK) {
-        // LOG_SIMPLE("[I2C][READ] Receive Data Failed\r\n");
-        return 0xFFFF;
-    }
-
-    uint16_t value = ((buf[0] & 0x01) << 8) | buf[1];
-    // LOG_SIMPLE("[I2C][READ] Success, Value=0x%04X Buf[0]=0x%02X Buf[1]=0x%02X\r\n", 
-    //     value, buf[0], buf[1]);
-    return value;
-}
+/* I2C access is provided by nau881x_dev (see nau881x_dev.h). */
 
 int record_cmd(int argc, char* argv[])
 {
@@ -408,7 +365,7 @@ static int micvol_cmd(int argc, char* argv[])
         return -1;
     }
     uint8_t percent = atoi(argv[1]);
-    NAU881x_SetMicVolume_Percent(&g_codec.NAU881x, percent);
+    NAU881x_SetMicVolume_Percent(g_codec.nau881x, percent);
     LOG_SIMPLE("Mic volume set to %d%%\r\n", percent);
     return 0;
 }
@@ -420,7 +377,7 @@ static int spkvol_cmd(int argc, char* argv[])
         return -1;
     }
     uint8_t percent = atoi(argv[1]);
-    NAU881x_SetSpeakerVolume_Percent(&g_codec.NAU881x, percent);
+    NAU881x_SetSpeakerVolume_Percent(g_codec.nau881x, percent);
     LOG_SIMPLE("Speaker volume set to %d%%\r\n", percent);
     return 0;
 }
@@ -432,7 +389,7 @@ static int dacvol_cmd(int argc, char* argv[])
         return -1;
     }
     uint8_t percent = atoi(argv[1]);
-    NAU881x_SetDACVolume_Percent(&g_codec.NAU881x, percent);
+    NAU881x_SetDACVolume_Percent(g_codec.nau881x, percent);
     LOG_SIMPLE("DAC volume set to %d%%\r\n", percent);
     return 0;
 }
@@ -444,14 +401,14 @@ static int bypass_cmd(int argc, char* argv[])
         return -1;
     }
     if(strcmp(argv[1], "on") == 0) {
-        if (NAU881x_Enable_Mic_Bypass_To_SPK(&g_codec.NAU881x) == NAU881X_STATUS_OK) {
+        if (NAU881x_Enable_Mic_Bypass_To_SPK(g_codec.nau881x) == NAU881X_STATUS_OK) {
             LOG_SIMPLE("MIC bypass to SPK enabled.\r\n");
         } else {
             LOG_SIMPLE("Failed to enable bypass!\r\n");
             return -1;
         }
     } else if(strcmp(argv[1], "off") == 0) {
-        if (NAU881x_Disable_Mic_Bypass_To_SPK(&g_codec.NAU881x) == NAU881X_STATUS_OK) {
+        if (NAU881x_Disable_Mic_Bypass_To_SPK(g_codec.nau881x) == NAU881X_STATUS_OK) {
             LOG_SIMPLE("MIC bypass to SPK disabled.\r\n");
         } else {
             LOG_SIMPLE("Failed to disable bypass!\r\n");
@@ -464,6 +421,81 @@ static int bypass_cmd(int argc, char* argv[])
     return 0;
 }
 
+static int audiotest_cmd(int argc, char* argv[])
+{
+    int ret = 0;
+    uint8_t *read_buf1 = NULL;
+    uint8_t *read_buf2 = NULL;
+    if(argc < 2) {
+        LOG_SIMPLE("Usage: audiotest [file]\r\n");
+        return -1;
+    }
+
+    read_buf1 = (uint8_t *)hal_mem_alloc_aligned(PLAY_BUFFER_SIZE, 32, MEM_LARGE);
+    read_buf2 = (uint8_t *)hal_mem_alloc_aligned(AUDIO_BUFFER_SIZE, 32, MEM_LARGE);
+    if (!read_buf1 || !read_buf2) {
+        LOG_SIMPLE("Cannot malloc read_buf1 or read_buf2\r\n");
+        if (read_buf1) hal_mem_free(read_buf1);
+        if (read_buf2) hal_mem_free(read_buf2);
+        return -1;
+    }
+
+    const char *filename = argv[1];
+    FILE *file = file_fopen(filename, "rb");
+    if (!file) {
+        LOG_SIMPLE("Cannot open file: %s\r\n", filename);
+        if (read_buf1) hal_mem_free(read_buf1);
+        if (read_buf2) hal_mem_free(read_buf2);
+        return -1;
+    }
+    
+    file_fseek(file, 0, SEEK_SET);
+    ret = file_fread(file, read_buf1, PLAY_HALF_SIZE);
+    if (ret != PLAY_HALF_SIZE) {
+        LOG_SIMPLE("Read failed: %d\r\n", ret);
+        if (read_buf1) hal_mem_free(read_buf1);
+        if (read_buf2) hal_mem_free(read_buf2);
+        return -1;
+    }
+    ret = file_fread(file, read_buf1 + PLAY_HALF_SIZE, PLAY_HALF_SIZE);
+    if (ret != PLAY_HALF_SIZE) {
+        LOG_SIMPLE("Read failed: %d\r\n", ret);
+        if (read_buf1) hal_mem_free(read_buf1);
+        if (read_buf2) hal_mem_free(read_buf2);
+        return -1;
+    }
+    file_fseek(file, 44, SEEK_SET);
+    ret = file_fread(file, read_buf2, AUDIO_HALF_SIZE);
+    if (ret != AUDIO_HALF_SIZE) {
+        LOG_SIMPLE("Read failed: %d\r\n", ret);
+        if (read_buf1) hal_mem_free(read_buf1);
+        if (read_buf2) hal_mem_free(read_buf2);
+        return -1;
+    }
+    ret = file_fread(file, read_buf2 + AUDIO_HALF_SIZE, AUDIO_HALF_SIZE);
+    if (ret != AUDIO_HALF_SIZE) {
+        LOG_SIMPLE("Read failed: %d\r\n", ret);
+        if (read_buf1) hal_mem_free(read_buf1);
+        if (read_buf2) hal_mem_free(read_buf2);
+        return -1;
+    }
+    file_fclose(file);
+
+    for (int i = 0; i < PLAY_BUFFER_SIZE - 44; i++) {
+        if (read_buf1[i + 44] != read_buf2[i]) {
+            LOG_SIMPLE("Audio test failed: %s, %d\r\n", filename, i);
+            LOG_SIMPLE("read_buf1[%d] = %02X, read_buf2[%d] = %02X\r\n", i + 44, read_buf1[i + 44], i, read_buf2[i]);
+            if (read_buf1) hal_mem_free(read_buf1);
+            if (read_buf2) hal_mem_free(read_buf2);
+            return -1;
+        }
+    }
+    LOG_SIMPLE("Audio test done: %s\r\n", filename);
+    if (read_buf1) hal_mem_free(read_buf1);
+    if (read_buf2) hal_mem_free(read_buf2);
+    return 0;
+}
+
 debug_cmd_reg_t audio_cmd_table[] = {
     {"record",    "Start recording",      record_cmd},
     {"stoprec",   "Stop recording",       stop_record_cmd},
@@ -473,6 +505,7 @@ debug_cmd_reg_t audio_cmd_table[] = {
     {"spkvol",    "Set speaker volume [0-100]", spkvol_cmd},
     {"dacvol",    "Set DAC volume [0-100]", dacvol_cmd},
     {"bypass",    "Enable/disable MIC->SPK bypass", bypass_cmd}, 
+    {"audiotest", "Hex dump audio file region", audiotest_cmd},
 };
 
 static void codec_cmd_register(void)
@@ -503,7 +536,7 @@ static void recordProcess(void *argument)
             codec->record_total_bytes = 0;
             codec->record_stop_flag = false;
 
-            memset((void*)RecordBuff, 0, AUDIO_BUFFER_SIZE * 2);
+            memset((void*)RecordBuff, 0, AUDIO_BUFFER_SIZE);
             if(codec->play_state != CODEC_RUNNING){
                 uint8_t TxData[2] = {0x00U, 0x00U};
                 /* If no playback is on going, transmit some bytes to generate SAI clock and synchro signals */
@@ -511,8 +544,8 @@ static void recordProcess(void *argument)
                     codec->record_stop_flag = true;
                 }
             }
-            NAU881x_StartRecord(&g_codec.NAU881x);
-            HAL_SAI_Receive_DMA(&hsai_BlockA1, (uint8_t*)RecordBuff, AUDIO_BUFFER_SIZE);
+            NAU881x_StartRecord(g_codec.nau881x);
+            HAL_SAI_Receive_DMA(&hsai_BlockA1, RecordBuff, AUDIO_HALF_SIZE);
             LOG_DRV_DEBUG("Recording to %s, use stoprec to stop...\r\n", codec->record_filename);
 
             uint32_t start_tick = osKernelGetTickCount();
@@ -520,8 +553,8 @@ static void recordProcess(void *argument)
 
             while (!codec->record_stop_flag) {
                 if (activeBuffer >= 0) {
-                    uint8_t* src = (activeBuffer == 0) ? (uint8_t*)RecordBuff : ((uint8_t*)RecordBuff + AUDIO_BUFFER_SIZE);
-                    size_t bytesToWrite = AUDIO_BUFFER_SIZE;
+                    uint8_t* src = (activeBuffer == 0) ? RecordBuff : (RecordBuff + AUDIO_HALF_SIZE);
+                    size_t bytesToWrite = AUDIO_HALF_SIZE;
                     
                     ret = file_fwrite(codec->record_fd, src, bytesToWrite);
                     if (ret != bytesToWrite) {
@@ -542,7 +575,7 @@ static void recordProcess(void *argument)
                 }
             }
             HAL_SAI_DMAStop(&hsai_BlockA1);
-            NAU881x_StopRecord(&g_codec.NAU881x);
+            NAU881x_StopRecord(g_codec.nau881x);
 
             fill_WavHeader(wav_header, codec->record_total_bytes, 2, 16000, 16);
             file_fseek(codec->record_fd, 0, SEEK_SET);
@@ -589,30 +622,36 @@ static void playProcess(void *argument)
             }
             codec->play_stop_flag = false;
 
-            NAU881x_StartPlayback(&g_codec.NAU881x);
+            NAU881x_StartPlayback(g_codec.nau881x);
 
             // Pre-fill two buffers
-            file_fread(codec->play_fd, PlayBuff, PLAY_BUFFER_SIZE * 2);
+            file_fread(codec->play_fd, PlayBuff, PLAY_BUFFER_SIZE);
 
             // Start DMA, transfer entire double buffer
-            HAL_SAI_Transmit_DMA(&hsai_BlockB1, (uint8_t*)PlayBuff, PLAY_BUFFER_SIZE);
+            HAL_SAI_Transmit_DMA(&hsai_BlockB1, PlayBuff, PLAY_HALF_SIZE);
 
             int play_done = 0;
             while (!codec->play_stop_flag && !play_done) {
                 if (playActiveBuffer == 0) {
                     // Fill PlayBuff1
-                    int read_bytes = file_fread(codec->play_fd, PlayBuff, PLAY_BUFFER_SIZE);
-                    if (read_bytes < PLAY_BUFFER_SIZE) {
+                    int read_bytes = file_fread(codec->play_fd, PlayBuff, PLAY_HALF_SIZE);
+                    if (read_bytes < 0) {
+                        LOG_DRV_DEBUG("Read failed: %d\r\n", read_bytes);
+                        play_done = 1;
+                    } else if (read_bytes < PLAY_HALF_SIZE) {
                         // End of file, next DMA will finish playback
-                        memset((uint8_t*)PlayBuff + read_bytes, 0, PLAY_BUFFER_SIZE - read_bytes);
+                        memset((uint8_t*)PlayBuff + read_bytes, 0, PLAY_HALF_SIZE - read_bytes);
                         play_done = 1;
                     }
                     playActiveBuffer = -1;
                 } else if (playActiveBuffer == 1) {
                     // Fill PlayBuff2
-                    int read_bytes = file_fread(codec->play_fd, (uint8_t*)PlayBuff + PLAY_BUFFER_SIZE, PLAY_BUFFER_SIZE);
-                    if (read_bytes < PLAY_BUFFER_SIZE) {
-                        memset((uint8_t*)PlayBuff + PLAY_BUFFER_SIZE + read_bytes, 0, PLAY_BUFFER_SIZE - read_bytes);
+                    int read_bytes = file_fread(codec->play_fd, PlayBuff + PLAY_HALF_SIZE, PLAY_HALF_SIZE);
+                    if (read_bytes < 0) {
+                        LOG_DRV_DEBUG("Read failed: %d\r\n", read_bytes);
+                        play_done = 1;
+                    } else if (read_bytes < PLAY_HALF_SIZE) {
+                        memset((uint8_t*)PlayBuff + PLAY_HALF_SIZE + read_bytes, 0, PLAY_HALF_SIZE - read_bytes);
                         play_done = 1;
                     }
                     playActiveBuffer = -1;
@@ -620,7 +659,7 @@ static void playProcess(void *argument)
                 osDelay(1); 
             }
             HAL_SAI_DMAStop(&hsai_BlockB1);
-            NAU881x_StopPlayback(&g_codec.NAU881x);
+            NAU881x_StopPlayback(g_codec.nau881x);
 
             file_fclose(codec->play_fd);
             LOG_DRV_DEBUG("Play finished: %s\r\n", codec->play_filename);
@@ -635,17 +674,41 @@ static void codecProcess(void *argument)
     codec_t *codec = (codec_t *)argument;
     uint8_t silicon_rev = 0;
     LOG_DRV_DEBUG("codecProcess start\r\n");
-    pwr_manager_acquire(codec->pwr_handle);
-    // MX_I2C4_Init();  // I2C4 initialization - function not generated by CubeMX yet
+    // pwr_manager_acquire(codec->pwr_handle);
     MX_SAI1_Init();
     LOG_DRV_DEBUG("MX_SAI1_Init end\r\n");
-    codec->NAU881x.write_reg = codec_i2c_write;
-    codec->NAU881x.read_reg = codec_i2c_read;
-    osDelay(100);
-    NAU881x_Init(&codec->NAU881x);
 
-    NAU881x_Get_SiliconRevision(&codec->NAU881x, &silicon_rev);
+    /* Initialize I2C driver and NAU881x codec via nau881x_dev (I2C backend). */
+    int ret = i2c_driver_init(I2C_PORT_1);
+    if (ret != 0) {
+        LOG_DRV_DEBUG("codec: i2c_driver_init failed %d\r\n", ret);
+        goto exit_thread;
+    }
+
+    ret = nau881x_dev_init();
+    if (ret != 0) {
+        LOG_DRV_DEBUG("codec: nau881x_dev_init failed %d\r\n", ret);
+        i2c_driver_deinit(I2C_PORT_1);
+        goto exit_thread;
+    }
+
+    codec->nau881x = nau881x_dev_get_handle();
+    if (codec->nau881x == NULL) {
+        LOG_DRV_DEBUG("nau881x_dev_get_handle returned NULL\r\n");
+        goto exit_thread;
+    }
+
+    osDelay(100);
+    NAU881x_Get_SiliconRevision(codec->nau881x, &silicon_rev);
     LOG_DRV_DEBUG("NAU881x Silicon Revision: 0x%02X\r\n", silicon_rev);
+
+    NAU881x_Set_AudioInterfaceFormat(codec->nau881x, NAU881X_AUDIO_IFACE_FMT_I2S, NAU881X_AUDIO_IFACE_WL_16BITS);
+    NAU881x_Set_Clock(codec->nau881x, 0, NAU881X_BCLKDIV_8, NAU881X_MCLKDIV_1, NAU881X_CLKSEL_MCLK);  /* slave */
+    NAU881x_Set_SampleRate(codec->nau881x, 3);  /* 16 kHz */
+    NAU881x_Set_DAC_SoftMute(codec->nau881x, 1);
+    NAU881x_Set_DAC_Enable(codec->nau881x, 1);
+
+    osDelay(50);
 
     codec->is_init = true;
     while (codec->is_init) {
@@ -653,6 +716,8 @@ static void codecProcess(void *argument)
         
         }
     }
+
+exit_thread:
     osThreadExit();
 }
 
@@ -687,7 +752,7 @@ static int codec_init(void *priv)
     codec->play_sem = osSemaphoreNew(1, 0, NULL);
     codec->sem_id = osSemaphoreNew(1, 0, NULL);
 
-    codec->pwr_handle = pwr_manager_get_handle(PWR_CODEC_NAME);
+    // codec->pwr_handle = pwr_manager_get_handle(PWR_CODEC_NAME);
 
     codec->record_processId = osThreadNew(recordProcess, codec, &recordTask_attributes);
     codec->play_processId = osThreadNew(playProcess, codec, &playTask_attributes);
@@ -742,7 +807,7 @@ static int codec_deinit(void *priv)
 
     // Release power management
     if (codec->pwr_handle != 0) {
-        pwr_manager_release(codec->pwr_handle);
+        // pwr_manager_release(codec->pwr_handle);
         codec->pwr_handle = 0;
     }
 

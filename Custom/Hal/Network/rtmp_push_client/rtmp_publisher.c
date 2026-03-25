@@ -198,7 +198,13 @@ rtmp_pub_err_t rtmp_publisher_connect(rtmp_publisher_t *pub)
         return RTMP_PUB_OK;
     }
     
-    // Setup URL
+    // Reset tcUrl so SetupURL properly re-initializes it on reconnect (CloseInternal does not
+    // clear tcUrl.av_len when RTMP_LF_FTCU is unset, causing SetupURL to skip tcUrl on next call)
+    pub->rtmp->Link.tcUrl.av_val = NULL;
+    pub->rtmp->Link.tcUrl.av_len = 0;
+
+    // Setup URL. librtmp keeps pointers (hostname, app, tcUrl) into this buffer until
+    // RTMP_Connect() completes (SendConnect serializes them), so do NOT free url until after Connect.
     size_t url_len = strlen(pub->config.url) + 1;
     char *url = (char*)hal_mem_alloc_large(url_len);
     if (!url) {
@@ -210,8 +216,6 @@ rtmp_pub_err_t rtmp_publisher_connect(rtmp_publisher_t *pub)
         hal_mem_free(url);
         return RTMP_PUB_ERR_INIT_FAILED;
     }
-    
-    hal_mem_free(url);
     
     // Ensure RTMP_FEATURE_WRITE is set after SetupURL (in case it was cleared)
     RTMP_EnableWrite(pub->rtmp);
@@ -231,10 +235,14 @@ rtmp_pub_err_t rtmp_publisher_connect(rtmp_publisher_t *pub)
     // Ensure RTMP_FEATURE_WRITE is set before Connect
     RTMP_EnableWrite(pub->rtmp);
     
-    // Connect to server
+    // Connect to server. Free url after Connect: librtmp's SendConnect (called inside RTMP_Connect)
+    // serializes hostname/app/tcUrl from the url buffer; after that the buffer is no longer accessed.
     if (!RTMP_Connect(pub->rtmp, NULL)) {
+        RTMP_Close(pub->rtmp);
+        hal_mem_free(url);
         return RTMP_PUB_ERR_CONNECT_FAILED;
     }
+    hal_mem_free(url);
     
     // Verify RTMP_FEATURE_WRITE is still set after Connect
     RTMP_Log(RTMP_LOGINFO, "After RTMP_Connect: protocol flags=0x%x", pub->rtmp->Link.protocol);
@@ -466,6 +474,9 @@ rtmp_pub_err_t rtmp_publisher_send_video_frame(rtmp_publisher_t *pub,
                 return ret;
             }
         } else {
+            /* extract_sps_pps may have allocated one of sps/pps before failing; free to avoid leak */
+            if (sps) hal_mem_free(sps);
+            if (pps) hal_mem_free(pps);
             // If we have stored SPS/PPS, use them
             if (pub->sps_data && pub->pps_data) {
                 rtmp_pub_err_t ret = rtmp_publisher_send_sps_pps(pub, 

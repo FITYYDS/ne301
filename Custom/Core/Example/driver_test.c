@@ -7,7 +7,6 @@
 #include "camera.h"
 #include "enc.h"
 #include "draw.h"
-#include "uvc.h"
 #include "dev_manager.h"
 #include "cli_cmd.h"
 #include "framework.h"
@@ -35,10 +34,9 @@ typedef struct {
     uint32_t draw_time;
     uint32_t draw_count;
     uint32_t enc_time;
-    uint32_t uvc_time;
     uint32_t total_time;
     uint32_t last_time;
-}video_time_t;
+} video_time_t;
 
 static int captrue_flag;
 static int video_flag;
@@ -427,15 +425,9 @@ uint8_t* video_start(int *out_len)
             LOG_APP_WARN("enc input buffer failed :%d fb_len:%d\r\n",ret, fb_len);
         }else{
             enc_len = device_ioctl(enc, ENC_CMD_OUTPUT_BUFFER, (uint8_t *)&outfb, 0);
-#if VIDEO_SEND_UVC
-            tmp_time = osKernelGetTickCount();
-            send_uvc_frame(outfb, enc_len);
-            video_time.uvc_time += osKernelGetTickCount() - tmp_time;
-#else
             if(video_time.frame_count % 300 == 0){
                 LOG_APP_WARN("fb cnt:%d add:0x%x :enc_len:%d \r\n", video_time.frame_count,(int)fb, enc_len);
             }
-#endif
         }
         video_time.enc_time += osKernelGetTickCount() - tmp_time;
         video_time.frame_count++;
@@ -1017,12 +1009,10 @@ static int video_cmd(int argc, char* argv[])
             (video_time.frame_count > 0) ? (video_time.enc_time / video_time.frame_count) : 0,
             video_time.last_time
         );
-        LOG_SIMPLE("video time: draw_count:%d, draw_time:%dms, draw_avg:%dms, uvc_time:%dms, uvc_avg:%dms\r\n", 
+        LOG_SIMPLE("video time: draw_count:%d, draw_time:%dms, draw_avg:%dms\r\n", 
             video_time.draw_count,
             video_time.draw_time,
-            (video_time.draw_count > 0) ? (video_time.draw_time / video_time.draw_count) : 0,
-            video_time.uvc_time,
-            (video_time.frame_count > 0) ? (video_time.uvc_time / video_time.frame_count) : 0
+            (video_time.draw_count > 0) ? (video_time.draw_time / video_time.draw_count) : 0
         );
     }
     return 0;

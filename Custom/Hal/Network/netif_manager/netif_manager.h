@@ -176,10 +176,14 @@ typedef struct {
     char apn[32];                           // APN (Access Point Name)
     char user[64];                          // APN username
     char passwd[64];                        // APN password
+    uint8_t apn_context_id;                 // APN context ID (read only) (0: Auto, others: specified)
     uint8_t authentication;                 // APN authentication
     uint8_t is_enable_roam;                 // Enable roaming
+    uint8_t isp_selected;                   // ISP selected (0: Auto, 1: China Mobile, 2: China Unicom, 3: China Telecom, 4: American Verizon)
     char pin[32];                           // SIM PIN
     char puk[32];                           // SIM PUK
+    uint8_t ppp_context_id;                 // PPP context ID (0: Auto, others: specified)
+    char ppp_pre_at_cmds[8][64];           // PPP pre-AT command list (8 commands, 64 characters each)
 } cellular_config_t;
 
 /// @brief Cellular information

@@ -6,6 +6,9 @@ export interface SetHardwareInfoReq {
     horizontal_flip: boolean;
     vertical_flip: boolean;
     aec: number;
+    fast_capture_skip_frames: number;
+    fast_capture_resolution: number;
+    fast_capture_jpeg_quality: number;
 }
 export interface SetLightConfigReq {
     mode: 'auto' | 'custom' | 'off';

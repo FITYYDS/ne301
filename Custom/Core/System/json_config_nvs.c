@@ -366,6 +366,18 @@ aicam_result_t json_config_save_device_service_image_config_to_nvs(const image_c
     if (result != AICAM_OK)
         LOG_CORE_ERROR("Failed to save image startup skip frames to NVS");
 
+    result = json_config_nvs_write_uint32(NVS_KEY_IMAGE_FAST_SKIP_FRAMES, config->fast_capture_skip_frames);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save image fast capture skip frames to NVS");
+
+    result = json_config_nvs_write_uint32(NVS_KEY_IMAGE_FAST_RESOLUTION, config->fast_capture_resolution);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save image fast capture resolution to NVS");
+
+    result = json_config_nvs_write_uint32(NVS_KEY_IMAGE_FAST_JPEG_QUALITY, config->fast_capture_jpeg_quality);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save image fast capture JPEG quality to NVS");
+
     LOG_CORE_INFO("Device service image configuration saved to NVS successfully");
     return result;
 }
@@ -416,6 +428,124 @@ aicam_result_t json_config_save_device_service_light_config_to_nvs(const light_c
         LOG_CORE_ERROR("Failed to save light threshold to NVS");
 
     LOG_CORE_INFO("Device service light configuration saved to NVS successfully");
+    return result;
+}
+
+// save ISP configuration to NVS
+aicam_result_t json_config_save_isp_config_to_nvs(const isp_config_t *config)
+{
+    if (!config)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    aicam_result_t result = AICAM_OK;
+
+    result = json_config_nvs_write_bool(NVS_KEY_ISP_VALID, config->valid);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save ISP valid flag to NVS");
+
+    // StatRemoval
+    json_config_nvs_write_bool(NVS_KEY_ISP_SR_ENABLE, config->stat_removal_enable);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_SR_HEADLINES, config->stat_removal_head_lines);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_SR_VALIDLINES, config->stat_removal_valid_lines);
+
+    // Demosaicing
+    json_config_nvs_write_bool(NVS_KEY_ISP_DEMO_ENABLE, config->demosaic_enable);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_DEMO_TYPE, config->demosaic_type);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_DEMO_PEAK, config->demosaic_peak);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_DEMO_LINEV, config->demosaic_line_v);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_DEMO_LINEH, config->demosaic_line_h);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_DEMO_EDGE, config->demosaic_edge);
+
+    // Contrast
+    json_config_nvs_write_bool(NVS_KEY_ISP_CONTRAST_ENABLE, config->contrast_enable);
+    storage_nvs_write_cached(NVS_USER, NVS_KEY_ISP_CONTRAST_LUT, config->contrast_lut, sizeof(config->contrast_lut));
+
+    // StatArea
+    json_config_nvs_write_uint32(NVS_KEY_ISP_STAT_X, config->stat_area_x);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_STAT_Y, config->stat_area_y);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_STAT_W, config->stat_area_width);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_STAT_H, config->stat_area_height);
+
+    // Sensor Gain/Exposure
+    json_config_nvs_write_uint32(NVS_KEY_ISP_SENSOR_GAIN, config->sensor_gain);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_SENSOR_EXPO, config->sensor_exposure);
+
+    // BadPixel Algo
+    json_config_nvs_write_bool(NVS_KEY_ISP_BPA_ENABLE, config->bad_pixel_algo_enable);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_BPA_THRESH, config->bad_pixel_algo_threshold);
+
+    // BadPixel Static
+    json_config_nvs_write_bool(NVS_KEY_ISP_BP_ENABLE, config->bad_pixel_enable);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_BP_STRENGTH, config->bad_pixel_strength);
+
+    // BlackLevel
+    json_config_nvs_write_bool(NVS_KEY_ISP_BL_ENABLE, config->black_level_enable);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_BL_R, config->black_level_r);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_BL_G, config->black_level_g);
+    json_config_nvs_write_uint8(NVS_KEY_ISP_BL_B, config->black_level_b);
+
+    // AEC
+    json_config_nvs_write_bool(NVS_KEY_ISP_AEC_ENABLE, config->aec_enable);
+    json_config_nvs_write_int32(NVS_KEY_ISP_AEC_EXPCOMP, config->aec_exposure_compensation);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_AEC_AFLK, config->aec_anti_flicker_freq);
+
+    // AWB (save as binary blob due to large size)
+    json_config_nvs_write_bool(NVS_KEY_ISP_AWB_ENABLE, config->awb_enable);
+    // AWB data blob: labels + ref_color_temp + gains + ccm + ref_rgb
+    typedef struct {
+        char label[ISP_AWB_PROFILES_MAX][ISP_AWB_LABEL_MAX_LEN];
+        uint32_t ref_color_temp[ISP_AWB_PROFILES_MAX];
+        uint32_t gain_r[ISP_AWB_PROFILES_MAX];
+        uint32_t gain_g[ISP_AWB_PROFILES_MAX];
+        uint32_t gain_b[ISP_AWB_PROFILES_MAX];
+        int32_t ccm[ISP_AWB_PROFILES_MAX][3][3];
+        uint8_t ref_rgb[ISP_AWB_PROFILES_MAX][3];
+    } awb_data_t;
+    awb_data_t awb_data;
+    memcpy(awb_data.label, config->awb_label, sizeof(awb_data.label));
+    memcpy(awb_data.ref_color_temp, config->awb_ref_color_temp, sizeof(awb_data.ref_color_temp));
+    memcpy(awb_data.gain_r, config->awb_gain_r, sizeof(awb_data.gain_r));
+    memcpy(awb_data.gain_g, config->awb_gain_g, sizeof(awb_data.gain_g));
+    memcpy(awb_data.gain_b, config->awb_gain_b, sizeof(awb_data.gain_b));
+    memcpy(awb_data.ccm, config->awb_ccm, sizeof(awb_data.ccm));
+    memcpy(awb_data.ref_rgb, config->awb_ref_rgb, sizeof(awb_data.ref_rgb));
+    storage_nvs_write_cached(NVS_USER, NVS_KEY_ISP_AWB_DATA, &awb_data, sizeof(awb_data));
+
+    // ISP Gain
+    json_config_nvs_write_bool(NVS_KEY_ISP_GAIN_ENABLE, config->isp_gain_enable);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_GAIN_R, config->isp_gain_r);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_GAIN_G, config->isp_gain_g);
+    json_config_nvs_write_uint32(NVS_KEY_ISP_GAIN_B, config->isp_gain_b);
+
+    // Color Conversion Matrix
+    json_config_nvs_write_bool(NVS_KEY_ISP_CCM_ENABLE, config->color_conv_enable);
+    storage_nvs_write_cached(NVS_USER, NVS_KEY_ISP_CCM_DATA, config->color_conv_matrix, sizeof(config->color_conv_matrix));
+
+    // Gamma
+    json_config_nvs_write_bool(NVS_KEY_ISP_GAMMA_ENABLE, config->gamma_enable);
+
+    // Sensor Delay
+    json_config_nvs_write_uint8(NVS_KEY_ISP_SENSOR_DELAY, config->sensor_delay);
+
+    // Lux Reference (save as binary blob)
+    typedef struct {
+        uint32_t hl_ref, hl_expo1, hl_expo2;
+        uint8_t hl_lum1, hl_lum2;
+        uint32_t ll_ref, ll_expo1, ll_expo2;
+        uint8_t ll_lum1, ll_lum2;
+        float calib_factor;
+    } lux_data_t;
+    lux_data_t lux_data = {
+        .hl_ref = config->lux_hl_ref, .hl_expo1 = config->lux_hl_expo1, .hl_expo2 = config->lux_hl_expo2,
+        .hl_lum1 = config->lux_hl_lum1, .hl_lum2 = config->lux_hl_lum2,
+        .ll_ref = config->lux_ll_ref, .ll_expo1 = config->lux_ll_expo1, .ll_expo2 = config->lux_ll_expo2,
+        .ll_lum1 = config->lux_ll_lum1, .ll_lum2 = config->lux_ll_lum2,
+        .calib_factor = config->lux_calib_factor
+    };
+    storage_nvs_write_cached(NVS_USER, NVS_KEY_ISP_LUX_DATA, &lux_data, sizeof(lux_data));
+
+    LOG_CORE_INFO("ISP configuration saved to NVS successfully");
     return result;
 }
 
@@ -512,6 +642,11 @@ aicam_result_t json_config_save_network_service_config_to_nvs(const network_serv
     result = json_config_nvs_write_bool(NVS_KEY_CELLULAR_ROAMING, config->cellular.enable_roaming);
     if (result != AICAM_OK)
         LOG_CORE_ERROR("Failed to save cellular roaming to NVS");
+
+    // Save cellular operator
+    result = json_config_nvs_write_uint8(NVS_KEY_CELLULAR_OPERATOR, config->cellular.operator);
+    if (result != AICAM_OK)
+        LOG_CORE_ERROR("Failed to save cellular operator to NVS");
 
     // Save PoE configuration
     aicam_result_t poe_result = json_config_save_poe_config_to_nvs(&config->poe);
@@ -1256,6 +1391,24 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
     else
         json_config_nvs_write_uint32(NVS_KEY_IMAGE_SKIP_FRAMES, config->device_service.image_config.startup_skip_frames);
 
+    result = json_config_nvs_read_uint32(NVS_KEY_IMAGE_FAST_SKIP_FRAMES, &temp_uint32);
+    if (result == AICAM_OK)
+        config->device_service.image_config.fast_capture_skip_frames = temp_uint32;
+    else
+        json_config_nvs_write_uint32(NVS_KEY_IMAGE_FAST_SKIP_FRAMES, config->device_service.image_config.fast_capture_skip_frames);
+
+    result = json_config_nvs_read_uint32(NVS_KEY_IMAGE_FAST_RESOLUTION, &temp_uint32);
+    if (result == AICAM_OK)
+        config->device_service.image_config.fast_capture_resolution = temp_uint32;
+    else
+        json_config_nvs_write_uint32(NVS_KEY_IMAGE_FAST_RESOLUTION, config->device_service.image_config.fast_capture_resolution);
+
+    result = json_config_nvs_read_uint32(NVS_KEY_IMAGE_FAST_JPEG_QUALITY, &temp_uint32);
+    if (result == AICAM_OK)
+        config->device_service.image_config.fast_capture_jpeg_quality = temp_uint32;
+    else
+        json_config_nvs_write_uint32(NVS_KEY_IMAGE_FAST_JPEG_QUALITY, config->device_service.image_config.fast_capture_jpeg_quality);
+
     // Load device service configuration - light config
     result = json_config_nvs_read_bool(NVS_KEY_LIGHT_CONNECTED, &temp_bool);
     if (result == AICAM_OK)
@@ -1310,6 +1463,167 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
         config->device_service.light_config.light_threshold = temp_uint32;
     else
         json_config_nvs_write_uint32(NVS_KEY_LIGHT_THRESHOLD, config->device_service.light_config.light_threshold);
+
+    // Load ISP configuration
+    result = json_config_nvs_read_bool(NVS_KEY_ISP_VALID, &temp_bool);
+    if (result == AICAM_OK)
+        config->device_service.isp_config.valid = temp_bool;
+    else
+        json_config_nvs_write_bool(NVS_KEY_ISP_VALID, config->device_service.isp_config.valid);
+
+    // Only load ISP params if valid flag is set
+    if (config->device_service.isp_config.valid) {
+        isp_config_t *isp = &config->device_service.isp_config;
+
+        // StatRemoval
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_SR_ENABLE, &temp_bool) == AICAM_OK)
+            isp->stat_removal_enable = temp_bool;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_SR_HEADLINES, &temp_uint32) == AICAM_OK)
+            isp->stat_removal_head_lines = temp_uint32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_SR_VALIDLINES, &temp_uint32) == AICAM_OK)
+            isp->stat_removal_valid_lines = temp_uint32;
+
+        // Demosaicing
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_DEMO_ENABLE, &temp_bool) == AICAM_OK)
+            isp->demosaic_enable = temp_bool;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_DEMO_TYPE, &temp_uint8) == AICAM_OK)
+            isp->demosaic_type = temp_uint8;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_DEMO_PEAK, &temp_uint8) == AICAM_OK)
+            isp->demosaic_peak = temp_uint8;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_DEMO_LINEV, &temp_uint8) == AICAM_OK)
+            isp->demosaic_line_v = temp_uint8;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_DEMO_LINEH, &temp_uint8) == AICAM_OK)
+            isp->demosaic_line_h = temp_uint8;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_DEMO_EDGE, &temp_uint8) == AICAM_OK)
+            isp->demosaic_edge = temp_uint8;
+
+        // Contrast
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_CONTRAST_ENABLE, &temp_bool) == AICAM_OK)
+            isp->contrast_enable = temp_bool;
+        size_t lut_size = sizeof(isp->contrast_lut);
+        storage_nvs_read_cached(NVS_USER, NVS_KEY_ISP_CONTRAST_LUT, isp->contrast_lut, lut_size);
+
+        // StatArea
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_STAT_X, &temp_uint32) == AICAM_OK)
+            isp->stat_area_x = temp_uint32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_STAT_Y, &temp_uint32) == AICAM_OK)
+            isp->stat_area_y = temp_uint32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_STAT_W, &temp_uint32) == AICAM_OK)
+            isp->stat_area_width = temp_uint32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_STAT_H, &temp_uint32) == AICAM_OK)
+            isp->stat_area_height = temp_uint32;
+
+        // Sensor Gain/Exposure
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_SENSOR_GAIN, &temp_uint32) == AICAM_OK)
+            isp->sensor_gain = temp_uint32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_SENSOR_EXPO, &temp_uint32) == AICAM_OK)
+            isp->sensor_exposure = temp_uint32;
+
+        // BadPixel Algo
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_BPA_ENABLE, &temp_bool) == AICAM_OK)
+            isp->bad_pixel_algo_enable = temp_bool;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_BPA_THRESH, &temp_uint32) == AICAM_OK)
+            isp->bad_pixel_algo_threshold = temp_uint32;
+
+        // BadPixel Static
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_BP_ENABLE, &temp_bool) == AICAM_OK)
+            isp->bad_pixel_enable = temp_bool;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_BP_STRENGTH, &temp_uint8) == AICAM_OK)
+            isp->bad_pixel_strength = temp_uint8;
+
+        // BlackLevel
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_BL_ENABLE, &temp_bool) == AICAM_OK)
+            isp->black_level_enable = temp_bool;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_BL_R, &temp_uint8) == AICAM_OK)
+            isp->black_level_r = temp_uint8;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_BL_G, &temp_uint8) == AICAM_OK)
+            isp->black_level_g = temp_uint8;
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_BL_B, &temp_uint8) == AICAM_OK)
+            isp->black_level_b = temp_uint8;
+
+        // AEC
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_AEC_ENABLE, &temp_bool) == AICAM_OK)
+            isp->aec_enable = temp_bool;
+        if (json_config_nvs_read_int32(NVS_KEY_ISP_AEC_EXPCOMP, &temp_int32) == AICAM_OK)
+            isp->aec_exposure_compensation = temp_int32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_AEC_AFLK, &temp_uint32) == AICAM_OK)
+            isp->aec_anti_flicker_freq = temp_uint32;
+
+        // AWB
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_AWB_ENABLE, &temp_bool) == AICAM_OK)
+            isp->awb_enable = temp_bool;
+        // AWB data blob
+        typedef struct {
+            char label[ISP_AWB_PROFILES_MAX][ISP_AWB_LABEL_MAX_LEN];
+            uint32_t ref_color_temp[ISP_AWB_PROFILES_MAX];
+            uint32_t gain_r[ISP_AWB_PROFILES_MAX];
+            uint32_t gain_g[ISP_AWB_PROFILES_MAX];
+            uint32_t gain_b[ISP_AWB_PROFILES_MAX];
+            int32_t ccm[ISP_AWB_PROFILES_MAX][3][3];
+            uint8_t ref_rgb[ISP_AWB_PROFILES_MAX][3];
+        } awb_data_t;
+        awb_data_t awb_data;
+        size_t awb_size = sizeof(awb_data);
+        if (storage_nvs_read_cached(NVS_USER, NVS_KEY_ISP_AWB_DATA, &awb_data, awb_size) >= 0) {
+            memcpy(isp->awb_label, awb_data.label, sizeof(isp->awb_label));
+            memcpy(isp->awb_ref_color_temp, awb_data.ref_color_temp, sizeof(isp->awb_ref_color_temp));
+            memcpy(isp->awb_gain_r, awb_data.gain_r, sizeof(isp->awb_gain_r));
+            memcpy(isp->awb_gain_g, awb_data.gain_g, sizeof(isp->awb_gain_g));
+            memcpy(isp->awb_gain_b, awb_data.gain_b, sizeof(isp->awb_gain_b));
+            memcpy(isp->awb_ccm, awb_data.ccm, sizeof(isp->awb_ccm));
+            memcpy(isp->awb_ref_rgb, awb_data.ref_rgb, sizeof(isp->awb_ref_rgb));
+        }
+
+        // ISP Gain
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_GAIN_ENABLE, &temp_bool) == AICAM_OK)
+            isp->isp_gain_enable = temp_bool;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_GAIN_R, &temp_uint32) == AICAM_OK)
+            isp->isp_gain_r = temp_uint32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_GAIN_G, &temp_uint32) == AICAM_OK)
+            isp->isp_gain_g = temp_uint32;
+        if (json_config_nvs_read_uint32(NVS_KEY_ISP_GAIN_B, &temp_uint32) == AICAM_OK)
+            isp->isp_gain_b = temp_uint32;
+
+        // Color Conversion Matrix
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_CCM_ENABLE, &temp_bool) == AICAM_OK)
+            isp->color_conv_enable = temp_bool;
+        size_t ccm_size = sizeof(isp->color_conv_matrix);
+        storage_nvs_read_cached(NVS_USER, NVS_KEY_ISP_CCM_DATA, isp->color_conv_matrix, ccm_size);
+
+        // Gamma
+        if (json_config_nvs_read_bool(NVS_KEY_ISP_GAMMA_ENABLE, &temp_bool) == AICAM_OK)
+            isp->gamma_enable = temp_bool;
+
+        // Sensor Delay
+        if (json_config_nvs_read_uint8(NVS_KEY_ISP_SENSOR_DELAY, &temp_uint8) == AICAM_OK)
+            isp->sensor_delay = temp_uint8;
+
+        // Lux Reference
+        typedef struct {
+            uint32_t hl_ref, hl_expo1, hl_expo2;
+            uint8_t hl_lum1, hl_lum2;
+            uint32_t ll_ref, ll_expo1, ll_expo2;
+            uint8_t ll_lum1, ll_lum2;
+            float calib_factor;
+        } lux_data_t;
+        lux_data_t lux_data;
+        size_t lux_size = sizeof(lux_data);
+        if (storage_nvs_read_cached(NVS_USER, NVS_KEY_ISP_LUX_DATA, &lux_data, lux_size) >= 0) {
+            isp->lux_hl_ref = lux_data.hl_ref;
+            isp->lux_hl_expo1 = lux_data.hl_expo1;
+            isp->lux_hl_expo2 = lux_data.hl_expo2;
+            isp->lux_hl_lum1 = lux_data.hl_lum1;
+            isp->lux_hl_lum2 = lux_data.hl_lum2;
+            isp->lux_ll_ref = lux_data.ll_ref;
+            isp->lux_ll_expo1 = lux_data.ll_expo1;
+            isp->lux_ll_expo2 = lux_data.ll_expo2;
+            isp->lux_ll_lum1 = lux_data.ll_lum1;
+            isp->lux_ll_lum2 = lux_data.ll_lum2;
+            isp->lux_calib_factor = lux_data.calib_factor;
+        }
+
+        LOG_CORE_INFO("ISP configuration loaded from NVS");
+    }
 
     // Load network service configuration
     result = json_config_nvs_read_uint32(NVS_KEY_NETWORK_AP_SLEEP_TIME, &temp_uint32);
@@ -1411,10 +1725,16 @@ aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config)
         config->network_service.cellular.authentication = temp_uint8;
     else
         json_config_nvs_write_uint8(NVS_KEY_CELLULAR_AUTH, config->network_service.cellular.authentication);
-    
+
     result = json_config_nvs_read_bool(NVS_KEY_CELLULAR_ROAMING, &config->network_service.cellular.enable_roaming);
     if (result != AICAM_OK)
         json_config_nvs_write_bool(NVS_KEY_CELLULAR_ROAMING, config->network_service.cellular.enable_roaming);
+
+    result = json_config_nvs_read_uint8(NVS_KEY_CELLULAR_OPERATOR, &temp_uint8);
+    if (result == AICAM_OK)
+        config->network_service.cellular.operator = temp_uint8;
+    else
+        json_config_nvs_write_uint8(NVS_KEY_CELLULAR_OPERATOR, config->network_service.cellular.operator);
 
     // Load PoE configuration
     result = json_config_load_poe_config_from_nvs(&config->network_service.poe);

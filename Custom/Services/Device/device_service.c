@@ -61,6 +61,9 @@ typedef struct {
     light_config_t light_config;
     aicam_bool_t light_initialized;
     
+    // ISP management
+    isp_config_t isp_config;
+    
     // LED management
     device_t *led_device;
     led_config_t led_config;
@@ -252,6 +255,9 @@ static void init_default_camera_config(camera_config_t *config)
     config->width = 1280;
     config->height = 720;
     config->fps = 30;
+    config->image_config.fast_capture_resolution = 0;
+    config->image_config.fast_capture_jpeg_quality = 60;
+    config->image_config.fast_capture_skip_frames = 10;
     
     // get image config from json_config_mgr
     image_config_t image_config;
@@ -261,16 +267,27 @@ static void init_default_camera_config(camera_config_t *config)
         return;
     }
     
-    // update image config  
+    // update image config
     config->image_config.brightness = image_config.brightness;
     config->image_config.contrast = image_config.contrast;
     config->image_config.horizontal_flip = image_config.horizontal_flip;
     config->image_config.vertical_flip = image_config.vertical_flip;
     config->image_config.aec = image_config.aec;
     config->image_config.startup_skip_frames = image_config.startup_skip_frames;
+    config->image_config.fast_capture_skip_frames = image_config.fast_capture_skip_frames;
+    config->image_config.fast_capture_resolution = image_config.fast_capture_resolution;
+    config->image_config.fast_capture_jpeg_quality = image_config.fast_capture_jpeg_quality;
 
-    LOG_SVC_DEBUG("Image configuration updated: brightness=%u, contrast=%u, horizontal_flip=%d, vertical_flip=%d, aec=%d, startup_skip_frames=%u",
-                config->image_config.brightness, config->image_config.contrast, config->image_config.horizontal_flip, config->image_config.vertical_flip, config->image_config.aec, config->image_config.startup_skip_frames);
+    LOG_SVC_DEBUG("Image configuration updated: brightness=%u, contrast=%u, h_flip=%d, v_flip=%d, aec=%d, startup_skip=%u, fast_skip=%u, fast_res=%u, fast_jpeg_q=%u",
+                config->image_config.brightness,
+                config->image_config.contrast,
+                config->image_config.horizontal_flip,
+                config->image_config.vertical_flip,
+                config->image_config.aec,
+                config->image_config.startup_skip_frames,
+                config->image_config.fast_capture_skip_frames,
+                config->image_config.fast_capture_resolution,
+                config->image_config.fast_capture_jpeg_quality);
 }
 
 /**
@@ -301,6 +318,30 @@ static void init_default_light_config(light_config_t *config)
 
     LOG_SVC_DEBUG("Light configuration updated: connected=%u, mode=%u, start_hour=%u, start_minute=%u, end_hour=%u, end_minute=%u, brightness_level=%u, auto_trigger_enabled=%u, light_threshold=%u",
                 config->connected, config->mode, config->start_hour, config->start_minute, config->end_hour, config->end_minute, config->brightness_level, config->auto_trigger_enabled, config->light_threshold);
+}
+
+/**
+ * @brief Initialize default ISP configuration
+ */
+static void init_default_isp_config(isp_config_t *config)
+{
+    if (!config) return;
+
+    config->valid = AICAM_FALSE;
+
+    // get isp config from json_config_mgr
+    isp_config_t isp_config;
+    aicam_result_t result = json_config_get_isp_config(&isp_config);
+    if (result != AICAM_OK) {
+        LOG_SVC_ERROR("Failed to get ISP configuration: %d", result);
+        return;
+    }
+    
+    // update isp config
+    memcpy(config, &isp_config, sizeof(isp_config_t));
+
+    LOG_SVC_DEBUG("ISP configuration updated: valid=%u, aec_en=%u, awb_en=%u, gamma_en=%u",
+                config->valid, config->aec_enable, config->awb_enable, config->gamma_enable);
 }
 
 /**
@@ -495,7 +536,13 @@ static void update_battery_info(device_info_config_t *info)
 
     battery_device = device_find_pattern(BATTERY_DEVICE_NAME, DEV_TYPE_MISC);
     if (battery_device != NULL) {
-        ret = device_ioctl(battery_device, MISC_CMD_ADC_GET_PERCENT, (uint8_t *)&battery_rate, 0);
+        /* Retry up to 3 times to handle ADC instability after wakeup from sleep */
+        for (int retry = 0; retry < 3; retry++) {
+            ret = device_ioctl(battery_device, MISC_CMD_ADC_GET_PERCENT, (uint8_t *)&battery_rate, 0);
+            if (ret == 0) break;
+            LOG_SVC_WARN("Battery ADC read failed (attempt %d/3), retrying...", retry + 1);
+            osDelay(50);
+        }
         if (ret == 0) {
             info->battery_percent = (float)battery_rate;
             
@@ -512,7 +559,7 @@ static void update_battery_info(device_info_config_t *info)
         } else {
             info->battery_percent = 0.0f;
             snprintf(info->power_supply_type, sizeof(info->power_supply_type), "-");
-            LOG_SVC_WARN("Failed to get battery level from HAL, using default");
+            LOG_SVC_WARN("Failed to get battery level from HAL after retries");
         }
     } else {
         info->battery_percent = 0.0f;
@@ -610,7 +657,7 @@ static void single_press_callback(void *user_data)
     // - If AP is on, LED stays solid
     // - If AP is off, LED stays slow blink
     
-    aicam_result_t result = system_service_capture_and_upload_mqtt(AICAM_TRUE, 0, AICAM_TRUE);
+    aicam_result_t result = system_service_capture_and_upload_mqtt(AICAM_TRUE, 0, AICAM_TRUE, AICAM_CAPTURE_TRIGGER_BUTTON);
     if(result != AICAM_OK){
         LOG_SVC_ERROR("Upload image to mqtt failed :%d\r\n",result);
     }
@@ -682,6 +729,9 @@ aicam_result_t device_service_init(void *config)
     
     // Initialize light configuration
     init_default_light_config(&g_device_service.light_config);
+
+    // Initialize ISP configuration
+    init_default_isp_config(&g_device_service.isp_config);
     
     // Initialize LED configuration
     init_default_led_config(&g_device_service.led_config);
@@ -873,10 +923,12 @@ aicam_result_t device_service_get_info(device_info_config_t *info)
         return AICAM_ERROR_NOT_INITIALIZED;
     }
     
-    // Update dynamic information
+    // Battery info is read directly from HAL, works regardless of running state
+    update_battery_info(&g_device_service.device_info);
+
+    // Update dynamic information (requires full service start)
     if (g_device_service.running) {
         update_storage_info(&g_device_service.storage_info);
-        update_battery_info(&g_device_service.device_info);
         update_device_name(&g_device_service.device_info);
         //device_service_update_device_mac_address();
     }
@@ -1244,6 +1296,16 @@ aicam_result_t device_service_camera_start(void)
                     g_device_service.camera_config.image_config.startup_skip_frames);
     }
 
+    // apply isp config to hardware
+    if (g_device_service.isp_config.valid) {
+        ISP_IQParamTypeDef isp_param = {0};
+        json_config_config_to_isp_param(&g_device_service.isp_config, &isp_param);
+        device_ioctl(g_device_service.camera_device,
+                    CAM_CMD_SET_ISP_PARAM,
+                    (uint8_t *)&isp_param,
+                    sizeof(ISP_IQParamTypeDef));
+    }
+
     aicam_result_t result = device_start(g_device_service.camera_device);
     if (result != AICAM_OK) {
         LOG_SVC_ERROR("Failed to start camera: %d", result);
@@ -1599,6 +1661,7 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
 
     init_default_camera_config(&g_device_service.camera_config);
     init_default_light_config(&g_device_service.light_config);
+    init_default_isp_config(&g_device_service.isp_config);
 
     // 2. Initialize camera device if not already initialized
     if (!g_device_service.camera_initialized || !g_device_service.camera_device) {
@@ -1670,12 +1733,22 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
     if (!g_device_service.camera_config.enabled) {
         // set pipe1 parameters
         pipe_params_t pipe1_param = {0};
-        pipe1_param.width = g_device_service.camera_config.width;
-        pipe1_param.height = g_device_service.camera_config.height;
+        // pipe1_param.width = g_device_service.camera_config.width;
+        // pipe1_param.height = g_device_service.camera_config.height;
+        if (g_device_service.camera_config.image_config.fast_capture_resolution == 1) {
+            pipe1_param.width = 1920;
+            pipe1_param.height = 1080;
+        } else if (g_device_service.camera_config.image_config.fast_capture_resolution == 2) {
+            pipe1_param.width = 2688;
+            pipe1_param.height = 1520;
+        } else {
+            pipe1_param.width = 1280;
+            pipe1_param.height = 720;
+        }
         pipe1_param.fps = g_device_service.camera_config.fps;
         pipe1_param.format = DCMIPP_PIXEL_PACKER_FORMAT_RGB565_1;
         pipe1_param.bpp = 2;
-        pipe1_param.buffer_nb = 3;
+        pipe1_param.buffer_nb = 2;
         ret = device_ioctl(g_device_service.camera_device, CAM_CMD_SET_PIPE1_PARAM, (uint8_t *)&pipe1_param, sizeof(pipe_params_t));
         if (ret != 0) {
             LOG_SVC_ERROR("[FAST] Failed to set pipe1 params: %d, continuing anyway", ret);
@@ -1715,11 +1788,19 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
         }
 
         // Apply startup_skip_frames BEFORE device_start
-        if (g_device_service.camera_config.image_config.startup_skip_frames > 0) {
+        device_ioctl(g_device_service.camera_device,
+            CAM_CMD_SET_STARTUP_SKIP_FRAMES,
+            NULL,
+            g_device_service.camera_config.image_config.fast_capture_skip_frames);
+
+        // apply isp config to hardware
+        if (g_device_service.isp_config.valid) {
+            ISP_IQParamTypeDef isp_param = {0};
+            json_config_config_to_isp_param(&g_device_service.isp_config, &isp_param);
             device_ioctl(g_device_service.camera_device,
-                        CAM_CMD_SET_STARTUP_SKIP_FRAMES,
-                        NULL,
-                        g_device_service.camera_config.image_config.startup_skip_frames);
+                        CAM_CMD_SET_ISP_PARAM,
+                        (uint8_t *)&isp_param,
+                        sizeof(ISP_IQParamTypeDef));
         }
 
         LOG_SVC_INFO("[FAST] Starting camera...");
@@ -1792,7 +1873,7 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
     jpeg_param.ImageWidth = pipe_param.width;
     jpeg_param.ImageHeight = pipe_param.height;
     jpeg_param.ChromaSubsampling = JPEG_420_SUBSAMPLING;
-    jpeg_param.ImageQuality = 60;
+    jpeg_param.ImageQuality = g_device_service.camera_config.image_config.fast_capture_jpeg_quality;
     ret = device_ioctl(g_device_service.jpeg_device, JPEGC_CMD_SET_ENC_PARAM, 
                        (uint8_t *)&jpeg_param, sizeof(jpegc_params_t));
     if (ret != 0)

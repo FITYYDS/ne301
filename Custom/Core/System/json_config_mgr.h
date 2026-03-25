@@ -14,6 +14,7 @@
  #include <stddef.h>
  #include "ms_mqtt_client.h"
  #include "netif_manager.h"
+#include "isp_services.h"
  
  #ifdef __cplusplus
  extern "C" {
@@ -140,6 +141,7 @@ typedef struct {
     char pin_code[16];                      // SIM PIN code
     uint8_t authentication;                 // Authentication type (0=None, 1=PAP, 2=CHAP, 3=Auto)
     aicam_bool_t enable_roaming;            // Enable roaming
+    uint8_t operator;                       // Mobile operator (0=Auto, 1=CMCC, 2=CUCC, 3=CTCC, etc.)
 } cellular_config_persist_t;
 
 /**
@@ -337,7 +339,110 @@ typedef struct {
     aicam_bool_t vertical_flip;              // image vertical flip
     uint32_t aec;                            // image auto exposure control (0=manual, 1=auto)
     uint32_t startup_skip_frames;            // frames to skip on camera startup for stabilization (1-300)
+    uint32_t fast_capture_skip_frames;       // frames to skip for fast capture (number of skipped frames for snapshot capture)
+    uint32_t fast_capture_resolution;       // 0: 1280x720, 1: 1920x1080, 2: 2688x1520
+    uint32_t fast_capture_jpeg_quality;     // fast capture JPEG encoding quality (0-100)
 } image_config_t;
+
+/**
+ * @brief ISP (Image Signal Processor) configuration for persistent storage
+ * @note Contains key ISP parameters that can be saved and restored
+ * @note Matches ISP_IQParamTypeDef structure from STM32 ISP Library
+ */
+
+#define ISP_AWB_PROFILES_MAX        5    // ISP_AWB_COLORTEMP_REF
+#define ISP_AWB_LABEL_MAX_LEN       32   // ISP_AWB_PROFILE_ID_MAX_LENGTH
+
+typedef struct {
+    aicam_bool_t valid;                      // Configuration validity flag
+
+    // StatRemoval
+    aicam_bool_t stat_removal_enable;
+    uint32_t stat_removal_head_lines;        // 0-7
+    uint32_t stat_removal_valid_lines;       // 0-4094
+
+    // Demosaicing
+    aicam_bool_t demosaic_enable;
+    uint8_t demosaic_type;                   // Bayer pattern (0-4)
+    uint8_t demosaic_peak;                   // 0-7
+    uint8_t demosaic_line_v;                 // 0-7
+    uint8_t demosaic_line_h;                 // 0-7
+    uint8_t demosaic_edge;                   // 0-7
+
+    // Contrast
+    aicam_bool_t contrast_enable;
+    uint32_t contrast_lut[9];                // LUM_0 to LUM_256 (0-394)
+
+    // StatArea
+    uint32_t stat_area_x;
+    uint32_t stat_area_y;
+    uint32_t stat_area_width;
+    uint32_t stat_area_height;
+
+    // SensorGain (static, when AEC disabled)
+    uint32_t sensor_gain;                    // in mdB
+
+    // SensorExposure (static, when AEC disabled)
+    uint32_t sensor_exposure;                // in microseconds
+
+    // BadPixelAlgo
+    aicam_bool_t bad_pixel_algo_enable;
+    uint32_t bad_pixel_algo_threshold;
+
+    // BadPixelStatic
+    aicam_bool_t bad_pixel_enable;
+    uint8_t bad_pixel_strength;              // 0-7
+
+    // BlackLevel
+    aicam_bool_t black_level_enable;
+    uint8_t black_level_r;                   // 0-255
+    uint8_t black_level_g;                   // 0-255
+    uint8_t black_level_b;                   // 0-255
+
+    // AEC Algo
+    aicam_bool_t aec_enable;
+    int32_t aec_exposure_compensation;       // -4 to +4 EV
+    uint32_t aec_anti_flicker_freq;          // 0, 50, 60
+
+    // AWB Algo (complete 5 profiles)
+    aicam_bool_t awb_enable;
+    char awb_label[ISP_AWB_PROFILES_MAX][ISP_AWB_LABEL_MAX_LEN];
+    uint32_t awb_ref_color_temp[ISP_AWB_PROFILES_MAX];
+    uint32_t awb_gain_r[ISP_AWB_PROFILES_MAX];
+    uint32_t awb_gain_g[ISP_AWB_PROFILES_MAX];
+    uint32_t awb_gain_b[ISP_AWB_PROFILES_MAX];
+    int32_t awb_ccm[ISP_AWB_PROFILES_MAX][3][3];  // Color Conversion Matrix
+    uint8_t awb_ref_rgb[ISP_AWB_PROFILES_MAX][3];
+
+    // ISP Gain (static, when AWB disabled)
+    aicam_bool_t isp_gain_enable;
+    uint32_t isp_gain_r;                     // 100000000 = 1.0x
+    uint32_t isp_gain_g;
+    uint32_t isp_gain_b;
+
+    // Color Conversion (static, when AWB disabled)
+    aicam_bool_t color_conv_enable;
+    int32_t color_conv_matrix[3][3];         // 100000000 = 1.0x
+
+    // Gamma
+    aicam_bool_t gamma_enable;
+
+    // Sensor Delay
+    uint8_t sensor_delay;                    // frames
+
+    // Lux Reference (for lux estimation calibration)
+    uint32_t lux_hl_ref;                     // High lux reference
+    uint32_t lux_hl_expo1;
+    uint8_t lux_hl_lum1;
+    uint32_t lux_hl_expo2;
+    uint8_t lux_hl_lum2;
+    uint32_t lux_ll_ref;                     // Low lux reference
+    uint32_t lux_ll_expo1;
+    uint8_t lux_ll_lum1;
+    uint32_t lux_ll_expo2;
+    uint8_t lux_ll_lum2;
+    float lux_calib_factor;
+} isp_config_t;
 
 /**
  * @brief Light working modes
@@ -367,6 +472,7 @@ typedef struct {
 typedef struct {
     image_config_t image_config;
     light_config_t light_config;
+    isp_config_t isp_config;
 } device_service_config_t;
 
 typedef struct {
@@ -715,6 +821,36 @@ aicam_result_t json_config_get_device_service_light_config(light_config_t *light
  * @return aicam_result_t Operation result
  */
 aicam_result_t json_config_set_device_service_light_config(const light_config_t *light_config);
+
+/**
+ * @brief Get ISP configuration
+ * @param isp_config ISP configuration structure pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_get_isp_config(isp_config_t *isp_config);
+
+/**
+ * @brief Set ISP configuration
+ * @param isp_config ISP configuration structure pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_set_isp_config(const isp_config_t *isp_config);
+
+/**
+ * @brief Convert ISP parameter to ISP configuration
+ * @param isp_param ISP parameter structure pointer
+ * @param isp_config ISP configuration structure pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_isp_param_to_config(ISP_IQParamTypeDef *isp_param, isp_config_t *isp_config);
+
+/**
+ * @brief Convert ISP configuration to ISP parameter
+ * @param isp_config ISP configuration structure pointer
+ * @param isp_param ISP parameter structure pointer
+ * @return aicam_result_t Operation result
+ */
+aicam_result_t json_config_config_to_isp_param(isp_config_t *isp_config, ISP_IQParamTypeDef *isp_param);
 
 /* ==================== PoE Configuration API ==================== */
 

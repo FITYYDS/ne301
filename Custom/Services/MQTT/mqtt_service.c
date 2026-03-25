@@ -3158,6 +3158,19 @@ static cJSON *create_metadata_json(const mqtt_image_metadata_t *metadata)
     cJSON_AddNumberToObject(meta, "height", metadata->height);
     cJSON_AddNumberToObject(meta, "size", metadata->size);
     cJSON_AddNumberToObject(meta, "quality", metadata->quality);
+
+    const char *trigger_str = "unknown";
+    switch (metadata->trigger_type) {
+        case AICAM_CAPTURE_TRIGGER_RTC:      trigger_str = "rtc";      break;
+        case AICAM_CAPTURE_TRIGGER_PIR:      trigger_str = "pir";      break;
+        case AICAM_CAPTURE_TRIGGER_WEB:      trigger_str = "web";      break;
+        case AICAM_CAPTURE_TRIGGER_REMOTE:   trigger_str = "remote";   break;
+        case AICAM_CAPTURE_TRIGGER_GPIO:     trigger_str = "gpio";     break;
+        case AICAM_CAPTURE_TRIGGER_BUTTON:   trigger_str = "button";   break;
+        case AICAM_CAPTURE_TRIGGER_SCHEDULE: trigger_str = "schedule"; break;
+        default:                             trigger_str = "unknown";  break;
+    }
+    cJSON_AddStringToObject(meta, "trigger_type", trigger_str);
     
     return meta;
 }
@@ -3758,7 +3771,8 @@ aicam_result_t mqtt_service_execute_control_cmd(const mqtt_control_cmd_t *cmd)
             result = system_service_capture_and_upload_mqtt(
                 cmd->params.capture.enable_ai,
                 cmd->params.capture.chunk_size,
-                cmd->params.capture.store_to_sd
+                cmd->params.capture.store_to_sd,
+                AICAM_CAPTURE_TRIGGER_REMOTE
             );
             
             if (result != AICAM_OK) {

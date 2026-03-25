@@ -1061,6 +1061,7 @@ static aicam_result_t mqtt_capture_handler(http_handler_context_t* ctx)
     req.chunk_size = chunk_size;
     req.store_to_sd = store_to_sd;
     req.fast_fail_mqtt = AICAM_TRUE;
+    req.trigger_type = AICAM_CAPTURE_TRIGGER_WEB;
 
     result = system_service_capture_request(&req, &resp);
 
