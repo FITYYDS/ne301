@@ -1,4 +1,4 @@
-# NE301 - STM32N6570 AI Vision Camera
+<img width="660" height="309" alt="image" src="https://github.com/user-attachments/assets/6e4ec6f5-235c-4683-abea-4294b2227351" /><img width="674" height="313" alt="image" src="https://github.com/user-attachments/assets/aa226230-013a-4bd7-9bcc-c27e3bcfa6f7" /># NE301 - STM32N6570 AI Vision Camera
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![Platform](https://img.shields.io/badge/platform-STM32N6570-blue)]()
@@ -141,24 +141,24 @@ The mainboard contains two MCUs： **stm32n6** and **stm32u0**
 #### Ready for Flashing `apps`, `web`, or `models` to **stm32n6**
 1. Turn on the dip switch 2 on the board to enter the flash mode.***(After the flash is completed, please turn it off and power it back on or reset it to enter the running mode)*** 
 
-![alt text](https://resources.camthink.ai/wiki/img/NE301_N6_FLASH_1.png)
+![alt text](https://resources.camthink.ai/wiki/img/neoeyes-ne301-series/NE300-MB01-development-board/software-guide/system-flashing-and-initialization/flash-mode.png)
 
 2. Connect ST Link to the DEBUG port on the board using a 4P adapter cable and connect ST Link to the computer.
 
-![alt text](https://resources.camthink.ai/wiki/img/NE301_N6_FLASH_2.png)
+![alt text](https://resources.camthink.ai/wiki/img/neoeyes-ne301-series/NE300-MB01-development-board/software-guide/system-flashing-and-initialization/st-link.png)
 
 3. Connect the board to a computer or adapter using a type-c USB cable, and the onboard DEBUG indicator light will remain on, indicating that it has entered the flash mode.
 
-![alt text](https://resources.camthink.ai/wiki/img/NE301_N6_FLASH_3.png)
+![alt text](https://resources.camthink.ai/wiki/img/neoeyes-ne301-series/NE300-MB01-development-board/software-guide/system-flashing-and-initialization/type-c.png)
 
 #### Ready for Flashing `wakecore` to **stm32u0**
 1. Connect ST-LINK to STM32U0 chip using 3P DuPont wire and connect ST-LINK to computer.
 
-![alt text](https://resources.camthink.ai/wiki/img/NE301_U0_FLASH_1.png)
+![alt text](https://resources.camthink.ai/wiki/img/neoeyes-ne301-series/NE300-MB01-development-board/software-guide/system-flashing-and-initialization/u0.png)
 
 2. Connect the board to a computer or adapter using a type-c USB cable.
 
-![alt text](https://resources.camthink.ai/wiki/img/NE301_U0_FLASH_2.png)
+![alt text](https://resources.camthink.ai/wiki/img/neoeyes-ne301-series/NE300-MB01-development-board/software-guide/system-flashing-and-initialization/connect.png)
 
 ### Build
 
@@ -180,6 +180,7 @@ make info                   # help
   ne301_App_signed_pkg.bin    --> use for stm32n6 App         --> flash addr 0x70100000
   ne301_Web_pkg.bin           --> use for web gui             --> flash addr 0x70400000
   ne301_Model_pkg.bin         --> use for AI model            --> flash addr 0x70900000
+  # Connect ST Link to U0 first, then execute
   ne301_WakeCore.bin          --> use for stm32u0 wakecore    --> flash addr 0x08000000 
 ```
 2. Flash tools supported
@@ -200,6 +201,7 @@ Script/maker.sh flash <bin-name> <flash-addr>
   make flash-app
   make flash-web
   make flash-model
+  # Connect ST Link to U0 first, then execute
   make flash-wakecore
 ```
 
@@ -215,4 +217,4 @@ Please see the full terms in [LICENSE](./LICENSE)
 
 **Development Team:** CamThink AI Camera Team  
 **Contact:** zbing@camthink.ai  
-**Last Updated:** 2025-10-21
+**Last Updated:** 2026-03-30
