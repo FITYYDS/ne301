@@ -609,6 +609,7 @@ static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeu
             break;
             
         case WAKEUP_SOURCE_BUTTON:
+        case WAKEUP_SOURCE_PIR:
             // Short press - Take photo, LED slow blink (AP off state)
             LOG_SVC_INFO("Button short press - taking photo");
             // Set LED to slow blink (system running, AP may be off)
@@ -617,7 +618,11 @@ static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeu
             
             // Execute capture callback
             if (controller->capture_callback) {
-                controller->capture_callback(CAPTURE_TRIGGER_BUTTON, controller->capture_callback_user_data);
+                if (source == WAKEUP_SOURCE_BUTTON) {
+                    controller->capture_callback(CAPTURE_TRIGGER_BUTTON, controller->capture_callback_user_data);
+                } else if (source == WAKEUP_SOURCE_PIR) {
+                    controller->capture_callback(CAPTURE_TRIGGER_PIR, controller->capture_callback_user_data);
+                }
             }
             break;
             
