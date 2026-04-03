@@ -1883,7 +1883,7 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
     }
 
     uint64_t get_fb_time = rtc_get_uptime_ms();
-    printf("prepare photo time %lu ms\r\n", (unsigned long)(get_fb_time - start_time));
+    printf("prepare photo time %lu / %lu ms\r\n", (unsigned long)(get_fb_time - start_time), (unsigned long)get_fb_time);
 
     // 9. Get frame buffer with frame ID (same as device_service_camera_capture)
     uint32_t captured_frame_id = 0;
@@ -1911,7 +1911,8 @@ aicam_result_t device_service_camera_capture_fast(uint8_t **buffer, int *out_len
         *frame_id = captured_frame_id;
     }
     
-    printf("camera photo time %lu ms\r\n", (unsigned long)rtc_get_uptime_ms());
+    uint64_t take_photo_time = rtc_get_uptime_ms();
+    printf("camera photo time %lu / %lu ms\r\n", (unsigned long)(take_photo_time - get_fb_time), (unsigned long)take_photo_time);
 
     // Get pipe2 buffer for AI inference (only if needed)
     if (need_ai_inference)
