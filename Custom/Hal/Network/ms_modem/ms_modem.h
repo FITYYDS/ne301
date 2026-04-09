@@ -27,6 +27,16 @@ typedef enum
     MODEM_STATE_MAX,
 } modem_state_t;
 
+/// @brief MODEM OPERATOR
+typedef enum {
+    MODEM_OPERATOR_AUTO = 0,
+    MODEM_OPERATOR_CHINA_MOBILE,
+    MODEM_OPERATOR_CHINA_UNICOM,
+    MODEM_OPERATOR_CHINA_TELECOM,
+    MODEM_OPERATOR_AMERICAN_VERIZON,
+    MODEM_OPERATOR_UNKNOWN,
+} modem_operator_t;
+
 #pragma pack(push, 1)
 /// @brief MODEM device status information
 typedef struct {
@@ -49,13 +59,17 @@ typedef struct {
 } modem_info_t;
 /// @brief MODEM configuration parameters
 typedef struct {
-    char apn[32];                           // APN (Access Point Name)
-    char user[64];                          // APN username
-    char passwd[64];                        // APN password
-    uint8_t authentication;                 // APN authentication
-    uint8_t is_enable_roam;                 // Enable roaming
-    char pin[32];                           // SIM PIN
-    char puk[32];                           // SIM PUK
+    char apn[32];                       // APN (Access Point Name)
+    char user[64];                      // APN username
+    char passwd[64];                    // APN password
+    uint8_t apn_context_id;             // APN context ID (read only) (0: Auto, others: specified)
+    uint8_t authentication;             // APN authentication
+    uint8_t is_enable_roam;             // Enable roaming
+    uint8_t isp_selected;               // ISP selected (0: Auto, 1: China Mobile, 2: China Unicom, 3: China Telecom, 4: American Verizon)
+    char pin[32];                       // SIM PIN
+    char puk[32];                       // SIM PUK
+    uint8_t ppp_context_id;             // PPP context ID (0: Auto, others: specified)
+    char ppp_pre_at_cmds[8][64];       // PPP pre-AT command list (8 commands, 64 characters each)
 } modem_config_t;
 #pragma pack(pop)
 
@@ -76,6 +90,7 @@ int modem_device_exit_ppp(uint8_t is_focre);
 int modem_net_ppp_send(uint8_t *p_data, uint16_t len, uint32_t timeout);
 int modem_device_check_and_enable_ecm(void);
 modem_state_t modem_device_get_state(void);
+modem_operator_t modem_device_get_operator(void);
 
 void modem_device_register(void);
 

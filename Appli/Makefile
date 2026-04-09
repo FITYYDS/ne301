@@ -34,7 +34,7 @@ C_SOURCES += Core/Src/stm32n6xx_hal_timebase_tim.c
 C_SOURCES += Core/Src/system_stm32n6xx_s.c
 C_SOURCES += $(wildcard Core/Src/adc.c Core/Src/cacheaxi.c Core/Src/csi.c)
 C_SOURCES += $(wildcard Core/Src/dma2d.c Core/Src/gpdma.c Core/Src/gpio.c)
-C_SOURCES += $(wildcard Core/Src/hpdma.c Core/Src/i2c.c Core/Src/icache.c)
+C_SOURCES += $(wildcard Core/Src/hpdma.c Core/Src/i2c.c Core/Src/i2s.c Core/Src/icache.c)
 C_SOURCES += $(wildcard Core/Src/iwdg.c Core/Src/jpeg.c Core/Src/ramcfg.c)
 C_SOURCES += $(wildcard Core/Src/rng.c Core/Src/rtc.c Core/Src/sai.c)
 C_SOURCES += $(wildcard Core/Src/sdmmc.c Core/Src/spi.c Core/Src/tim.c)
@@ -113,10 +113,30 @@ C_SOURCES += ../Custom/Hal/u0_module.c
 C_SOURCES += ../Custom/Hal/usbx_host.c
 C_SOURCES += ../Custom/Hal/usb_host_video.c
 C_SOURCES += ../Custom/Hal/usb_host_ecm.c
-C_SOURCES += ../Custom/Hal/uvc.c
 C_SOURCES += ../Custom/Hal/wdg.c
 C_SOURCES += ../Custom/Hal/wifi.c
-C_SOURCES += ../Custom/Hal/usbd_conf.c
+
+# Custom - Hal/SensorExt
+C_SOURCES += ../Custom/Hal/SensorExt/i2c_driver/i2c_driver.c
+C_SOURCES += ../Custom/Hal/SensorExt/i2c_tool/i2c_tool.c
+C_SOURCES += ../Custom/Hal/SensorExt/tft_st7789v/tft_st7789vw.c
+C_SOURCES += ../Custom/Hal/SensorExt/sensor_exemple/sensor_exemple.c
+C_SOURCES += ../Custom/Hal/SensorExt/ltr_31x/ltr_31x.c
+C_SOURCES += ../Custom/Hal/SensorExt/sht3x/sht3x.c
+C_SOURCES += ../Custom/Hal/SensorExt/vl53l1x/vl53l1x.c
+C_SOURCES += ../Custom/Hal/SensorExt/vl53l1x/vl53l1x_platform.c
+C_SOURCES += ../Custom/Hal/SensorExt/vl53l1x/API/core/VL53L1X_api.c
+C_SOURCES += ../Custom/Hal/SensorExt/lsm6dsr/lsm6dsr.c
+C_SOURCES += ../Custom/Hal/SensorExt/lsm6dsr/lsm6dsr_platform.c
+C_SOURCES += ../Custom/Hal/SensorExt/lsm6dsr/lsm6dsr_reg.c
+C_SOURCES += ../Custom/Hal/SensorExt/mlx90642/mlx90642_dev.c
+C_SOURCES += ../Custom/Hal/SensorExt/mlx90642/MLX90642_depends.c
+C_SOURCES += ../Custom/Hal/SensorExt/mlx90642/mlx90642-library/src/MLX90642.c
+C_SOURCES += ../Custom/Hal/SensorExt/dts6012m/dts6012m.c
+C_SOURCES += ../Custom/Hal/SensorExt/nau881x/nau881x.c
+C_SOURCES += ../Custom/Hal/SensorExt/nau881x/nau881x_dev.c
+C_SOURCES += ../Custom/Hal/SensorExt/nau881x/nau881x_cmd.c
+C_SOURCES += ../Custom/Hal/SensorExt/nau881x/nau881x_audio.c
 
 # Custom - Hal/Network
 C_SOURCES += ../Custom/Hal/Network/dhcpserver/dhcpserver.c
@@ -174,6 +194,7 @@ C_SOURCES += ../Custom/Services/Web/api/api_rtmp_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_preview_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_work_mode_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_business_error.c
+C_SOURCES += ../Custom/Services/Web/api/api_isp_module.c
 
 
 # Custom - Common/Inc
@@ -199,7 +220,6 @@ C_SOURCES += ../Custom/Common/Lib/littlefs/bd/lfs_filebd.c
 C_SOURCES += ../Custom/Common/Lib/littlefs/bd/lfs_rambd.c
 C_SOURCES += ../Custom/Common/Lib/mongoose/mongoose.c
 C_SOURCES += ../Custom/Common/Lib/mpool/mpool.c
-C_SOURCES += ../Custom/Common/Lib/nau881x/nau881x.c
 C_SOURCES += ../Custom/Common/Lib/nvs/nvs.c
 
 # Custom - Common/Lib/pp
@@ -334,11 +354,13 @@ C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/Src/isp_cmd_parser.c
 C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/Src/isp_core.c
 C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/Src/isp_services.c
 C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/Src/isp_tool_com.c
+C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/Src/isp_ae_algo.c
+C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/Src/isp_awb_algo.c
 
-# Middlewares - ISP Library USB Device (for ISP tuning tool)
-C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Src/usb_device.c
-C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Src/usbd_cdc_if.c
-C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Src/usbd_desc.c
+# Middlewares - ISP Library USB Device (for ISP tuning tool, disabled – relies on USBD)
+# C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Src/usb_device.c
+# C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Src/usbd_cdc_if.c
+# C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Src/usbd_desc.c
 
 # Middlewares - ThreadX (based on .project linked files)
 C_SOURCES += ../Middlewares/ST/threadx/common/src/tx_block_allocate.c
@@ -451,11 +473,6 @@ C_SOURCES += ../Middlewares/ST/cmsis_rtos_threadx/cmsis_os2.c
 C_SOURCES += $(wildcard ../Middlewares/ST/threadx/common/src/txe_*.c)
 C_SOURCES += ../Middlewares/ST/threadx/ports/cortex_M55/gnu/src/txe_thread_secure_stack_free.c
 
-# Middlewares - UVCL (USB Video Class Library)
-C_SOURCES += ../Middlewares/ST/uvcl/Src/uvcl.c
-C_SOURCES += ../Middlewares/ST/uvcl/Src/uvcl_desc.c
-C_SOURCES += ../Middlewares/ST/uvcl/Src/usbx/uvcl_usbx.c
-
 # Middlewares - USBX Core System
 C_SOURCES += $(wildcard ../Middlewares/ST/usbx/common/core/src/ux_system_*.c)
 C_SOURCES += $(wildcard ../Middlewares/ST/usbx/common/core/src/ux_utility_*.c)
@@ -480,12 +497,6 @@ C_SOURCES += $(wildcard ../Middlewares/ST/usbx/common/usbx_stm32_host_controller
 
 # Middlewares - USBX Host CoreStack
 C_SOURCES += $(wildcard ../Middlewares/ST/usbx/common/core/src/ux_host_stack_*.c)
-
-# Middlewares - STM32 USB Device Library (for ISP tuning tool)
-C_SOURCES += ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c
-C_SOURCES += ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ctlreq.c
-C_SOURCES += ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ioreq.c
-C_SOURCES += $(wildcard ../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src/*.c)
 
 # Middlewares - FileX
 C_SOURCES += ../Middlewares/ST/filex/common/drivers/fx_stm32_sd_driver.c
@@ -551,6 +562,8 @@ C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_sdio.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_sdmmc.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_spi.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_spi_ex.c
+C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_i2s.c
+C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_i2s_ex.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_tim.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_tim_ex.c
 C_SOURCES += ../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_wwdg.c
@@ -636,8 +649,6 @@ C_DEFS += -DFX_ENABLE_EXFAT=1
 
 # USBX
 C_DEFS += -DUX_INCLUDE_USER_DEFINE_FILE
-C_DEFS += -DUVC_LIB_USE_USBX
-C_DEFS += -DUVC_LIB_USE_DMA
 C_DEFS += -DUSBL_PACKET_PER_MICRO_FRAME=3
 C_DEFS += -DUX_HOST_CLASS_NETWORK_NO_NX
 
@@ -675,6 +686,17 @@ C_DEFS += -DSPI_EXTENDED_TX_LEN_2K
 # C_DEFS += -DSLI_SI91X_SIMULATION_C1C2_ERROR
 
 ######################################
+# ISP Tuning Tool / USBX Integration
+######################################
+ifneq ($(findstring -DISP_MW_TUNING_TOOL_SUPPORT,$(C_DEFS)),)
+ C_DEFS += -DUSBX_USE_DMA
+ C_DEFS += -DISP_ENABLE_UVC
+ C_SOURCES += ../Custom/Hal/usbx/usbx_conf/usbx_conf.c
+ C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/usbx/Src/usbx.c
+ C_SOURCES += ../Middlewares/ST/STM32_ISP_Library/isp/usbx/Src/usb_desc.c
+endif
+
+######################################
 # Assembly-specific Defines
 ######################################
 AS_DEFS =
@@ -690,10 +712,8 @@ AS_DEFS += -DTX_HAS_PARALLEL_NETWORKS=0
 AS_DEFS += -DTX_SINGLE_MODE_SECURE=1
 AS_DEFS += -DFEAT_THREADX
 AS_DEFS += -DTX_INCLUDE_USER_DEFINE_FILE
-AS_DEFS += -DUVC_LIB_USE_USBX
 AS_DEFS += -DUX_INCLUDE_USER_DEFINE_FILE
 AS_DEFS += -DUSBL_PACKET_PER_MICRO_FRAME=3
-AS_DEFS += -DUVC_LIB_USE_DMA
 AS_DEFS += -DTX_LOW_POWER
 AS_DEFS += -DTX_ENABLE_EXECUTION_CHANGE_NOTIFY
 
@@ -741,6 +761,14 @@ C_INCLUDES += -I../Custom/Core/Video
 
 # Custom - HAL
 C_INCLUDES += -I../Custom/Hal
+C_INCLUDES += -I../Custom/Hal/SensorExt/vl53l1x
+C_INCLUDES += -I../Custom/Hal/SensorExt/vl53l1x/API/platform
+C_INCLUDES += -I../Custom/Hal/SensorExt/vl53l1x/API/core
+C_INCLUDES += -I../Custom/Hal/SensorExt/lsm6dsr
+C_INCLUDES += -I../Custom/Hal/SensorExt/mlx90642
+C_INCLUDES += -I../Custom/Hal/SensorExt/mlx90642/mlx90642-library/inc
+C_INCLUDES += -I../Custom/Hal/SensorExt/dts6012m
+C_INCLUDES += -I../Custom/Hal/SensorExt/nau881x
 C_INCLUDES += -I../Custom/Hal/Network/dhcpserver
 C_INCLUDES += -I../Custom/Hal/Network/icmp_client
 C_INCLUDES += -I../Custom/Hal/Network/iperf_test
@@ -784,7 +812,6 @@ C_INCLUDES += -I../Custom/Common/Lib/MbedTLS/library
 C_INCLUDES += -I../Custom/Common/Lib/MbedTLS/port
 C_INCLUDES += -I../Custom/Common/Lib/mongoose
 C_INCLUDES += -I../Custom/Common/Lib/mpool
-C_INCLUDES += -I../Custom/Common/Lib/nau881x
 C_INCLUDES += -I../Custom/Common/Lib/nvs
 C_INCLUDES += -I../Custom/Common/Lib/PahoMqtt
 C_INCLUDES += -I../Custom/Common/Lib/pp
@@ -822,9 +849,18 @@ C_INCLUDES += -I../Middlewares/ST/STM32_Camera_Middleware
 C_INCLUDES += -I../Middlewares/ST/STM32_Camera_Middleware/sensors
 C_INCLUDES += -I../Middlewares/ST/STM32_Camera_Middleware/sensors/imx335
 C_INCLUDES += -I../Middlewares/ST/STM32_Camera_Middleware/sensors/os04c10
-C_INCLUDES += -I../Middlewares/ST/STM32_ISP_Library/evision/Inc
 C_INCLUDES += -I../Middlewares/ST/STM32_ISP_Library/isp/Inc
-C_INCLUDES += -I../Middlewares/ST/STM32_ISP_Library/isp/USB_Device/Inc
+
+# USBX / ISP tuning include paths:
+# - Default: use project-specific USBX config under Custom/Hal/usbx
+# - When ISP_MW_TUNING_TOOL_SUPPORT is enabled: also add ISP's USBX headers and usbx_conf
+ifeq ($(findstring -DISP_MW_TUNING_TOOL_SUPPORT,$(C_DEFS)),)
+ C_INCLUDES += -I../Custom/Hal/usbx
+else
+ C_INCLUDES += -I../Custom/Hal/usbx/usbx_conf
+ C_INCLUDES += -I../Middlewares/ST/STM32_ISP_Library/isp/usbx/Inc
+endif
+
 C_INCLUDES += -I../Middlewares/ST/cmsis_rtos_threadx
 C_INCLUDES += -I../Middlewares/ST/filex/common/inc
 C_INCLUDES += -I../Middlewares/ST/filex/ports/generic/inc
@@ -842,15 +878,6 @@ C_INCLUDES += -I../Middlewares/ST/usbx/common/usbx_network/inc
 C_INCLUDES += -I../Middlewares/ST/usbx/common/usbx_stm32_device_controllers
 C_INCLUDES += -I../Middlewares/ST/usbx/common/usbx_stm32_host_controllers
 C_INCLUDES += -I../Middlewares/ST/usbx/ports/generic/inc
-C_INCLUDES += -I../Middlewares/ST/STM32_USB_Device_Library/Core/Inc
-C_INCLUDES += -I../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
-C_INCLUDES += -I../Middlewares/ST/uvcl
-C_INCLUDES += -I../Middlewares/ST/uvcl/Inc
-C_INCLUDES += -I../Middlewares/ST/uvcl/Inc/usbd
-C_INCLUDES += -I../Middlewares/ST/uvcl/Inc/usbx
-C_INCLUDES += -I../Middlewares/ST/uvcl/Src
-C_INCLUDES += -I../Middlewares/ST/uvcl/Src/usbd
-C_INCLUDES += -I../Middlewares/ST/uvcl/Src/usbx
 C_INCLUDES += -I../Middlewares/ST/VideoEncoder_EWL
 C_INCLUDES += -I../Middlewares/Third_Party/VideoEncoder/source/h264
 
@@ -885,13 +912,10 @@ ASFLAGS += -mcmse
 LDSCRIPT = STM32N657L0HXQ_LRUN.ld
 
 # Libraries (in correct order for linking)
-LIBS = -ln6-evision-st-ae_gcc
-LIBS += -ln6-evision-awb_gcc
-LIBS += -lc -lm -lnosys
+LIBS = -lc -lm -lnosys
 LIBS += -l:NetworkRuntime1100_CM55_GCC.a
 
 LIBDIR =
-LIBDIR += -L../Middlewares/ST/STM32_ISP_Library/evision/Lib
 LIBDIR += -L../Middlewares/ST/stedgeai-lib/Lib/GCC/ARMCortexM55
 
 # Linker flags (inherits COMMON_LDFLAGS from root)

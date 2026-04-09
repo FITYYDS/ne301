@@ -390,6 +390,7 @@ typedef struct {
     uint32_t height;                 // Image height
     uint32_t size;                   // Image data size in bytes
     uint8_t quality;                 // JPEG quality (1-100)
+    aicam_capture_trigger_t trigger_type; // Capture trigger source
 } mqtt_image_metadata_t;
 
 /**

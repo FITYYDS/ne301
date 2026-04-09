@@ -49,6 +49,14 @@ void MX_HPDMA1_Init(void)
     HAL_NVIC_EnableIRQ(HPDMA1_Channel6_IRQn);
     HAL_NVIC_SetPriority(HPDMA1_Channel7_IRQn, 4, 0);
     HAL_NVIC_EnableIRQ(HPDMA1_Channel7_IRQn);
+    HAL_NVIC_SetPriority(HPDMA1_Channel8_IRQn, 3, 0);
+    HAL_NVIC_EnableIRQ(HPDMA1_Channel8_IRQn);
+    HAL_NVIC_SetPriority(HPDMA1_Channel9_IRQn, 4, 0);
+    HAL_NVIC_EnableIRQ(HPDMA1_Channel9_IRQn);
+    HAL_NVIC_SetPriority(HPDMA1_Channel10_IRQn, 3, 0);
+    HAL_NVIC_EnableIRQ(HPDMA1_Channel10_IRQn);
+    HAL_NVIC_SetPriority(HPDMA1_Channel11_IRQn, 4, 0);
+    HAL_NVIC_EnableIRQ(HPDMA1_Channel11_IRQn);
 }
 
 /* USER CODE BEGIN 1 */

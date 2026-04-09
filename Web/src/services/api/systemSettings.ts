@@ -26,6 +26,7 @@ export interface SetCellularReq {
     pin_code?: string;
     authentication?: number;
     enable_roaming?: boolean;
+    operator?: number;
     save?: boolean;
 }
 
@@ -86,7 +87,7 @@ const systemSettings = {
 
     // cellular
     getCellularStatusReq: () => request.get('/api/v1/system/network/cellular/status'),
-    setCellularReq: (data: SetCellularReq) => request.post('/api/v1/system/network/cellular/config', data),
+    setCellularReq: (data: SetCellularReq) => request.post('/api/v1/system/network/cellular/settings', data),
     getCellularInfoReq: () => request.get('/api/v1/system/network/cellular/info'),
     connectCellularReq: () => request.post('/api/v1/system/network/cellular/connect'),
     disconnectCellularReq: () => request.post('/api/v1/system/network/cellular/disconnect'),

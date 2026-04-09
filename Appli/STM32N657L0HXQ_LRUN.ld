@@ -15,8 +15,8 @@ _Min_Stack_Size = 0x1000; /* required amount of stack */
 MEMORY
 {
   AXISRAM1_2_S (xrw)        : ORIGIN = 0x90000400, LENGTH = 2535K
-  SRAM_POOL                 : ORIGIN = 0x34000000, LENGTH = 1863K
-  AXI_SRAM_UNCACHED (xrw)   : ORIGIN = 0x341d2000, LENGTH = 184K
+  SRAM_POOL                 : ORIGIN = 0x34000000, LENGTH = 1735K
+  AXI_SRAM_UNCACHED (xrw)   : ORIGIN = 0x341b2000, LENGTH = 312K
   /* External PSRAM APP_EXT: 0x90800000 ~ 0x93FFFFFF (56MB, see mem_map.h) */
   PSRAM (xrw)               : ORIGIN = 0x90800000, LENGTH = 56M
 }

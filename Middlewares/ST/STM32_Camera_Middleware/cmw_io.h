@@ -25,12 +25,18 @@ extern "C" {
 #endif
 
 /* Sensors parameters */
-#define CAMERA_IMX335_ADDRESS          0x34U
-#define CAMERA_VD66GY_ADDRESS          0x20U
-#define CAMERA_OS04C10_ADDRESS         0x6CU
-#define CAMERA_VD66GY_FREQ_IN_HZ       12000000U
 #define CAMERA_VD55G1_ADDRESS          0x20U
 #define CAMERA_VD55G1_FREQ_IN_HZ       12000000U
+#define CAMERA_VD65G4_ADDRESS          0x20U
+#define CAMERA_VD65G4_FREQ_IN_HZ       12000000U
+#define CAMERA_IMX335_ADDRESS          0x34U
+#define CAMERA_OV5640_ADDRESS          0x78U
+#define CAMERA_VD66GY_ADDRESS          0x20U
+#define CAMERA_VD66GY_FREQ_IN_HZ       12000000U
+#define CAMERA_VD56G3_ADDRESS          0x20U
+#define CAMERA_VD56G3_FREQ_IN_HZ       12000000U
+#define CAMERA_VD1943_ADDRESS          0x20U
+#define CAMERA_OS04C10_ADDRESS         0x6CU
 
 #if defined (STM32N657xx)
 
@@ -48,10 +54,10 @@ extern "C" {
   #define EN_CAM_GPIO_CLK_ENABLE()        __HAL_RCC_GPIOA_CLK_ENABLE()
 #else
 /* Discovery board */
-  #define NRST_CAM_PIN                    GPIO_PIN_8
-  #define NRST_CAM_PORT                   GPIOC
+  #define NRST_CAM_PIN                    GPIO_PIN_9
+  #define NRST_CAM_PORT                   GPIOF
   #define NRST_CAM_GPIO_ENABLE_VDDIO()    HAL_PWREx_EnableVddIO4();
-  #define NRST_CAM_GPIO_CLK_ENABLE()      __HAL_RCC_GPIOC_CLK_ENABLE();
+  #define NRST_CAM_GPIO_CLK_ENABLE()      
 
   #define EN_CAM_PIN                      GPIO_PIN_0
   #define EN_CAM_PORT                     GPIOG
@@ -67,12 +73,11 @@ extern "C" {
   #define CMW_I2C_READREG16 BSP_I2C2_ReadReg16
   #define CMW_I2C_WRITEREG16 BSP_I2C2_WriteReg16
 #else
-
+/* Discovery board */
   #define CMW_I2C_INIT BSP_I2C2_Init
   #define CMW_I2C_DEINIT BSP_I2C2_DeInit
   #define CMW_I2C_READREG16 BSP_I2C2_ReadReg16
   #define CMW_I2C_WRITEREG16 BSP_I2C2_WriteReg16
-
 #endif /* STM32N6570_NUCLEO_REV */
 
 #define CSI2_CLK_ENABLE()               __HAL_RCC_CSI_CLK_ENABLE()

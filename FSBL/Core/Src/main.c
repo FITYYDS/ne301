@@ -213,11 +213,11 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL3.PLLP2 = 2;
   RCC_OscInitStruct.PLL4.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL4.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL4.PLLM = 1;
-  RCC_OscInitStruct.PLL4.PLLN = 24;
+  RCC_OscInitStruct.PLL4.PLLM = 3;
+  RCC_OscInitStruct.PLL4.PLLN = 64;
   RCC_OscInitStruct.PLL4.PLLFractional = 0;
-  RCC_OscInitStruct.PLL4.PLLP1 = 3;
-  RCC_OscInitStruct.PLL4.PLLP2 = 2;
+  RCC_OscInitStruct.PLL4.PLLP1 = 2;
+  RCC_OscInitStruct.PLL4.PLLP2 = 1;
 
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -338,11 +338,11 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL3.PLLP2 = 2;
   RCC_OscInitStruct.PLL4.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL4.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL4.PLLM = 1;
-  RCC_OscInitStruct.PLL4.PLLN = 24;
+  RCC_OscInitStruct.PLL4.PLLM = 3;
+  RCC_OscInitStruct.PLL4.PLLN = 64;
   RCC_OscInitStruct.PLL4.PLLFractional = 0;
-  RCC_OscInitStruct.PLL4.PLLP1 = 3;
-  RCC_OscInitStruct.PLL4.PLLP2 = 2;
+  RCC_OscInitStruct.PLL4.PLLP1 = 2;
+  RCC_OscInitStruct.PLL4.PLLP2 = 1;
 
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -584,11 +584,11 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL3.PLLP2 = 1;
   RCC_OscInitStruct.PLL4.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL4.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL4.PLLM = 1;
-  RCC_OscInitStruct.PLL4.PLLN = 24;
+  RCC_OscInitStruct.PLL4.PLLM = 3;
+  RCC_OscInitStruct.PLL4.PLLN = 64;
   RCC_OscInitStruct.PLL4.PLLFractional = 0;
-  RCC_OscInitStruct.PLL4.PLLP1 = 3;
-  RCC_OscInitStruct.PLL4.PLLP2 = 2;
+  RCC_OscInitStruct.PLL4.PLLP1 = 2;
+  RCC_OscInitStruct.PLL4.PLLP2 = 1;
 
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {

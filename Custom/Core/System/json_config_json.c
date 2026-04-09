@@ -141,6 +141,115 @@ static void parse_auth_mgr(cJSON *json, auth_mgr_config_t *cfg)
     json_get_string(json, "admin_password", cfg->admin_password, sizeof(cfg->admin_password));
 }
 
+static void parse_isp_config(cJSON *json, isp_config_t *cfg)
+{
+    if (!json || !cJSON_IsObject(json) || !cfg)
+        return;
+    json_get_bool(json, "valid", &cfg->valid);
+    json_get_bool(json, "stat_removal_enable", &cfg->stat_removal_enable);
+    json_get_uint32(json, "stat_removal_head_lines", &cfg->stat_removal_head_lines);
+    json_get_uint32(json, "stat_removal_valid_lines", &cfg->stat_removal_valid_lines);
+    json_get_bool(json, "demosaic_enable", &cfg->demosaic_enable);
+    json_get_uint8(json, "demosaic_type", &cfg->demosaic_type);
+    json_get_uint8(json, "demosaic_peak", &cfg->demosaic_peak);
+    json_get_uint8(json, "demosaic_line_v", &cfg->demosaic_line_v);
+    json_get_uint8(json, "demosaic_line_h", &cfg->demosaic_line_h);
+    json_get_uint8(json, "demosaic_edge", &cfg->demosaic_edge);
+    json_get_bool(json, "contrast_enable", &cfg->contrast_enable);
+    cJSON *lut = cJSON_GetObjectItem(json, "contrast_lut");
+    if (cJSON_IsArray(lut) && cJSON_GetArraySize(lut) >= 9) {
+        for (int i = 0; i < 9; i++)
+            cfg->contrast_lut[i] = (uint32_t)cJSON_GetArrayItem(lut, i)->valueint;
+    }
+    json_get_uint32(json, "stat_area_x", &cfg->stat_area_x);
+    json_get_uint32(json, "stat_area_y", &cfg->stat_area_y);
+    json_get_uint32(json, "stat_area_width", &cfg->stat_area_width);
+    json_get_uint32(json, "stat_area_height", &cfg->stat_area_height);
+    json_get_uint32(json, "sensor_gain", &cfg->sensor_gain);
+    json_get_uint32(json, "sensor_exposure", &cfg->sensor_exposure);
+    json_get_bool(json, "bad_pixel_algo_enable", &cfg->bad_pixel_algo_enable);
+    json_get_uint32(json, "bad_pixel_algo_threshold", &cfg->bad_pixel_algo_threshold);
+    json_get_bool(json, "bad_pixel_enable", &cfg->bad_pixel_enable);
+    json_get_uint8(json, "bad_pixel_strength", &cfg->bad_pixel_strength);
+    json_get_bool(json, "black_level_enable", &cfg->black_level_enable);
+    json_get_uint8(json, "black_level_r", &cfg->black_level_r);
+    json_get_uint8(json, "black_level_g", &cfg->black_level_g);
+    json_get_uint8(json, "black_level_b", &cfg->black_level_b);
+    json_get_bool(json, "aec_enable", &cfg->aec_enable);
+    json_get_int32(json, "aec_exposure_compensation", &cfg->aec_exposure_compensation);
+    json_get_uint32(json, "aec_anti_flicker_freq", &cfg->aec_anti_flicker_freq);
+    json_get_bool(json, "awb_enable", &cfg->awb_enable);
+    cJSON *labels = cJSON_GetObjectItem(json, "awb_label");
+    if (cJSON_IsArray(labels) && cJSON_GetArraySize(labels) >= ISP_AWB_PROFILES_MAX) {
+        for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++) {
+            cJSON *el = cJSON_GetArrayItem(labels, i);
+            if (cJSON_IsString(el) && el->valuestring) {
+                strncpy(cfg->awb_label[i], el->valuestring, ISP_AWB_LABEL_MAX_LEN - 1);
+                cfg->awb_label[i][ISP_AWB_LABEL_MAX_LEN - 1] = '\0';
+            }
+        }
+    }
+    cJSON *ref_ct = cJSON_GetObjectItem(json, "awb_ref_color_temp");
+    if (cJSON_IsArray(ref_ct) && cJSON_GetArraySize(ref_ct) >= ISP_AWB_PROFILES_MAX) {
+        for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++)
+            cfg->awb_ref_color_temp[i] = (uint32_t)cJSON_GetArrayItem(ref_ct, i)->valueint;
+    }
+    cJSON *gr = cJSON_GetObjectItem(json, "awb_gain_r");
+    cJSON *gg = cJSON_GetObjectItem(json, "awb_gain_g");
+    cJSON *gb = cJSON_GetObjectItem(json, "awb_gain_b");
+    if (cJSON_IsArray(gr) && cJSON_IsArray(gg) && cJSON_IsArray(gb)) {
+        for (int i = 0; i < ISP_AWB_PROFILES_MAX && i < cJSON_GetArraySize(gr) && i < cJSON_GetArraySize(gg) && i < cJSON_GetArraySize(gb); i++) {
+            cfg->awb_gain_r[i] = (uint32_t)cJSON_GetArrayItem(gr, i)->valueint;
+            cfg->awb_gain_g[i] = (uint32_t)cJSON_GetArrayItem(gg, i)->valueint;
+            cfg->awb_gain_b[i] = (uint32_t)cJSON_GetArrayItem(gb, i)->valueint;
+        }
+    }
+    cJSON *ccm = cJSON_GetObjectItem(json, "awb_ccm");
+    if (cJSON_IsArray(ccm) && cJSON_GetArraySize(ccm) >= ISP_AWB_PROFILES_MAX) {
+        for (int p = 0; p < ISP_AWB_PROFILES_MAX; p++) {
+            cJSON *row = cJSON_GetArrayItem(ccm, p);
+            if (cJSON_IsArray(row) && cJSON_GetArraySize(row) >= 9) {
+                for (int i = 0; i < 9; i++)
+                    cfg->awb_ccm[p][i / 3][i % 3] = (int32_t)cJSON_GetArrayItem(row, i)->valueint;
+            }
+        }
+    }
+    cJSON *ref_rgb = cJSON_GetObjectItem(json, "awb_ref_rgb");
+    if (cJSON_IsArray(ref_rgb) && cJSON_GetArraySize(ref_rgb) >= ISP_AWB_PROFILES_MAX) {
+        for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++) {
+            cJSON *rgb = cJSON_GetArrayItem(ref_rgb, i);
+            if (cJSON_IsArray(rgb) && cJSON_GetArraySize(rgb) >= 3) {
+                cfg->awb_ref_rgb[i][0] = (uint8_t)cJSON_GetArrayItem(rgb, 0)->valueint;
+                cfg->awb_ref_rgb[i][1] = (uint8_t)cJSON_GetArrayItem(rgb, 1)->valueint;
+                cfg->awb_ref_rgb[i][2] = (uint8_t)cJSON_GetArrayItem(rgb, 2)->valueint;
+            }
+        }
+    }
+    json_get_bool(json, "isp_gain_enable", &cfg->isp_gain_enable);
+    json_get_uint32(json, "isp_gain_r", &cfg->isp_gain_r);
+    json_get_uint32(json, "isp_gain_g", &cfg->isp_gain_g);
+    json_get_uint32(json, "isp_gain_b", &cfg->isp_gain_b);
+    json_get_bool(json, "color_conv_enable", &cfg->color_conv_enable);
+    cJSON *cc = cJSON_GetObjectItem(json, "color_conv_matrix");
+    if (cJSON_IsArray(cc) && cJSON_GetArraySize(cc) >= 9) {
+        for (int i = 0; i < 9; i++)
+            cfg->color_conv_matrix[i / 3][i % 3] = (int32_t)cJSON_GetArrayItem(cc, i)->valueint;
+    }
+    json_get_bool(json, "gamma_enable", &cfg->gamma_enable);
+    json_get_uint8(json, "sensor_delay", &cfg->sensor_delay);
+    json_get_uint32(json, "lux_hl_ref", &cfg->lux_hl_ref);
+    json_get_uint32(json, "lux_hl_expo1", &cfg->lux_hl_expo1);
+    json_get_uint8(json, "lux_hl_lum1", &cfg->lux_hl_lum1);
+    json_get_uint32(json, "lux_hl_expo2", &cfg->lux_hl_expo2);
+    json_get_uint8(json, "lux_hl_lum2", &cfg->lux_hl_lum2);
+    json_get_uint32(json, "lux_ll_ref", &cfg->lux_ll_ref);
+    json_get_uint32(json, "lux_ll_expo1", &cfg->lux_ll_expo1);
+    json_get_uint8(json, "lux_ll_lum1", &cfg->lux_ll_lum1);
+    json_get_uint32(json, "lux_ll_expo2", &cfg->lux_ll_expo2);
+    json_get_uint8(json, "lux_ll_lum2", &cfg->lux_ll_lum2);
+    json_get_float(json, "lux_calib_factor", &cfg->lux_calib_factor);
+}
+
 static void parse_device_service(cJSON *json, device_service_config_t *cfg)
 {
     cJSON *img_cfg = cJSON_GetObjectItem(json, "image_config");
@@ -151,6 +260,9 @@ static void parse_device_service(cJSON *json, device_service_config_t *cfg)
         json_get_bool(img_cfg, "horizontal_flip", &cfg->image_config.horizontal_flip);
         json_get_bool(img_cfg, "vertical_flip", &cfg->image_config.vertical_flip);
         json_get_uint32(img_cfg, "aec", &cfg->image_config.aec);
+        json_get_uint32(img_cfg, "fast_capture_skip_frames", &cfg->image_config.fast_capture_skip_frames);
+        json_get_uint32(img_cfg, "fast_capture_resolution", &cfg->image_config.fast_capture_resolution);
+        json_get_uint32(img_cfg, "fast_capture_jpeg_quality", &cfg->image_config.fast_capture_jpeg_quality);
     }
 
     cJSON *light_cfg = cJSON_GetObjectItem(json, "light_config");
@@ -168,6 +280,10 @@ static void parse_device_service(cJSON *json, device_service_config_t *cfg)
         json_get_bool(light_cfg, "auto_trigger_enabled", &cfg->light_config.auto_trigger_enabled);
         json_get_uint32(light_cfg, "light_threshold", &cfg->light_config.light_threshold);
     }
+
+    cJSON *isp_cfg = cJSON_GetObjectItem(json, "isp_config");
+    if (cJSON_IsObject(isp_cfg))
+        parse_isp_config(isp_cfg, &cfg->isp_config);
 }
 
 static void parse_network_service(cJSON *json, network_service_config_t *cfg)
@@ -218,6 +334,9 @@ static void parse_network_service(cJSON *json, network_service_config_t *cfg)
         json_get_uint32(cellular, "authentication", &auth);
         cfg->cellular.authentication = (uint8_t)auth;
         json_get_bool(cellular, "enable_roaming", &cfg->cellular.enable_roaming);
+        uint32_t oper = 0;
+        json_get_uint32(cellular, "operator", &oper);
+        cfg->cellular.operator = (uint8_t)oper;
     }
     
     // Parse PoE/Ethernet configuration
@@ -577,6 +696,101 @@ static cJSON *serialize_auth_mgr(const auth_mgr_config_t *cfg)
     return json;
 }
 
+static cJSON *serialize_isp_config(const isp_config_t *cfg)
+{
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddBoolToObject(json, "valid", cfg->valid);
+    cJSON_AddBoolToObject(json, "stat_removal_enable", cfg->stat_removal_enable);
+    cJSON_AddNumberToObject(json, "stat_removal_head_lines", cfg->stat_removal_head_lines);
+    cJSON_AddNumberToObject(json, "stat_removal_valid_lines", cfg->stat_removal_valid_lines);
+    cJSON_AddBoolToObject(json, "demosaic_enable", cfg->demosaic_enable);
+    cJSON_AddNumberToObject(json, "demosaic_type", cfg->demosaic_type);
+    cJSON_AddNumberToObject(json, "demosaic_peak", cfg->demosaic_peak);
+    cJSON_AddNumberToObject(json, "demosaic_line_v", cfg->demosaic_line_v);
+    cJSON_AddNumberToObject(json, "demosaic_line_h", cfg->demosaic_line_h);
+    cJSON_AddNumberToObject(json, "demosaic_edge", cfg->demosaic_edge);
+    cJSON_AddBoolToObject(json, "contrast_enable", cfg->contrast_enable);
+    cJSON *lut = cJSON_CreateArray();
+    for (int i = 0; i < 9; i++)
+        cJSON_AddItemToArray(lut, cJSON_CreateNumber(cfg->contrast_lut[i]));
+    cJSON_AddItemToObject(json, "contrast_lut", lut);
+    cJSON_AddNumberToObject(json, "stat_area_x", cfg->stat_area_x);
+    cJSON_AddNumberToObject(json, "stat_area_y", cfg->stat_area_y);
+    cJSON_AddNumberToObject(json, "stat_area_width", cfg->stat_area_width);
+    cJSON_AddNumberToObject(json, "stat_area_height", cfg->stat_area_height);
+    cJSON_AddNumberToObject(json, "sensor_gain", cfg->sensor_gain);
+    cJSON_AddNumberToObject(json, "sensor_exposure", cfg->sensor_exposure);
+    cJSON_AddBoolToObject(json, "bad_pixel_algo_enable", cfg->bad_pixel_algo_enable);
+    cJSON_AddNumberToObject(json, "bad_pixel_algo_threshold", cfg->bad_pixel_algo_threshold);
+    cJSON_AddBoolToObject(json, "bad_pixel_enable", cfg->bad_pixel_enable);
+    cJSON_AddNumberToObject(json, "bad_pixel_strength", cfg->bad_pixel_strength);
+    cJSON_AddBoolToObject(json, "black_level_enable", cfg->black_level_enable);
+    cJSON_AddNumberToObject(json, "black_level_r", cfg->black_level_r);
+    cJSON_AddNumberToObject(json, "black_level_g", cfg->black_level_g);
+    cJSON_AddNumberToObject(json, "black_level_b", cfg->black_level_b);
+    cJSON_AddBoolToObject(json, "aec_enable", cfg->aec_enable);
+    cJSON_AddNumberToObject(json, "aec_exposure_compensation", cfg->aec_exposure_compensation);
+    cJSON_AddNumberToObject(json, "aec_anti_flicker_freq", cfg->aec_anti_flicker_freq);
+    cJSON_AddBoolToObject(json, "awb_enable", cfg->awb_enable);
+    cJSON *labels = cJSON_CreateArray();
+    for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++)
+        cJSON_AddItemToArray(labels, cJSON_CreateString(cfg->awb_label[i]));
+    cJSON_AddItemToObject(json, "awb_label", labels);
+    cJSON *ref_ct = cJSON_CreateArray();
+    for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++)
+        cJSON_AddItemToArray(ref_ct, cJSON_CreateNumber(cfg->awb_ref_color_temp[i]));
+    cJSON_AddItemToObject(json, "awb_ref_color_temp", ref_ct);
+    cJSON *gr = cJSON_CreateArray(), *gg = cJSON_CreateArray(), *gb = cJSON_CreateArray();
+    for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++) {
+        cJSON_AddItemToArray(gr, cJSON_CreateNumber(cfg->awb_gain_r[i]));
+        cJSON_AddItemToArray(gg, cJSON_CreateNumber(cfg->awb_gain_g[i]));
+        cJSON_AddItemToArray(gb, cJSON_CreateNumber(cfg->awb_gain_b[i]));
+    }
+    cJSON_AddItemToObject(json, "awb_gain_r", gr);
+    cJSON_AddItemToObject(json, "awb_gain_g", gg);
+    cJSON_AddItemToObject(json, "awb_gain_b", gb);
+    cJSON *ccm = cJSON_CreateArray();
+    for (int p = 0; p < ISP_AWB_PROFILES_MAX; p++) {
+        cJSON *row = cJSON_CreateArray();
+        for (int i = 0; i < 9; i++)
+            cJSON_AddItemToArray(row, cJSON_CreateNumber(cfg->awb_ccm[p][i / 3][i % 3]));
+        cJSON_AddItemToArray(ccm, row);
+    }
+    cJSON_AddItemToObject(json, "awb_ccm", ccm);
+    cJSON *ref_rgb = cJSON_CreateArray();
+    for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++) {
+        cJSON *rgb = cJSON_CreateArray();
+        cJSON_AddItemToArray(rgb, cJSON_CreateNumber(cfg->awb_ref_rgb[i][0]));
+        cJSON_AddItemToArray(rgb, cJSON_CreateNumber(cfg->awb_ref_rgb[i][1]));
+        cJSON_AddItemToArray(rgb, cJSON_CreateNumber(cfg->awb_ref_rgb[i][2]));
+        cJSON_AddItemToArray(ref_rgb, rgb);
+    }
+    cJSON_AddItemToObject(json, "awb_ref_rgb", ref_rgb);
+    cJSON_AddBoolToObject(json, "isp_gain_enable", cfg->isp_gain_enable);
+    cJSON_AddNumberToObject(json, "isp_gain_r", cfg->isp_gain_r);
+    cJSON_AddNumberToObject(json, "isp_gain_g", cfg->isp_gain_g);
+    cJSON_AddNumberToObject(json, "isp_gain_b", cfg->isp_gain_b);
+    cJSON_AddBoolToObject(json, "color_conv_enable", cfg->color_conv_enable);
+    cJSON *cc = cJSON_CreateArray();
+    for (int i = 0; i < 9; i++)
+        cJSON_AddItemToArray(cc, cJSON_CreateNumber(cfg->color_conv_matrix[i / 3][i % 3]));
+    cJSON_AddItemToObject(json, "color_conv_matrix", cc);
+    cJSON_AddBoolToObject(json, "gamma_enable", cfg->gamma_enable);
+    cJSON_AddNumberToObject(json, "sensor_delay", cfg->sensor_delay);
+    cJSON_AddNumberToObject(json, "lux_hl_ref", cfg->lux_hl_ref);
+    cJSON_AddNumberToObject(json, "lux_hl_expo1", cfg->lux_hl_expo1);
+    cJSON_AddNumberToObject(json, "lux_hl_lum1", cfg->lux_hl_lum1);
+    cJSON_AddNumberToObject(json, "lux_hl_expo2", cfg->lux_hl_expo2);
+    cJSON_AddNumberToObject(json, "lux_hl_lum2", cfg->lux_hl_lum2);
+    cJSON_AddNumberToObject(json, "lux_ll_ref", cfg->lux_ll_ref);
+    cJSON_AddNumberToObject(json, "lux_ll_expo1", cfg->lux_ll_expo1);
+    cJSON_AddNumberToObject(json, "lux_ll_lum1", cfg->lux_ll_lum1);
+    cJSON_AddNumberToObject(json, "lux_ll_expo2", cfg->lux_ll_expo2);
+    cJSON_AddNumberToObject(json, "lux_ll_lum2", cfg->lux_ll_lum2);
+    cJSON_AddNumberToObject(json, "lux_calib_factor", (double)cfg->lux_calib_factor);
+    return json;
+}
+
 static cJSON *serialize_device_service(const device_service_config_t *cfg)
 {
     cJSON *json = cJSON_CreateObject();
@@ -587,6 +801,9 @@ static cJSON *serialize_device_service(const device_service_config_t *cfg)
     cJSON_AddBoolToObject(img_cfg, "horizontal_flip", cfg->image_config.horizontal_flip);
     cJSON_AddBoolToObject(img_cfg, "vertical_flip", cfg->image_config.vertical_flip);
     cJSON_AddNumberToObject(img_cfg, "aec", cfg->image_config.aec);
+    cJSON_AddNumberToObject(img_cfg, "fast_capture_skip_frames", cfg->image_config.fast_capture_skip_frames);
+    cJSON_AddNumberToObject(img_cfg, "fast_capture_resolution", cfg->image_config.fast_capture_resolution);
+    cJSON_AddNumberToObject(img_cfg, "fast_capture_jpeg_quality", cfg->image_config.fast_capture_jpeg_quality);
     cJSON_AddItemToObject(json, "image_config", img_cfg);
 
     cJSON *light_cfg = cJSON_CreateObject();
@@ -600,6 +817,8 @@ static cJSON *serialize_device_service(const device_service_config_t *cfg)
     cJSON_AddBoolToObject(light_cfg, "auto_trigger_enabled", cfg->light_config.auto_trigger_enabled);
     cJSON_AddNumberToObject(light_cfg, "light_threshold", cfg->light_config.light_threshold);
     cJSON_AddItemToObject(json, "light_config", light_cfg);
+
+    cJSON_AddItemToObject(json, "isp_config", serialize_isp_config(&cfg->isp_config));
 
     return json;
 }
@@ -641,6 +860,7 @@ static cJSON *serialize_network_service(const network_service_config_t *cfg)
     cJSON_AddStringToObject(cellular, "pin_code", cfg->cellular.pin_code);
     cJSON_AddNumberToObject(cellular, "authentication", cfg->cellular.authentication);
     cJSON_AddBoolToObject(cellular, "enable_roaming", cfg->cellular.enable_roaming);
+    cJSON_AddNumberToObject(cellular, "operator", cfg->cellular.operator);
     cJSON_AddItemToObject(json, "cellular", cellular);
     
     // Serialize PoE/Ethernet configuration

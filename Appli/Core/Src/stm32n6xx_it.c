@@ -22,12 +22,12 @@
 #include "stm32n6xx_it.h"
 
 #include "cmw_camera.h"
-#include "uvc.h"
 #include "debug.h"
-#include "uvcl.h"
 #include "usb_otg.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "spi.h"
+#include "i2s.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -97,7 +97,7 @@ extern UART_HandleTypeDef huart3;
 extern UART_HandleTypeDef huart9;
 extern RTC_HandleTypeDef hrtc;
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
-extern PCD_HandleTypeDef hpcd_CDC;
+extern PCD_HandleTypeDef usbx_pcd_handle;
 #else
 #ifdef UX_HCD_ECM_USE_USB_OTG_HS1
 extern HCD_HandleTypeDef hhcd_USB_OTG_HS1;
@@ -108,6 +108,13 @@ extern PCD_HandleTypeDef hpcd_USB_OTG_HS1;
 extern HCD_HandleTypeDef hhcd_USB_OTG_HS2;
 extern XSPI_HandleTypeDef hxspi1;
 extern XSPI_HandleTypeDef hxspi2;
+
+extern I2C_HandleTypeDef hi2c1;
+extern SPI_HandleTypeDef hspi6;
+extern DMA_HandleTypeDef handle_HPDMA1_Channel11;
+extern DMA_HandleTypeDef handle_HPDMA1_Channel10;
+extern DMA_HandleTypeDef handle_HPDMA1_Channel9;
+extern DMA_HandleTypeDef handle_HPDMA1_Channel8;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -250,6 +257,62 @@ void HPDMA1_Channel7_IRQHandler(void)
   /* USER CODE BEGIN HPDMA1_Channel7_IRQn 1 */
 
   /* USER CODE END HPDMA1_Channel7_IRQn 1 */
+}
+
+/**
+  * @brief This function handles HPDMA1 Channel 8 global interrupt.
+  */
+void HPDMA1_Channel8_IRQHandler(void)
+{
+  /* USER CODE BEGIN HPDMA1_Channel8_IRQn 0 */
+
+  /* USER CODE END HPDMA1_Channel8_IRQn 0 */
+  HAL_DMA_IRQHandler(&handle_HPDMA1_Channel8);
+  /* USER CODE BEGIN HPDMA1_Channel8_IRQn 1 */
+
+  /* USER CODE END HPDMA1_Channel8_IRQn 1 */
+}
+
+/**
+  * @brief This function handles HPDMA1 Channel 9 global interrupt.
+  */
+void HPDMA1_Channel9_IRQHandler(void)
+{
+  /* USER CODE BEGIN HPDMA1_Channel9_IRQn 0 */
+
+  /* USER CODE END HPDMA1_Channel9_IRQn 0 */
+  HAL_DMA_IRQHandler(&handle_HPDMA1_Channel9);
+  /* USER CODE BEGIN HPDMA1_Channel9_IRQn 1 */
+
+  /* USER CODE END HPDMA1_Channel9_IRQn 1 */
+}
+
+/**
+  * @brief This function handles HPDMA1 Channel 10 global interrupt.
+  */
+void HPDMA1_Channel10_IRQHandler(void)
+{
+  /* USER CODE BEGIN HPDMA1_Channel10_IRQn 0 */
+
+  /* USER CODE END HPDMA1_Channel10_IRQn 0 */
+  HAL_DMA_IRQHandler(&handle_HPDMA1_Channel10);
+  /* USER CODE BEGIN HPDMA1_Channel10_IRQn 1 */
+
+  /* USER CODE END HPDMA1_Channel10_IRQn 1 */
+}
+
+/**
+  * @brief This function handles HPDMA1 Channel 11 global interrupt.
+  */
+void HPDMA1_Channel11_IRQHandler(void)
+{
+  /* USER CODE BEGIN HPDMA1_Channel11_IRQn 0 */
+
+  /* USER CODE END HPDMA1_Channel11_IRQn 0 */
+  HAL_DMA_IRQHandler(&handle_HPDMA1_Channel11);
+  /* USER CODE BEGIN HPDMA1_Channel11_IRQn 1 */
+
+  /* USER CODE END HPDMA1_Channel11_IRQn 1 */
 }
 
 /**
@@ -515,6 +578,34 @@ void SAI1_B_IRQHandler(void)
 }
 
 /**
+  * @brief This function handles I2C1 Event interrupt.
+  */
+void I2C1_EV_IRQHandler(void)
+{
+  /* USER CODE BEGIN I2C1_EV_IRQn 0 */
+
+  /* USER CODE END I2C1_EV_IRQn 0 */
+  HAL_I2C_EV_IRQHandler(&hi2c1);
+  /* USER CODE BEGIN I2C1_EV_IRQn 1 */
+
+  /* USER CODE END I2C1_EV_IRQn 1 */
+}
+
+/**
+  * @brief This function handles I2C1 Error interrupt.
+  */
+void I2C1_ER_IRQHandler(void)
+{
+  /* USER CODE BEGIN I2C1_ER_IRQn 0 */
+
+  /* USER CODE END I2C1_ER_IRQn 0 */
+  HAL_I2C_ER_IRQHandler(&hi2c1);
+  /* USER CODE BEGIN I2C1_ER_IRQn 1 */
+
+  /* USER CODE END I2C1_ER_IRQn 1 */
+}
+
+/**
   * @brief This function handles SPI2 global interrupt.
   */
 void SPI2_IRQHandler(void)
@@ -538,6 +629,30 @@ void SPI4_IRQHandler(void)
 
   /* USER CODE END SPI2_IRQn 1 */
 }
+
+/**
+  * @brief This function handles SPI6 global interrupt.
+  */
+void SPI6_IRQHandler(void)
+{
+  /* USER CODE BEGIN SPI6_IRQn 0 */
+
+  /* USER CODE END SPI6_IRQn 0 */
+  /* SPI6 is shared between SPI mode (TFT) and I2S mode (audio).
+   * Dispatch to the correct HAL handler based on which is active. */
+  if (hi2s6.State != HAL_I2S_STATE_RESET)
+  {
+    HAL_I2S_IRQHandler(&hi2s6);
+  }
+  else
+  {
+    HAL_SPI_IRQHandler(&hspi6);
+  }
+  /* USER CODE BEGIN SPI6_IRQn 1 */
+
+  /* USER CODE END SPI6_IRQn 1 */
+}
+
 /**
   * @brief This function handles USART1 global interrupt.
   */
@@ -658,12 +773,10 @@ void USB1_OTG_HS_IRQHandler(void)
   // HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS1);
   /* USER CODE BEGIN USB2_OTG_HS_IRQn 1 */
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
-  HAL_PCD_IRQHandler(&hpcd_CDC);
+  HAL_PCD_IRQHandler(&usbx_pcd_handle);
 #else
 #ifdef UX_HCD_ECM_USE_USB_OTG_HS1
   HAL_HCD_IRQHandler(&hhcd_USB_OTG_HS1);
-#else
-  UVCL_IRQHandler();
 #endif
 #endif
   /* USER CODE END USB2_OTG_HS_IRQn 1 */

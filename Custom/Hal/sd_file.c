@@ -1,6 +1,5 @@
 #include "sd_file.h"
 #include "debug.h"
-#include "mem.h"
 #include "sdmmc.h"
 #include "exti.h"
 #include "common_utils.h"
@@ -321,7 +320,7 @@ int sd_filex_fwrite(void *context, void *fd, const void *buf, size_t size)
     void *buf_aligned = NULL;
     UINT status;
     
-    if (!hal_mem_is_internal((void *)buf)) {
+    if ((uint32_t)buf < 0x34000000U || (uint32_t)buf >= 0x34200000U) {
         buf_aligned = hal_mem_alloc_aligned(SD_CHUNK_SIZE, SD_CHUNK_ALIGN, SD_CHUNK_TYPE);
         if (buf_aligned == NULL) {
             LOG_DRV_ERROR("sd_filex_fwrite: cannot malloc buf_aligned\r\n");
@@ -363,44 +362,51 @@ int sd_filex_fwrite(void *context, void *fd, const void *buf, size_t size)
 }
 
 // Read file
+static uint8_t sd_read_buf[SD_CHUNK_SIZE] ALIGN_32 UNCACHED;
+static volatile uint8_t sd_read_buf_lock = 0;
 int sd_filex_fread(void *context, void *fd, void *buf, size_t size) 
 {
     FX_FILE *file = (FX_FILE*)fd;
     unsigned long actual = 0;
-    void *buf_aligned = NULL;
     int actual_total = 0;
-    UINT status;
+    UINT status = 0;
 
-    if (!hal_mem_is_internal(buf)) {
-        buf_aligned = hal_mem_alloc_aligned(SD_CHUNK_SIZE, SD_CHUNK_ALIGN, SD_CHUNK_TYPE);
-        if (buf_aligned == NULL) {
-            LOG_DRV_ERROR("sd_filex_fread: cannot malloc buf_aligned\r\n");
-            return -1;
-        }
+    if ((uint32_t)buf < 0x34000000U || (uint32_t)buf >= 0x34200000U) {
+        while (sd_read_buf_lock) osDelay(1);
+        sd_read_buf_lock = 1;
         // cycle read
         while (actual_total < size) {
             size_t chunk_size = SD_CHUNK_SIZE;
-            if (size - actual < SD_CHUNK_SIZE) {
-                chunk_size = size - actual;
+            if (size - actual_total < SD_CHUNK_SIZE) {
+                chunk_size = size - actual_total;
             }
-            status = fx_file_read(file, buf_aligned, chunk_size, &actual);
+            actual = 0;
+            status = fx_file_read(file, sd_read_buf, chunk_size, &actual);
+            if (status == FX_END_OF_FILE) {
+                /* Normal EOF: return bytes read so far, actual may be 0 */
+                memcpy((void *)buf + actual_total, sd_read_buf, actual);
+                actual_total += actual;
+                break;
+            }
             if (status != FX_SUCCESS) {
-                hal_mem_free(buf_aligned);
+                sd_read_buf_lock = 0;
                 LOG_DRV_ERROR("fx_file_read failed: 0x%02X\r\n", status);
-                // FileX returns UINT (unsigned int), so status is always >= 0
                 return -(int)status;
             }
-            memcpy((void *)buf + actual_total, buf_aligned, actual);
+            memcpy((void *)buf + actual_total, sd_read_buf, actual);
             actual_total += actual;
             if (actual != chunk_size) break;
         }
-        hal_mem_free(buf_aligned);
-        actual = actual_total;
+        sd_read_buf_lock = 0;
+        return (int)actual_total;
     } else {
         status = fx_file_read(file, buf, size, &actual);
+        if (status == FX_END_OF_FILE) {
+            /* Normal EOF: return bytes read */
+            return (int)actual;
+        }
         if (status != FX_SUCCESS) {
             LOG_DRV_ERROR("fx_file_read failed: 0x%02X\r\n", status);
-            // FileX returns UINT (unsigned int), so status is always >= 0
             return -(int)status;
         }
     }

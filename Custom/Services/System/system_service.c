@@ -86,9 +86,10 @@ static volatile aicam_bool_t g_capture_in_progress = AICAM_FALSE;
 static volatile aicam_bool_t g_fast_fail_mqtt_policy = AICAM_FALSE;
 static const system_capture_request_t g_capture_defaults = {
     .enable_ai = AICAM_TRUE,
-    .chunk_size = 0,        // auto chunk
+    .chunk_size = 0,
     .store_to_sd = AICAM_TRUE,
-    .fast_fail_mqtt = AICAM_FALSE
+    .fast_fail_mqtt = AICAM_FALSE,
+    .trigger_type = AICAM_CAPTURE_TRIGGER_UNKNOWN
 };
  
  static uint64_t get_timestamp_ms(void)
@@ -608,6 +609,7 @@ static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeu
             break;
             
         case WAKEUP_SOURCE_BUTTON:
+        case WAKEUP_SOURCE_PIR:
             // Short press - Take photo, LED slow blink (AP off state)
             LOG_SVC_INFO("Button short press - taking photo");
             // Set LED to slow blink (system running, AP may be off)
@@ -616,7 +618,11 @@ static aicam_result_t handle_wakeup_event(system_controller_t *controller, wakeu
             
             // Execute capture callback
             if (controller->capture_callback) {
-                controller->capture_callback(CAPTURE_TRIGGER_BUTTON, controller->capture_callback_user_data);
+                if (source == WAKEUP_SOURCE_BUTTON) {
+                    controller->capture_callback(CAPTURE_TRIGGER_BUTTON, controller->capture_callback_user_data);
+                } else if (source == WAKEUP_SOURCE_PIR) {
+                    controller->capture_callback(CAPTURE_TRIGGER_PIR, controller->capture_callback_user_data);
+                }
             }
             break;
             
@@ -981,7 +987,7 @@ static aicam_result_t unregister_pir_runtime_callback(void);
  * @brief Async wakeup task - handles image capture and upload based on work mode
  * @param controller System controller pointer
  */
- static void wakeup_task_async(system_controller_t *controller)
+ static void wakeup_task_async(system_controller_t *controller, aicam_capture_trigger_t trigger_type)
  {
      LOG_SVC_INFO("=== Wakeup Task Started ===");
      LOG_SVC_INFO("Current work mode: %d", controller->current_work_mode);
@@ -992,11 +998,11 @@ static aicam_result_t unregister_pir_runtime_callback(void);
      {
         LOG_SVC_INFO("Image mode detected - starting capture and upload to MQTT");
         
-        //Use the new unified interface for capture and upload
         system_capture_request_t req = {
             .enable_ai = AICAM_TRUE,
             .chunk_size = 0,
-            .store_to_sd = AICAM_TRUE
+            .store_to_sd = AICAM_TRUE,
+            .trigger_type = trigger_type
         };
         aicam_result_t ret = system_service_capture_request(&req, NULL);
         
@@ -1069,28 +1075,28 @@ static void default_capture_callback(capture_trigger_type_t trigger_type, void *
             
         case CAPTURE_TRIGGER_RTC_WAKEUP:
             LOG_SVC_INFO("RTC wakeup trigger detected - scheduled capture");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_RTC);
             LOG_SVC_INFO("RTC wakeup trigger detected - scheduled capture completed");
             system_service_task_completed();
             break;
         
         case CAPTURE_TRIGGER_RTC:
             LOG_SVC_INFO("RTC timer trigger detected - scheduled capture");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_RTC);
             LOG_SVC_INFO("RTC timer trigger detected - scheduled capture completed");
             break;
             
         case CAPTURE_TRIGGER_PIR:
             // PIR wakeup from sleep: trigger capture and mark task completed (will enter sleep after)
             LOG_SVC_INFO("PIR wakeup detected - triggering capture (will enter sleep after completion)");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_PIR);
             LOG_SVC_INFO("PIR wakeup trigger capture completed");
             system_service_task_completed();
             break;
             
         case CAPTURE_TRIGGER_BUTTON:
             LOG_SVC_INFO("Button pressed - manual capture");
-            wakeup_task_async(controller);
+            wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_BUTTON);
             system_service_task_completed();
             // TODO: Implement button trigger capture logic
             // Example: trigger_manual_capture();
@@ -1414,7 +1420,7 @@ static void pir_value_change_callback(uint32_t pir_value)
         
         // Runtime PIR trigger: directly call wakeup_task_async without system_service_task_completed()
         // This ensures the system does not enter sleep after runtime trigger
-        wakeup_task_async(controller);
+        wakeup_task_async(controller, AICAM_CAPTURE_TRIGGER_PIR);
         LOG_SVC_INFO("PIR runtime trigger capture completed (system will remain active)");
     } else {
         LOG_SVC_DEBUG("PIR value changed but doesn't match trigger type (value: %u, trigger_type: %d)", 
@@ -2815,6 +2821,12 @@ aicam_result_t system_service_request_sleep(uint32_t duration_sec)
         return AICAM_ERROR_NOT_INITIALIZED;
     }
 
+    //should check if the system is in low power mode
+    if (g_system_service_ctx.controller->power_config.current_mode != POWER_MODE_LOW_POWER) {
+        LOG_SVC_INFO("System is not in low power mode, cannot request sleep");
+        return AICAM_OK;
+    }
+
     LOG_SVC_INFO("Sleep requested with duration: %u seconds", duration_sec);
     g_system_service_ctx.pending_sleep_duration = duration_sec;
     g_system_service_ctx.sleep_pending = true;
@@ -2899,6 +2911,7 @@ aicam_result_t system_service_capture_request(const system_capture_request_t *re
         resolved.enable_ai = request->enable_ai;
         resolved.store_to_sd = request->store_to_sd;
         resolved.fast_fail_mqtt = request->fast_fail_mqtt;
+        resolved.trigger_type = request->trigger_type;
         if (request->chunk_size > 0) {
             resolved.chunk_size = request->chunk_size;
         }
@@ -2915,7 +2928,8 @@ aicam_result_t system_service_capture_request(const system_capture_request_t *re
     aicam_result_t ret = system_service_capture_and_upload_mqtt(
         resolved.enable_ai,
         resolved.chunk_size,
-        resolved.store_to_sd);
+        resolved.store_to_sd,
+        resolved.trigger_type);
     uint64_t duration_ms = rtc_get_uptime_ms() - start_ms;
 
     g_capture_in_progress = AICAM_FALSE;
@@ -2958,38 +2972,38 @@ static aicam_result_t generate_inference_image(const uint8_t *jpeg_buffer,
     }
 
     aicam_result_t ret = AICAM_OK;
-    uint8_t *jpeg_copy = NULL;
+    // uint8_t *jpeg_copy = NULL;
     uint8_t *raw_data = NULL;
     uint8_t *rgb_data = NULL;
     uint32_t raw_size = 0;
 
     // Step 1: Copy JPEG data
-    jpeg_copy = buffer_calloc(1, jpeg_size);
-    if (!jpeg_copy) {
-        LOG_SVC_ERROR("Failed to allocate JPEG copy buffer");
-        return AICAM_ERROR_NO_MEMORY;
-    }
-    memcpy(jpeg_copy, jpeg_buffer, jpeg_size);
+    // jpeg_copy = buffer_calloc(1, jpeg_size);
+    // if (!jpeg_copy) {
+    //     LOG_SVC_ERROR("Failed to allocate JPEG copy buffer");
+    //     return AICAM_ERROR_NO_MEMORY;
+    // }
+    // memcpy(jpeg_copy, jpeg_buffer, jpeg_size);
 
     // Step 2: Decode JPEG to raw YCbCr
     jpegc_params_t jpeg_params = {0};
     ret = device_service_camera_get_jpeg_params(&jpeg_params);
     if (ret != AICAM_OK) {
         LOG_SVC_ERROR("Failed to get JPEG parameters: %d", ret);
-        buffer_free(jpeg_copy);
+        // buffer_free(jpeg_copy);
         return ret;
     }
 
     ai_jpeg_decode_config_t decode_config = {
         .width = jpeg_params.ImageWidth,
         .height = jpeg_params.ImageHeight,
-        .chroma_subsampling = JPEG_444_SUBSAMPLING,
+        .chroma_subsampling = jpeg_params.ChromaSubsampling,
         .quality = jpeg_params.ImageQuality
     };
 
-    ret = ai_jpeg_decode(jpeg_copy, jpeg_size, &decode_config, &raw_data, &raw_size);
-    buffer_free(jpeg_copy);
-    jpeg_copy = NULL;
+    ret = ai_jpeg_decode(jpeg_buffer, jpeg_size, &decode_config, &raw_data, &raw_size);
+    // buffer_free(jpeg_copy);
+    // jpeg_copy = NULL;
 
     if (ret != AICAM_OK) {
         LOG_SVC_ERROR("Failed to decode JPEG: %d", ret);
@@ -2998,7 +3012,7 @@ static aicam_result_t generate_inference_image(const uint8_t *jpeg_buffer,
 
     // Step 3: Convert YCbCr to RGB565 for drawing
     ret = ai_color_convert(raw_data, decode_config.width, decode_config.height,
-                          DMA2D_INPUT_YCBCR, 0, &rgb_data, &raw_size, DMA2D_OUTPUT_RGB565);
+                          DMA2D_INPUT_YCBCR, 0, decode_config.chroma_subsampling, &rgb_data, &raw_size, DMA2D_OUTPUT_RGB565);
     
     // Return decode buffer
     device_t *jpeg_dev = device_find_pattern(JPEG_DEVICE_NAME, DEV_TYPE_VIDEO);
@@ -3041,8 +3055,8 @@ static aicam_result_t generate_inference_image(const uint8_t *jpeg_buffer,
     ai_jpeg_encode_config_t encode_config = {
         .width = decode_config.width,
         .height = decode_config.height,
-        .chroma_subsampling = JPEG_420_SUBSAMPLING,
-        .quality = 90
+        .chroma_subsampling = decode_config.chroma_subsampling,
+        .quality = jpeg_params.ImageQuality
     };
 
     ret = ai_jpeg_encode(rgb_data, raw_size, &encode_config, output_jpeg, output_jpeg_size);
@@ -3114,7 +3128,8 @@ static aicam_result_t generate_inference_json(const nn_result_t *nn_result,
  */
 aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai, 
                                                      uint32_t chunk_size,
-                                                     aicam_bool_t store_to_sd)
+                                                     aicam_bool_t store_to_sd,
+                                                     aicam_capture_trigger_t trigger_type)
 {
     if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
         LOG_SVC_ERROR("System service not initialized");
@@ -3134,6 +3149,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
 
     // Step 1: Capture image with optional AI inference
     uint8_t *jpeg_buffer = NULL;
+    uint8_t *jpeg_copy = NULL;
     int jpeg_size = 0;
     nn_result_t nn_result = {0};
     uint32_t frame_id = 0;
@@ -3169,7 +3185,6 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
 
     //store image to sd card if sd card is connected
     if(store_to_sd && device_service_storage_is_sd_connected()){
-        printf("xxx1\r\n");
         step_start_time = rtc_get_uptime_ms();
         LOG_SVC_INFO("[TIMING] Step 1.1: Storing images to SD card...");
         uint32_t timestamp = (uint32_t)rtc_get_timeStamp();
@@ -3194,33 +3209,45 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             (nn_result.od.nb_detect > 0 || nn_result.mpe.nb_detect > 0)) {
             uint8_t *inference_jpeg = NULL;
             uint32_t inference_jpeg_size = 0;
+
+            jpeg_copy = buffer_calloc(1, jpeg_size);
+            if (!jpeg_copy) {
+                LOG_SVC_WARN("Failed to allocate JPEG copy buffer");
+            } else {
+                memcpy(jpeg_copy, jpeg_buffer, jpeg_size);
+            }
             
-            step_start_time = rtc_get_uptime_ms();
-            LOG_SVC_INFO("[TIMING] Step 1.1.2: Generating inference image...");
-            ret = generate_inference_image(jpeg_buffer, jpeg_size, &nn_result, 
-                                      &inference_jpeg, &inference_jpeg_size);
-            step_end_time = rtc_get_uptime_ms();
-            step_duration = step_end_time - step_start_time;
-            
-            if (ret == AICAM_OK && inference_jpeg && inference_jpeg_size > 0) {
-                snprintf(filename, sizeof(filename), "image_%lu_%lu_inference.jpg", timestamp, (unsigned long)frame_id);
-                aicam_result_t inference_ret = sd_write_file(inference_jpeg, inference_jpeg_size, filename);
+            if(jpeg_copy) {
+                device_service_camera_free_jpeg_buffer(jpeg_buffer);
+                jpeg_buffer = jpeg_copy;
+                
+                step_start_time = rtc_get_uptime_ms();
+                LOG_SVC_INFO("[TIMING] Step 1.1.2: Generating inference image...");
+                ret = generate_inference_image(jpeg_buffer, jpeg_size, &nn_result, 
+                                        &inference_jpeg, &inference_jpeg_size);
                 step_end_time = rtc_get_uptime_ms();
                 step_duration = step_end_time - step_start_time;
                 
-                if (inference_ret != AICAM_OK) {
-                    LOG_SVC_ERROR("[TIMING] Step 1.1.2 FAILED: Store inference image to sd card failed: %d (duration: %lu ms)", 
-                                 inference_ret, (unsigned long)step_duration);
+                if (ret == AICAM_OK && inference_jpeg && inference_jpeg_size > 0) {
+                    snprintf(filename, sizeof(filename), "image_%lu_%lu_inference.jpg", timestamp, (unsigned long)frame_id);
+                    aicam_result_t inference_ret = sd_write_file(inference_jpeg, inference_jpeg_size, filename);
+                    step_end_time = rtc_get_uptime_ms();
+                    step_duration = step_end_time - step_start_time;
+                    
+                    if (inference_ret != AICAM_OK) {
+                        LOG_SVC_ERROR("[TIMING] Step 1.1.2 FAILED: Store inference image to sd card failed: %d (duration: %lu ms)", 
+                                    inference_ret, (unsigned long)step_duration);
+                    } else {
+                        LOG_SVC_INFO("[TIMING] Step 1.1.2 COMPLETED: Inference image stored to SD card (duration: %lu ms)", 
+                                    (unsigned long)step_duration);
+                    }
+                    
+                    // Free inference JPEG buffer
+                    device_service_camera_free_jpeg_buffer(inference_jpeg);
                 } else {
-                    LOG_SVC_INFO("[TIMING] Step 1.1.2 COMPLETED: Inference image stored to SD card (duration: %lu ms)", 
-                                (unsigned long)step_duration);
+                    LOG_SVC_WARN("[TIMING] Step 1.1.2 SKIPPED: Failed to generate inference image: %d (duration: %lu ms)", 
+                                ret, (unsigned long)step_duration);
                 }
-                
-                // Free inference JPEG buffer
-                buffer_free(inference_jpeg);
-            } else {
-                LOG_SVC_WARN("[TIMING] Step 1.1.2 SKIPPED: Failed to generate inference image: %d (duration: %lu ms)", 
-                            ret, (unsigned long)step_duration);
             }
         }
 
@@ -3268,7 +3295,13 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     }
     if (jpeg_size == 0) {
         LOG_SVC_ERROR("[TIMING] Validation FAILED: jpeg_size is 0");
-        device_service_camera_free_jpeg_buffer(jpeg_buffer);
+        if (jpeg_copy && jpeg_buffer == jpeg_copy) {
+            buffer_free(jpeg_buffer);
+        } else {
+            device_service_camera_free_jpeg_buffer(jpeg_buffer);
+        }
+        jpeg_buffer = NULL;
+        jpeg_copy = NULL;
         return AICAM_ERROR;
     }
 
@@ -3279,7 +3312,13 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     ret = device_service_camera_get_jpeg_params(&jpeg_enc_param);
     if (ret != AICAM_OK) {
         LOG_SVC_ERROR("[TIMING] Step 2 FAILED: Failed to get jpeg parameters: %d", ret);
-        device_service_camera_free_jpeg_buffer(jpeg_buffer);
+        if (jpeg_copy && jpeg_buffer == jpeg_copy) {
+            buffer_free(jpeg_buffer);
+        } else {
+            device_service_camera_free_jpeg_buffer(jpeg_buffer);
+        }
+        jpeg_buffer = NULL;
+        jpeg_copy = NULL;
         return ret;
     }
 
@@ -3291,6 +3330,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     metadata.height = jpeg_enc_param.ImageHeight;
     metadata.size = (uint32_t)jpeg_size;
     metadata.quality = jpeg_enc_param.ImageQuality;
+    metadata.trigger_type = trigger_type;
     step_end_time = rtc_get_uptime_ms();
     step_duration = step_end_time - step_start_time;
     LOG_SVC_INFO("[TIMING] Step 2 COMPLETED: Metadata prepared (duration: %lu ms)", 
@@ -3341,7 +3381,13 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     if (g_fast_fail_mqtt_policy) {
         if (!mqtt_service_is_connected()) {
             LOG_SVC_ERROR("[TIMING] Step 3.1 FAST-FAIL: MQTT not connected (flags=0x%08X)", current_flags);
-            device_service_camera_free_jpeg_buffer(jpeg_buffer);
+            if (jpeg_copy && jpeg_buffer == jpeg_copy) {
+                buffer_free(jpeg_buffer);
+            } else {
+                device_service_camera_free_jpeg_buffer(jpeg_buffer);
+            }
+            jpeg_buffer = NULL;
+            jpeg_copy = NULL;
             return AICAM_ERROR_UNAVAILABLE;
         }
     } else {
@@ -3351,7 +3397,13 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
         if (result != AICAM_OK) {
             LOG_SVC_ERROR("[TIMING] Step 3.1 FAILED: Failed to wait for MQTT network connected: %d (timeout: 15s)", result);
             LOG_SVC_ERROR("[TIMING] Step 3.1: Final service flags: 0x%08X", service_get_ready_flags());
-            device_service_camera_free_jpeg_buffer(jpeg_buffer);
+            if (jpeg_copy && jpeg_buffer == jpeg_copy) {
+                buffer_free(jpeg_buffer);
+            } else {
+                device_service_camera_free_jpeg_buffer(jpeg_buffer);
+            }
+            jpeg_buffer = NULL;
+            jpeg_copy = NULL;
             return AICAM_ERROR_TIMEOUT;
         }
     }
@@ -3398,7 +3450,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             }
         } else {
             // Large image - chunked upload
-            uint32_t actual_chunk_size = (chunk_size > 0) ? chunk_size : (10 * 1024); // Default 10KB
+            uint32_t actual_chunk_size = (chunk_size > 0) ? chunk_size : (100 * 1024); // Default 100KB
             LOG_SVC_INFO("[TIMING] Using chunked upload (size: %u bytes, chunk: %u bytes)", 
                         jpeg_size, actual_chunk_size);
             
@@ -3434,7 +3486,13 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     // Step 5: Cleanup
     step_start_time = rtc_get_uptime_ms();
     LOG_SVC_INFO("[TIMING] Step 5: Cleaning up...");
-    device_service_camera_free_jpeg_buffer(jpeg_buffer);
+    if (jpeg_copy && jpeg_buffer == jpeg_copy) {
+        buffer_free(jpeg_buffer);
+    } else {
+        device_service_camera_free_jpeg_buffer(jpeg_buffer);
+    }
+    jpeg_buffer = NULL;
+    jpeg_copy = NULL;
     step_end_time = rtc_get_uptime_ms();
     step_duration = step_end_time - step_start_time;
     LOG_SVC_INFO("[TIMING] Step 5 COMPLETED: Cleanup finished (duration: %lu ms)", 

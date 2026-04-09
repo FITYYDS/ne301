@@ -122,7 +122,10 @@
              .horizontal_flip = AICAM_FALSE,
              .vertical_flip = AICAM_FALSE,
              .aec = 1,  // Auto exposure enabled
-             .startup_skip_frames = 10  // Default frames to skip for camera stabilization
+             .startup_skip_frames = 10,  // Default frames to skip for camera stabilization
+             .fast_capture_skip_frames = 10,
+             .fast_capture_resolution = 0,   // 0: 1280x720
+             .fast_capture_jpeg_quality = 60
          },
          .light_config = {
              .connected = AICAM_FALSE,
@@ -1016,6 +1019,267 @@
                    light_config->connected, light_config->mode, light_config->start_hour, light_config->start_minute, light_config->end_hour, light_config->end_minute, light_config->brightness_level, light_config->auto_trigger_enabled, light_config->light_threshold);
      return AICAM_OK;
  }
+
+/*=================== ISP Configuration API Implementation ====================*/
+aicam_result_t json_config_get_isp_config(isp_config_t *isp_config)
+{
+    if (!isp_config)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    if (!g_json_config_ctx.initialized)
+    {
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+    *isp_config = g_json_config_ctx.current_config.device_service.isp_config;
+    return AICAM_OK;
+}
+
+aicam_result_t json_config_set_isp_config(const isp_config_t *isp_config)
+{
+    if (!isp_config)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    if (!g_json_config_ctx.initialized)
+    {
+        return AICAM_ERROR_NOT_INITIALIZED;
+    }
+
+    if (isp_config != &g_json_config_ctx.current_config.device_service.isp_config)
+    {
+        memcpy(&g_json_config_ctx.current_config.device_service.isp_config, isp_config, sizeof(isp_config_t));
+    }
+
+    // update to NVS
+    aicam_result_t result = json_config_save_isp_config_to_nvs(isp_config);
+    if (result != AICAM_OK) {
+        LOG_CORE_ERROR("Failed to save ISP configuration to NVS");
+        return result;
+    }
+
+    LOG_CORE_INFO("ISP configuration saved: valid=%u, aec_en=%u, awb_en=%u, gamma_en=%u",
+                  isp_config->valid, isp_config->aec_enable, isp_config->awb_enable, isp_config->gamma_enable);
+    return AICAM_OK;
+}
+
+aicam_result_t json_config_isp_param_to_config(ISP_IQParamTypeDef *isp_param, isp_config_t *isp_config)
+{
+    if (isp_param == NULL || isp_config == NULL)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    memset(isp_config, 0, sizeof(isp_config_t));
+    isp_config->valid = AICAM_TRUE;
+
+    /* StatRemoval */
+    isp_config->stat_removal_enable      = isp_param->statRemoval.enable;
+    isp_config->stat_removal_head_lines  = isp_param->statRemoval.nbHeadLines;
+    isp_config->stat_removal_valid_lines = isp_param->statRemoval.nbValidLines;
+
+    /* Demosaicing */
+    isp_config->demosaic_enable = isp_param->demosaicing.enable;
+    isp_config->demosaic_type   = (uint8_t)isp_param->demosaicing.type;
+    isp_config->demosaic_peak   = isp_param->demosaicing.peak;
+    isp_config->demosaic_line_v = isp_param->demosaicing.lineV;
+    isp_config->demosaic_line_h = isp_param->demosaicing.lineH;
+    isp_config->demosaic_edge   = isp_param->demosaicing.edge;
+
+    /* Contrast */
+    isp_config->contrast_enable    = isp_param->contrast.enable;
+    isp_config->contrast_lut[0]    = isp_param->contrast.coeff.LUM_0;
+    isp_config->contrast_lut[1]    = isp_param->contrast.coeff.LUM_32;
+    isp_config->contrast_lut[2]    = isp_param->contrast.coeff.LUM_64;
+    isp_config->contrast_lut[3]    = isp_param->contrast.coeff.LUM_96;
+    isp_config->contrast_lut[4]    = isp_param->contrast.coeff.LUM_128;
+    isp_config->contrast_lut[5]    = isp_param->contrast.coeff.LUM_160;
+    isp_config->contrast_lut[6]    = isp_param->contrast.coeff.LUM_192;
+    isp_config->contrast_lut[7]    = isp_param->contrast.coeff.LUM_224;
+    isp_config->contrast_lut[8]    = isp_param->contrast.coeff.LUM_256;
+
+    /* Stat area */
+    isp_config->stat_area_x      = isp_param->statAreaStatic.X0;
+    isp_config->stat_area_y      = isp_param->statAreaStatic.Y0;
+    isp_config->stat_area_width  = isp_param->statAreaStatic.XSize;
+    isp_config->stat_area_height = isp_param->statAreaStatic.YSize;
+
+    /* Sensor gain / exposure (static) */
+    isp_config->sensor_gain     = isp_param->sensorGainStatic.gain;
+    isp_config->sensor_exposure = isp_param->sensorExposureStatic.exposure;
+
+    /* BadPixel algo */
+    isp_config->bad_pixel_algo_enable   = isp_param->badPixelAlgo.enable;
+    isp_config->bad_pixel_algo_threshold = isp_param->badPixelAlgo.threshold;
+
+    /* BadPixel static */
+    isp_config->bad_pixel_enable  = isp_param->badPixelStatic.enable;
+    isp_config->bad_pixel_strength = isp_param->badPixelStatic.strength;
+
+    /* Black level */
+    isp_config->black_level_enable = isp_param->blackLevelStatic.enable;
+    isp_config->black_level_r      = isp_param->blackLevelStatic.BLCR;
+    isp_config->black_level_g      = isp_param->blackLevelStatic.BLCG;
+    isp_config->black_level_b      = isp_param->blackLevelStatic.BLCB;
+
+    /* AEC algo */
+    isp_config->aec_enable                = isp_param->AECAlgo.enable;
+    isp_config->aec_exposure_compensation = isp_param->AECAlgo.exposureCompensation;
+    isp_config->aec_anti_flicker_freq     = isp_param->AECAlgo.antiFlickerFreq;
+
+    /* AWB algo (5 profiles) */
+    isp_config->awb_enable = isp_param->AWBAlgo.enable;
+    for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++)
+    {
+        memcpy(isp_config->awb_label[i], isp_param->AWBAlgo.label[i], ISP_AWB_LABEL_MAX_LEN);
+        isp_config->awb_ref_color_temp[i] = isp_param->AWBAlgo.referenceColorTemp[i];
+        isp_config->awb_gain_r[i]         = isp_param->AWBAlgo.ispGainR[i];
+        isp_config->awb_gain_g[i]         = isp_param->AWBAlgo.ispGainG[i];
+        isp_config->awb_gain_b[i]         = isp_param->AWBAlgo.ispGainB[i];
+        memcpy(isp_config->awb_ccm[i], isp_param->AWBAlgo.coeff[i], sizeof(isp_config->awb_ccm[i]));
+        memcpy(isp_config->awb_ref_rgb[i], isp_param->AWBAlgo.referenceRGB[i], sizeof(isp_config->awb_ref_rgb[i]));
+    }
+
+    /* ISP gain (static) */
+    isp_config->isp_gain_enable = isp_param->ispGainStatic.enable;
+    isp_config->isp_gain_r      = isp_param->ispGainStatic.ispGainR;
+    isp_config->isp_gain_g      = isp_param->ispGainStatic.ispGainG;
+    isp_config->isp_gain_b      = isp_param->ispGainStatic.ispGainB;
+
+    /* Color conversion (static) */
+    isp_config->color_conv_enable = isp_param->colorConvStatic.enable;
+    memcpy(isp_config->color_conv_matrix, isp_param->colorConvStatic.coeff, sizeof(isp_config->color_conv_matrix));
+
+    /* Gamma */
+    isp_config->gamma_enable = isp_param->gamma.enable;
+
+    /* Sensor delay */
+    isp_config->sensor_delay = isp_param->sensorDelay.delay;
+
+    /* Lux reference */
+    isp_config->lux_hl_ref      = isp_param->luxRef.HL_LuxRef;
+    isp_config->lux_hl_expo1    = isp_param->luxRef.HL_Expo1;
+    isp_config->lux_hl_lum1     = isp_param->luxRef.HL_Lum1;
+    isp_config->lux_hl_expo2    = isp_param->luxRef.HL_Expo2;
+    isp_config->lux_hl_lum2     = isp_param->luxRef.HL_Lum2;
+    isp_config->lux_ll_ref      = isp_param->luxRef.LL_LuxRef;
+    isp_config->lux_ll_expo1    = isp_param->luxRef.LL_Expo1;
+    isp_config->lux_ll_lum1     = isp_param->luxRef.LL_Lum1;
+    isp_config->lux_ll_expo2    = isp_param->luxRef.LL_Expo2;
+    isp_config->lux_ll_lum2     = isp_param->luxRef.LL_Lum2;
+    isp_config->lux_calib_factor = isp_param->luxRef.calibFactor;
+
+    return AICAM_OK;
+}
+
+aicam_result_t json_config_config_to_isp_param(isp_config_t *isp_config, ISP_IQParamTypeDef *isp_param)
+{
+    if (isp_config == NULL || isp_param == NULL)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    memset(isp_param, 0, sizeof(ISP_IQParamTypeDef));
+
+    /* StatRemoval */
+    isp_param->statRemoval.enable      = isp_config->stat_removal_enable;
+    isp_param->statRemoval.nbHeadLines = isp_config->stat_removal_head_lines;
+    isp_param->statRemoval.nbValidLines = isp_config->stat_removal_valid_lines;
+
+    /* Demosaicing */
+    isp_param->demosaicing.enable = isp_config->demosaic_enable;
+    isp_param->demosaicing.type   = (ISP_DemosTypeTypeDef)isp_config->demosaic_type;
+    isp_param->demosaicing.peak   = isp_config->demosaic_peak;
+    isp_param->demosaicing.lineV  = isp_config->demosaic_line_v;
+    isp_param->demosaicing.lineH  = isp_config->demosaic_line_h;
+    isp_param->demosaicing.edge   = isp_config->demosaic_edge;
+
+    /* Contrast */
+    isp_param->contrast.enable           = isp_config->contrast_enable;
+    isp_param->contrast.coeff.LUM_0      = isp_config->contrast_lut[0];
+    isp_param->contrast.coeff.LUM_32     = isp_config->contrast_lut[1];
+    isp_param->contrast.coeff.LUM_64     = isp_config->contrast_lut[2];
+    isp_param->contrast.coeff.LUM_96     = isp_config->contrast_lut[3];
+    isp_param->contrast.coeff.LUM_128    = isp_config->contrast_lut[4];
+    isp_param->contrast.coeff.LUM_160    = isp_config->contrast_lut[5];
+    isp_param->contrast.coeff.LUM_192    = isp_config->contrast_lut[6];
+    isp_param->contrast.coeff.LUM_224    = isp_config->contrast_lut[7];
+    isp_param->contrast.coeff.LUM_256    = isp_config->contrast_lut[8];
+
+    /* Stat area */
+    isp_param->statAreaStatic.X0    = isp_config->stat_area_x;
+    isp_param->statAreaStatic.Y0    = isp_config->stat_area_y;
+    isp_param->statAreaStatic.XSize = isp_config->stat_area_width;
+    isp_param->statAreaStatic.YSize = isp_config->stat_area_height;
+
+    /* Sensor gain / exposure (static) */
+    isp_param->sensorGainStatic.gain        = isp_config->sensor_gain;
+    isp_param->sensorExposureStatic.exposure = isp_config->sensor_exposure;
+
+    /* BadPixel algo */
+    isp_param->badPixelAlgo.enable    = isp_config->bad_pixel_algo_enable;
+    isp_param->badPixelAlgo.threshold = isp_config->bad_pixel_algo_threshold;
+
+    /* BadPixel static */
+    isp_param->badPixelStatic.enable  = isp_config->bad_pixel_enable;
+    isp_param->badPixelStatic.strength = isp_config->bad_pixel_strength;
+
+    /* Black level */
+    isp_param->blackLevelStatic.enable = isp_config->black_level_enable;
+    isp_param->blackLevelStatic.BLCR   = isp_config->black_level_r;
+    isp_param->blackLevelStatic.BLCG   = isp_config->black_level_g;
+    isp_param->blackLevelStatic.BLCB   = isp_config->black_level_b;
+
+    /* AEC algo */
+    isp_param->AECAlgo.enable                = isp_config->aec_enable;
+    isp_param->AECAlgo.exposureCompensation  = isp_config->aec_exposure_compensation;
+    isp_param->AECAlgo.antiFlickerFreq       = isp_config->aec_anti_flicker_freq;
+
+    /* AWB algo */
+    isp_param->AWBAlgo.enable = isp_config->awb_enable;
+    for (int i = 0; i < ISP_AWB_PROFILES_MAX; i++)
+    {
+        memcpy(isp_param->AWBAlgo.label[i], isp_config->awb_label[i], ISP_AWB_LABEL_MAX_LEN);
+        isp_param->AWBAlgo.referenceColorTemp[i] = isp_config->awb_ref_color_temp[i];
+        isp_param->AWBAlgo.ispGainR[i]           = isp_config->awb_gain_r[i];
+        isp_param->AWBAlgo.ispGainG[i]           = isp_config->awb_gain_g[i];
+        isp_param->AWBAlgo.ispGainB[i]           = isp_config->awb_gain_b[i];
+        memcpy(isp_param->AWBAlgo.coeff[i], isp_config->awb_ccm[i], sizeof(isp_param->AWBAlgo.coeff[i]));
+        memcpy(isp_param->AWBAlgo.referenceRGB[i], isp_config->awb_ref_rgb[i], sizeof(isp_param->AWBAlgo.referenceRGB[i]));
+    }
+
+    /* ISP gain (static) */
+    isp_param->ispGainStatic.enable  = isp_config->isp_gain_enable;
+    isp_param->ispGainStatic.ispGainR = isp_config->isp_gain_r;
+    isp_param->ispGainStatic.ispGainG = isp_config->isp_gain_g;
+    isp_param->ispGainStatic.ispGainB = isp_config->isp_gain_b;
+
+    /* Color conversion (static) */
+    isp_param->colorConvStatic.enable = isp_config->color_conv_enable;
+    memcpy(isp_param->colorConvStatic.coeff, isp_config->color_conv_matrix, sizeof(isp_param->colorConvStatic.coeff));
+
+    /* Gamma */
+    isp_param->gamma.enable = isp_config->gamma_enable;
+
+    /* Sensor delay */
+    isp_param->sensorDelay.delay = isp_config->sensor_delay;
+
+    /* Lux reference */
+    isp_param->luxRef.HL_LuxRef    = isp_config->lux_hl_ref;
+    isp_param->luxRef.HL_Expo1     = isp_config->lux_hl_expo1;
+    isp_param->luxRef.HL_Lum1      = isp_config->lux_hl_lum1;
+    isp_param->luxRef.HL_Expo2     = isp_config->lux_hl_expo2;
+    isp_param->luxRef.HL_Lum2      = isp_config->lux_hl_lum2;
+    isp_param->luxRef.LL_LuxRef    = isp_config->lux_ll_ref;
+    isp_param->luxRef.LL_Expo1     = isp_config->lux_ll_expo1;
+    isp_param->luxRef.LL_Lum1      = isp_config->lux_ll_lum1;
+    isp_param->luxRef.LL_Expo2     = isp_config->lux_ll_expo2;
+    isp_param->luxRef.LL_Lum2      = isp_config->lux_ll_lum2;
+    isp_param->luxRef.calibFactor  = isp_config->lux_calib_factor;
+
+    return AICAM_OK;
+}
 
  /*=================== Network Service Configuration API Implementation ====================*/
  aicam_result_t json_config_get_network_service_config(network_service_config_t *network_service_config)

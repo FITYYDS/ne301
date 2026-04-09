@@ -57,7 +57,7 @@ typedef struct {
     device_t       *dev;
     osMutexId_t     mtx_id;
     PowerHandle     pwr_handle;
-    NAU881x_t       NAU881x;
+    NAU881x_t      *nau881x;        // NAU881x codec handle from nau881x_dev
     osSemaphoreId_t sem_id;
     osThreadId_t    codec_processId;
 } codec_t;

@@ -34,7 +34,7 @@ extern "C" {
   * @{
   */
 
-#define OS04C10_MAX_A_GAIN 15872//(15.5*1024)
+#define OS04C10_MAX_A_GAIN          15872//(15.5*1024)
 #define OS04C10_SENSOR_MAX_GAIN     246*1024//(15.5*15.9)                  // max sensor again, a-gain * conversion-gain*d-gain
 /**
   * @brief  OS04C10 ID
@@ -53,12 +53,12 @@ extern "C" {
 #define OS04C10_EXPOSURE_MAX       33266       /* in us, for sensor @30fps */
 
 // /* For 2688x1520 */
-// #define OS04C10_WIDTH              2688
-// #define OS04C10_HEIGHT             1520
+#define OS04C10_WIDTH              2688
+#define OS04C10_HEIGHT             1520
 
-/* For 1920x1080 */
-#define OS04C10_WIDTH              1920
-#define OS04C10_HEIGHT             1080
+// /* For 1920x1080 */
+// #define OS04C10_WIDTH              1920
+// #define OS04C10_HEIGHT             1080
 
 /**
   * @brief  OS04C10 Registers

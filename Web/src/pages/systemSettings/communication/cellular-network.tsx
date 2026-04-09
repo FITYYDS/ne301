@@ -9,6 +9,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import systemSettings, { type SetCellularReq } from '@/services/api/systemSettings';
 import { toast } from 'sonner';
 import SvgIcon from "@/components/svg-icon";
@@ -73,6 +74,7 @@ export default function CellularNetworkPage() {
         pin_code: '',
         authentication: 0,
         enable_roaming: false,
+        operator: 0,
         save: true
     });
     const isChinese = (str: string): boolean => /^[\u4e00-\u9fa5]+$/.test(str)
@@ -371,26 +373,58 @@ export default function CellularNetworkPage() {
 
                         </div>
                         <Separator />
-                        <div className="flex justify-between">
-                            <Label className="text-sm text-text-primary shrink-0">{i18n._('sys.system_management.authentication')}</Label>
-                            <Select
-                              value={(saveCellularData?.authentication ?? 0).toString()}
-                              onValueChange={(value) => {
-                                    const authentication = Number(value);
-                                    setSaveCellularData({ ...saveCellularData, authentication });
-                                    setCellularStatus((prev: any) => (prev ? { ...prev, authentication: value } : prev));
-                                }}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="0">None</SelectItem>
-                                    <SelectItem value="1">PAP</SelectItem>
-                                    <SelectItem value="2">CHAP</SelectItem>
-                                    <SelectItem value="3">PAP/CHAP</SelectItem>
-                                </SelectContent>
-                            </Select>
+                        <div className="flex flex-col gap-2">
+                            <div className="flex justify-between">
+                                <Label className="text-sm text-text-primary shrink-0">{i18n._('sys.system_management.authentication')}</Label>
+                                <Select
+                                  value={(saveCellularData?.authentication ?? 0).toString()}
+                                  onValueChange={(value) => {
+                                        const authentication = Number(value);
+                                        setSaveCellularData({ ...saveCellularData, authentication });
+                                        setCellularStatus((prev: any) => (prev ? { ...prev, authentication: value } : prev));
+                                    }}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="0">None</SelectItem>
+                                        <SelectItem value="1">PAP</SelectItem>
+                                        <SelectItem value="2">CHAP</SelectItem>
+                                        <SelectItem value="3">PAP/CHAP</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex justify-between">
+                                <Label className="text-sm text-text-primary shrink-0">{i18n._('sys.system_management.cellular_operator') ?? 'Operator'}</Label>
+                                <Select
+                                  value={(saveCellularData?.operator ?? 0).toString()}
+                                  onValueChange={(value) => {
+                                        const operator = Number(value);
+                                        setSaveCellularData({ ...saveCellularData, operator });
+                                    }}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="0">{i18n._('sys.system_management.cellular_operator_auto') ?? 'Auto'}</SelectItem>
+                                        <SelectItem value="1">{i18n._('sys.system_management.cellular_operator_cmcc') ?? 'China Mobile'}</SelectItem>
+                                        <SelectItem value="2">{i18n._('sys.system_management.cellular_operator_cucc') ?? 'China Unicom'}</SelectItem>
+                                        <SelectItem value="3">{i18n._('sys.system_management.cellular_operator_ctcc') ?? 'China Telecom'}</SelectItem>
+                                        <SelectItem value="4">{i18n._('sys.system_management.cellular_operator_verizon') ?? 'American Verizon'}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <Separator />
+                            <div className="flex justify-between items-center gap-2">
+                                <Label className="text-sm text-text-primary shrink-0" htmlFor="cellular-enable-roaming">{i18n._('sys.system_management.cellular_enable_roaming')}</Label>
+                                <Switch
+                                    id="cellular-enable-roaming"
+                                    checked={!!saveCellularData.enable_roaming}
+                                    onCheckedChange={(checked) => setSaveCellularData((prev) => ({ ...prev, enable_roaming: checked }))}
+                                />
+                            </div>
                         </div>
                     </div>
 

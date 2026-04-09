@@ -40,8 +40,8 @@ extern "C" {
 /* USER CODE END Includes */
 
 extern SPI_HandleTypeDef hspi2;
-
 extern SPI_HandleTypeDef hspi4;
+extern SPI_HandleTypeDef hspi6;
 
 /* USER CODE BEGIN Private defines */
 
@@ -49,11 +49,14 @@ extern SPI_HandleTypeDef hspi4;
 
 void MX_SPI2_Init(void);
 void MX_SPI4_Init(void);
+void MX_SPI6_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 uint8_t SPI2_ReadWriteByte(uint8_t wByte);
 int SPI2_WriteBytes(uint8_t *wBytes, uint16_t wLength, uint32_t timeout);
 int SPI2_ReadBytes(uint8_t *rBytes, uint16_t rLength, uint32_t timeout);
+int SPI6_WriteBytes(const uint8_t *data, uint32_t length, uint32_t timeout);
+int SPI6_WriteBytesDMA(const uint8_t *data, uint32_t length, uint32_t timeout_ms);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

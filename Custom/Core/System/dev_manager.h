@@ -26,7 +26,6 @@
 #define BATTERY_DEVICE_NAME "battery"
 #define PWR_DEVICE_NAME     "pwr"
 #define STROAGE_DEVICE_NAME "flash_storage"
-#define UVC_DEVICE_NAME     "uvc"
 #define USBH_DEVICE_NAME    "usbh_video"
 #define DRAW_DEVICE_NAME    "draw"
 #define IO_DEVICE_NAME      "io"
@@ -41,7 +40,6 @@
 #define ENC_CMD_BASE          0x00060000
 #define JPEGC_CMD_BASE        0x00070000
 #define WDG_CMD_BASE          0x00080000
-#define UVC_CMD_BASE          0x00090000
 #define USBH_CMD_BASE         0x000A0000
 #define DRAW_CMD_BASE         0x000B0000
 
