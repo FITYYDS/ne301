@@ -26,8 +26,10 @@
 #include "web_service.h"
 #include "ai_draw_service.h"
 #include "nn.h"
+#include "quick_snapshot.h"
 #include "cJSON.h"
- 
+#include "webhook_service.h"
+#include "api_ota_module.h" 
  
  /* ==================== System Controller Implementation ==================== */
  
@@ -877,10 +879,10 @@ static aicam_result_t unregister_pir_runtime_callback(void);
          LOG_SVC_ERROR("Invalid controller in timer trigger callback");
          return;
      }
-     
+
      controller->timer_task_count++;
      LOG_SVC_INFO("Timer trigger activated (count: %lu)", controller->timer_task_count);
-     
+
      // Call the registered capture callback if available
      if (controller->capture_callback) {
          controller->capture_callback(CAPTURE_TRIGGER_RTC, controller->capture_callback_user_data);
@@ -888,11 +890,108 @@ static aicam_result_t unregister_pir_runtime_callback(void);
      else {
          LOG_SVC_ERROR("No capture callback registered");
      }
-     
+
      // Update activity time to prevent power mode timeout during capture
      system_controller_update_activity(controller);
  }
- 
+
+// Register RTC trigger without locking (for use within scheduler callbacks that already hold the lock)
+static aicam_result_t register_rtc_trigger_locked(system_controller_t *controller,
+                                                   wakeup_type_t type,
+                                                   const char *name,
+                                                   uint64_t trigger_sec,
+                                                   int16_t day_offset,
+                                                   uint8_t weekdays,
+                                                   repeat_type_t repeat,
+                                                   timer_trigger_callback_t callback,
+                                                   void *user_data)
+{
+    if (!controller || !controller->is_initialized || !name || !callback) {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    rtc_wakeup_t wakeup = {0};
+    strncpy(wakeup.name, name, sizeof(wakeup.name) - 1);
+    wakeup.type = type;
+    wakeup.repeat = repeat;
+    wakeup.trigger_sec = trigger_sec;
+    wakeup.day_offset = day_offset;
+    wakeup.weekdays = weekdays;
+    wakeup.callback = (void(*)(void*))callback;
+    wakeup.arg = user_data;
+
+    int result = rtc_register_wakeup_ex_locked(&wakeup);
+    if (result != 0) {
+        LOG_SVC_ERROR("Failed to register RTC trigger (locked): %d", result);
+        return AICAM_ERROR;
+    }
+    return AICAM_OK;
+}
+
+/**
+ * @brief Calculate next trigger for scheduled_interval mode (continuous 24-hour cycle)
+ * Schedule is a continuous cycle anchored at start_time with fixed interval, wrapping past midnight.
+ * Example: start=8:00, interval=7min → points are 8:00, 8:07, ..., 23:59, 0:06, ..., 7:55, 8:00, ...
+ * @return Seconds-since-midnight of next trigger
+ */
+static uint32_t calculate_next_scheduled_interval_trigger(
+    uint32_t start_time_sec, uint32_t interval_sec, uint32_t now_sec)
+{
+    if (interval_sec == 0) return start_time_sec;
+
+    // Position within the 24-hour cycle relative to anchor
+    uint32_t cycle_now = (now_sec - start_time_sec + 86400) % 86400;
+    // Next interval boundary within the cycle
+    uint32_t cycle_next = (cycle_now / interval_sec + 1) * interval_sec;
+
+    if (cycle_next >= 86400) {
+        // Wrap around: next trigger is at start_time (cycle boundary resets)
+        return start_time_sec;
+    }
+    return (start_time_sec + cycle_next) % 86400;
+}
+
+/**
+ * @brief Scheduled interval timer callback — fires capture, then re-registers next
+ * @note Called from within scheduler_handle_event which holds the scheduler lock,
+ *       so we must use _locked variants and skip unregister (REPEAT_ONCE auto-deletes).
+ */
+static void scheduled_interval_timer_callback(void *user_data)
+{
+    system_controller_t *controller = (system_controller_t *)user_data;
+    if (!controller || !controller->is_initialized) return;
+
+    controller->timer_task_count++;
+    LOG_SVC_INFO("Scheduled interval timer triggered (count: %lu)", controller->timer_task_count);
+
+    // Perform capture
+    if (controller->capture_callback) {
+        controller->capture_callback(CAPTURE_TRIGGER_RTC, controller->capture_callback_user_data);
+    }
+
+    // Calculate and register next trigger
+    const timer_trigger_config_t *tc = &controller->work_config.timer_trigger;
+    RTC_TIME_S now_rtc = rtc_get_time();
+    uint32_t now_sec = now_rtc.hour * 3600 + now_rtc.minute * 60 + now_rtc.second;
+    uint32_t next = calculate_next_scheduled_interval_trigger(tc->start_time, tc->interval_sec, now_sec);
+
+    // REPEAT_ONCE job is already auto-deleted by process_wakeup_jobs — no unregister needed.
+    // Use unique name for the new job to avoid collisions.
+    snprintf(controller->timer_task_name, sizeof(controller->timer_task_name),
+             "tiv_%lu", (unsigned long)rtc_get_timeStamp() % 100000);
+
+    // Determine if next trigger is tomorrow (next <= now_sec means it wrapped past midnight)
+    uint8_t day_offset = (next <= now_sec) ? 1 : 0;
+
+    register_rtc_trigger_locked(controller,
+        WAKEUP_TYPE_ABSOLUTE, controller->timer_task_name,
+        next, day_offset, 0x7F, REPEAT_ONCE,
+        scheduled_interval_timer_callback, controller);
+    LOG_SVC_INFO("Scheduled interval: next trigger at %lu sec (day_offset=%u)", next, day_offset);
+
+    system_controller_update_activity(controller);
+}
+
  /**
   * @brief Apply timer trigger configuration
   * @param controller System controller handle
@@ -927,16 +1026,31 @@ static aicam_result_t unregister_pir_runtime_callback(void);
      
      switch (timer_config->capture_mode) {
          case AICAM_TIMER_CAPTURE_MODE_INTERVAL:
-             // Interval mode: capture at regular intervals
-             result = system_controller_register_rtc_trigger(controller,
-                                                            WAKEUP_TYPE_INTERVAL,
-                                                            controller->timer_task_name,
-                                                            timer_config->interval_sec,   //interval_sec
-                                                            0,  // day_offset
-                                                            0,  // weekdays
-                                                            REPEAT_INTERVAL,
-                                                            timer_trigger_callback,
-                                                            controller);   //user_data
+             if (timer_config->interval_mode == AICAM_TIMER_INTERVAL_MODE_SCHEDULED &&
+                 timer_config->interval_sec > 0) {
+                 // Scheduled interval: continuous 24-hour cycle anchored at start_time
+                 RTC_TIME_S now_rtc = rtc_get_time();
+                 uint32_t now_sec = now_rtc.hour * 3600 + now_rtc.minute * 60 + now_rtc.second;
+                 uint32_t next = calculate_next_scheduled_interval_trigger(
+                     timer_config->start_time, timer_config->interval_sec, now_sec);
+
+                 uint8_t day_offset = (next <= now_sec) ? 1 : 0;
+                 result = system_controller_register_rtc_trigger(controller,
+                     WAKEUP_TYPE_ABSOLUTE, controller->timer_task_name,
+                     next, day_offset, 0x7F, REPEAT_ONCE,
+                     scheduled_interval_timer_callback, controller);
+                 LOG_SVC_INFO("Scheduled interval: first trigger at %lu sec (day_offset=%u)", next, day_offset);
+             } else {
+                 // Normal interval mode (unchanged behavior)
+                 result = system_controller_register_rtc_trigger(controller,
+                                                                WAKEUP_TYPE_INTERVAL,
+                                                                controller->timer_task_name,
+                                                                timer_config->interval_sec,
+                                                                0, 0,
+                                                                REPEAT_INTERVAL,
+                                                                timer_trigger_callback,
+                                                                controller);
+             }
              break;
              
          case AICAM_TIMER_CAPTURE_MODE_ABSOLUTE:
@@ -990,6 +1104,12 @@ static aicam_result_t unregister_pir_runtime_callback(void);
  static void wakeup_task_async(system_controller_t *controller, aicam_capture_trigger_t trigger_type)
  {
      LOG_SVC_INFO("=== Wakeup Task Started ===");
+
+     if (ota_is_upload_in_progress()) {
+         LOG_SVC_WARN("Wakeup task skipped: OTA upgrade in progress");
+         return;
+     }
+
      LOG_SVC_INFO("Current work mode: %d", controller->current_work_mode);
 
 
@@ -1187,7 +1307,60 @@ aicam_result_t system_service_trigger_capture(capture_trigger_type_t trigger_typ
     
     LOG_SVC_INFO("Manually triggering capture: type=%d", trigger_type);
     controller->capture_callback(trigger_type, controller->capture_callback_user_data);
-    
+
+    return AICAM_OK;
+}
+
+aicam_result_t system_controller_get_next_capture_at(
+    system_controller_t *controller, uint64_t *next_capture_at)
+{
+    if (!controller || !next_capture_at) return AICAM_ERROR_INVALID_PARAM;
+    *next_capture_at = 0;
+
+    if (!controller->timer_trigger_active) return AICAM_OK;
+
+    const timer_trigger_config_t *tc = &controller->work_config.timer_trigger;
+    if (!tc->enable) return AICAM_OK;
+
+    RTC_TIME_S now_rtc = rtc_get_time();
+    uint64_t now_ts = rtc_get_timeStamp();
+    uint32_t now_sec = now_rtc.hour * 3600 + now_rtc.minute * 60 + now_rtc.second;
+
+    switch (tc->capture_mode) {
+    case AICAM_TIMER_CAPTURE_MODE_INTERVAL:
+        if (tc->interval_mode == AICAM_TIMER_INTERVAL_MODE_SCHEDULED) {
+            uint32_t next = calculate_next_scheduled_interval_trigger(
+                tc->start_time, tc->interval_sec, now_sec);
+            // If next <= now_sec, it means the trigger wraps to tomorrow
+            if (next <= now_sec) {
+                *next_capture_at = now_ts - now_sec + 86400 + next;
+            } else {
+                *next_capture_at = now_ts - now_sec + next;
+            }
+        } else {
+            // Normal interval: next is interval_sec from now
+            *next_capture_at = now_ts + tc->interval_sec;
+        }
+        break;
+    case AICAM_TIMER_CAPTURE_MODE_ABSOLUTE:
+        if (tc->time_node_count > 0) {
+            uint32_t earliest = UINT32_MAX;
+            for (int i = 0; i < tc->time_node_count && i < 10; i++) {
+                if (tc->time_node[i] > now_sec && tc->time_node[i] < earliest) {
+                    earliest = tc->time_node[i];
+                }
+            }
+            if (earliest != UINT32_MAX) {
+                *next_capture_at = now_ts - now_sec + earliest;
+            } else {
+                // All past today — first node tomorrow
+                *next_capture_at = now_ts - now_sec + 86400 + tc->time_node[0];
+            }
+        }
+        break;
+    default:
+        break;
+    }
     return AICAM_OK;
 }
 
@@ -1212,7 +1385,7 @@ aicam_result_t system_controller_register_io_trigger(system_controller_t *contro
      
      return AICAM_OK;
  }
- 
+
  aicam_result_t system_controller_register_rtc_trigger(system_controller_t *controller,
                                                       wakeup_type_t type,
                                                       const char *name,
@@ -2903,6 +3076,11 @@ aicam_result_t system_service_request_sleep(uint32_t duration_sec)
 
 /* ==================== Unified Capture Entry ==================== */
 
+aicam_bool_t system_service_capture_in_progress(void)
+{
+    return g_capture_in_progress;
+}
+
 aicam_result_t system_service_capture_request(const system_capture_request_t *request,
                                               system_capture_response_t *response)
 {
@@ -2917,11 +3095,18 @@ aicam_result_t system_service_capture_request(const system_capture_request_t *re
         }
     }
 
+    // Early reject without touching global policies/state.
+    // The actual capture function also guards against busy/OTA, but doing this here
+    // prevents concurrent requests from temporarily overriding global policy knobs.
     if (g_capture_in_progress) {
         return AICAM_ERROR_BUSY;
     }
 
-    g_capture_in_progress = AICAM_TRUE;
+    if (ota_is_upload_in_progress()) {
+        LOG_SVC_WARN("Capture rejected: OTA upgrade in progress");
+        return AICAM_ERROR_BUSY;
+    }
+
     g_fast_fail_mqtt_policy = resolved.fast_fail_mqtt;
 
     uint64_t start_ms = rtc_get_uptime_ms();
@@ -2932,7 +3117,6 @@ aicam_result_t system_service_capture_request(const system_capture_request_t *re
         resolved.trigger_type);
     uint64_t duration_ms = rtc_get_uptime_ms() - start_ms;
 
-    g_capture_in_progress = AICAM_FALSE;
     g_fast_fail_mqtt_policy = AICAM_FALSE;
 
     if (response) {
@@ -3126,13 +3310,20 @@ static aicam_result_t generate_inference_json(const nn_result_t *nn_result,
  * @param qos MQTT QoS level (0, 1, or 2)
  * @return AICAM_OK on success, error code otherwise
  */
-aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai, 
+aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
                                                      uint32_t chunk_size,
                                                      aicam_bool_t store_to_sd,
                                                      aicam_capture_trigger_t trigger_type)
 {
+    if (g_capture_in_progress || ota_is_upload_in_progress()) {
+        LOG_SVC_WARN("Capture rejected: busy or OTA in progress");
+        return AICAM_ERROR_BUSY;
+    }
+    g_capture_in_progress = AICAM_TRUE;
+
     if (!g_system_service_ctx.is_initialized || !g_system_service_ctx.controller) {
         LOG_SVC_ERROR("System service not initialized");
+        g_capture_in_progress = AICAM_FALSE;
         return AICAM_ERROR_NOT_INITIALIZED;
     }
 
@@ -3151,6 +3342,7 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     uint8_t *jpeg_buffer = NULL;
     uint8_t *jpeg_copy = NULL;
     int jpeg_size = 0;
+    size_t jpeg_size_ret = 0;
     nn_result_t nn_result = {0};
     uint32_t frame_id = 0;
     aicam_result_t ret = AICAM_OK;
@@ -3158,7 +3350,14 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     step_start_time = rtc_get_uptime_ms();
     if (requires_time_optimized_mode) {
         LOG_SVC_INFO("[TIMING] Step 1: Capturing image using fast capture API (RTC wakeup)...");
-        ret = device_service_camera_capture_fast(&jpeg_buffer, &jpeg_size, enable_ai, &nn_result, &frame_id);
+        if (quick_snapshot_is_init()) {
+            ret = quick_snapshot_wait_capture_jpeg(&jpeg_buffer, &jpeg_size_ret);
+            jpeg_size = (int)jpeg_size_ret;
+            if (ret == AICAM_OK && enable_ai) ret = quick_snapshot_wait_ai_result(&nn_result);
+            if (ret == AICAM_OK) ret = quick_snapshot_get_frame_id(&frame_id);
+        } else {
+            ret = device_service_camera_capture_fast(&jpeg_buffer, &jpeg_size, enable_ai, &nn_result, &frame_id);
+        }
         step_end_time = rtc_get_uptime_ms();
         step_duration = step_end_time - step_start_time;
         
@@ -3210,25 +3409,10 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             uint8_t *inference_jpeg = NULL;
             uint32_t inference_jpeg_size = 0;
 
-            jpeg_copy = buffer_calloc(1, jpeg_size);
-            if (!jpeg_copy) {
-                LOG_SVC_WARN("Failed to allocate JPEG copy buffer");
-            } else {
-                memcpy(jpeg_copy, jpeg_buffer, jpeg_size);
-            }
-            
-            if(jpeg_copy) {
-                device_service_camera_free_jpeg_buffer(jpeg_buffer);
-                jpeg_buffer = jpeg_copy;
-                
-                step_start_time = rtc_get_uptime_ms();
-                LOG_SVC_INFO("[TIMING] Step 1.1.2: Generating inference image...");
-                ret = generate_inference_image(jpeg_buffer, jpeg_size, &nn_result, 
-                                        &inference_jpeg, &inference_jpeg_size);
-                step_end_time = rtc_get_uptime_ms();
-                step_duration = step_end_time - step_start_time;
-                
-                if (ret == AICAM_OK && inference_jpeg && inference_jpeg_size > 0) {
+            if (quick_snapshot_is_init()) {
+                ret = quick_snapshot_wait_ai_jpeg(&inference_jpeg, &jpeg_size_ret);
+                if (ret == AICAM_OK && inference_jpeg && jpeg_size_ret > 0) {
+                    inference_jpeg_size = (uint32_t)jpeg_size_ret;
                     snprintf(filename, sizeof(filename), "image_%lu_%lu_inference.jpg", timestamp, (unsigned long)frame_id);
                     aicam_result_t inference_ret = sd_write_file(inference_jpeg, inference_jpeg_size, filename);
                     step_end_time = rtc_get_uptime_ms();
@@ -3247,6 +3431,46 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
                 } else {
                     LOG_SVC_WARN("[TIMING] Step 1.1.2 SKIPPED: Failed to generate inference image: %d (duration: %lu ms)", 
                                 ret, (unsigned long)step_duration);
+                }
+            } else {
+                jpeg_copy = buffer_calloc(1, jpeg_size);
+                if (!jpeg_copy) {
+                    LOG_SVC_WARN("Failed to allocate JPEG copy buffer");
+                } else {
+                    memcpy(jpeg_copy, jpeg_buffer, jpeg_size);
+                }
+
+                if (jpeg_copy) {
+                    device_service_camera_free_jpeg_buffer(jpeg_buffer);
+                    jpeg_buffer = jpeg_copy;
+                    
+                    step_start_time = rtc_get_uptime_ms();
+                    LOG_SVC_INFO("[TIMING] Step 1.1.2: Generating inference image...");
+                    ret = generate_inference_image(jpeg_buffer, jpeg_size, &nn_result, 
+                                            &inference_jpeg, &inference_jpeg_size);
+                    step_end_time = rtc_get_uptime_ms();
+                    step_duration = step_end_time - step_start_time;
+                    
+                    if (ret == AICAM_OK && inference_jpeg && inference_jpeg_size > 0) {
+                        snprintf(filename, sizeof(filename), "image_%lu_%lu_inference.jpg", timestamp, (unsigned long)frame_id);
+                        aicam_result_t inference_ret = sd_write_file(inference_jpeg, inference_jpeg_size, filename);
+                        step_end_time = rtc_get_uptime_ms();
+                        step_duration = step_end_time - step_start_time;
+                        
+                        if (inference_ret != AICAM_OK) {
+                            LOG_SVC_ERROR("[TIMING] Step 1.1.2 FAILED: Store inference image to sd card failed: %d (duration: %lu ms)", 
+                                        inference_ret, (unsigned long)step_duration);
+                        } else {
+                            LOG_SVC_INFO("[TIMING] Step 1.1.2 COMPLETED: Inference image stored to SD card (duration: %lu ms)", 
+                                        (unsigned long)step_duration);
+                        }
+                        
+                        // Free inference JPEG buffer
+                        device_service_camera_free_jpeg_buffer(inference_jpeg);
+                    } else {
+                        LOG_SVC_WARN("[TIMING] Step 1.1.2 SKIPPED: Failed to generate inference image: %d (duration: %lu ms)", 
+                                    ret, (unsigned long)step_duration);
+                    }
                 }
             }
         }
@@ -3374,51 +3598,40 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
                      (unsigned long)step_duration);
     }
 
-    step_start_time = rtc_get_uptime_ms();
-    LOG_SVC_INFO("[TIMING] Step 3.1: Checking MQTT network connection...");
-    uint32_t current_flags = service_get_ready_flags();
+    aicam_result_t upload_result = AICAM_ERROR;
+    aicam_bool_t mqtt_uploaded = AICAM_FALSE;
+    aicam_bool_t webhook_succeeded = AICAM_FALSE;
+    aicam_bool_t mqtt_available = mqtt_service_is_running();
 
-    if (g_fast_fail_mqtt_policy) {
+    step_start_time = rtc_get_uptime_ms();
+
+    if (!mqtt_available) {
+        LOG_SVC_INFO("[TIMING] Step 3.1 SKIPPED: MQTT service not running — skip to webhook/SD");
+    } else if (g_fast_fail_mqtt_policy) {
         if (!mqtt_service_is_connected()) {
-            LOG_SVC_ERROR("[TIMING] Step 3.1 FAST-FAIL: MQTT not connected (flags=0x%08X)", current_flags);
-            if (jpeg_copy && jpeg_buffer == jpeg_copy) {
-                buffer_free(jpeg_buffer);
-            } else {
-                device_service_camera_free_jpeg_buffer(jpeg_buffer);
-            }
-            jpeg_buffer = NULL;
-            jpeg_copy = NULL;
-            return AICAM_ERROR_UNAVAILABLE;
+            LOG_SVC_INFO("[TIMING] Step 3.1 FAST-FAIL: MQTT not connected — skip MQTT, try webhook/SD");
+            mqtt_available = AICAM_FALSE;
         }
     } else {
-        LOG_SVC_INFO("[TIMING] Step 3.1: Current service flags: 0x%08X, MQTT_NET_CONNECTED: %s", 
+        LOG_SVC_INFO("[TIMING] Step 3.1: Checking MQTT network connection...");
+        uint32_t current_flags = service_get_ready_flags();
+        LOG_SVC_INFO("[TIMING] Step 3.1: Current service flags: 0x%08X, MQTT_NET_CONNECTED: %s",
                      current_flags, (current_flags & MQTT_NET_CONNECTED) ? "YES" : "NO");
         aicam_result_t result = service_wait_for_ready(MQTT_NET_CONNECTED, AICAM_TRUE, 15000);
         if (result != AICAM_OK) {
-            LOG_SVC_ERROR("[TIMING] Step 3.1 FAILED: Failed to wait for MQTT network connected: %d (timeout: 15s)", result);
-            LOG_SVC_ERROR("[TIMING] Step 3.1: Final service flags: 0x%08X", service_get_ready_flags());
-            if (jpeg_copy && jpeg_buffer == jpeg_copy) {
-                buffer_free(jpeg_buffer);
-            } else {
-                device_service_camera_free_jpeg_buffer(jpeg_buffer);
-            }
-            jpeg_buffer = NULL;
-            jpeg_copy = NULL;
-            return AICAM_ERROR_TIMEOUT;
+            LOG_SVC_INFO("[TIMING] Step 3.1 FAILED: MQTT network not ready: %d — skip MQTT, try webhook/SD", result);
+            LOG_SVC_INFO("[TIMING] Step 3.1: Final service flags: 0x%08X", service_get_ready_flags());
+            mqtt_available = AICAM_FALSE;
         }
     }
 
     step_end_time = rtc_get_uptime_ms();
     step_duration = step_end_time - step_start_time;
-    LOG_SVC_INFO("[TIMING] Step 3.1 COMPLETED: MQTT network ready (duration: %lu ms)", 
-                 (unsigned long)step_duration);
+    LOG_SVC_INFO("[TIMING] Step 3.1 COMPLETED: duration: %lu ms", (unsigned long)step_duration);
 
     // Step 4: Check MQTT connection and upload
     step_start_time = rtc_get_uptime_ms();
-    LOG_SVC_INFO("[TIMING] Step 4: Checking MQTT connection and uploading...");
-    aicam_result_t upload_result = AICAM_ERROR;
-    
-    if (mqtt_service_is_connected()) {
+    if (mqtt_available && mqtt_service_is_connected()) {
         LOG_SVC_INFO("[TIMING] MQTT connected - uploading image");
         
         // Determine upload method based on image size
@@ -3440,9 +3653,10 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             uint64_t upload_duration = upload_end_time - upload_start_time;
 
             if (mqtt_result >= 0) {
-                LOG_SVC_INFO("[TIMING] Image uploaded successfully (msg_id: %d, upload duration: %lu ms)", 
+                LOG_SVC_INFO("[TIMING] Image uploaded successfully (msg_id: %d, upload duration: %lu ms)",
                             mqtt_result, (unsigned long)upload_duration);
                 upload_result = AICAM_OK;
+                mqtt_uploaded = AICAM_TRUE;
             } else {
                 LOG_SVC_ERROR("[TIMING] Image upload failed: %d (upload duration: %lu ms)", 
                              mqtt_result, (unsigned long)upload_duration);
@@ -3466,9 +3680,10 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
             uint64_t upload_duration = upload_end_time - upload_start_time;
 
             if (mqtt_result > 0) {
-                LOG_SVC_INFO("[TIMING] Image uploaded in %d chunks (upload duration: %lu ms)", 
+                LOG_SVC_INFO("[TIMING] Image uploaded in %d chunks (upload duration: %lu ms)",
                             mqtt_result, (unsigned long)upload_duration);
                 upload_result = AICAM_OK;
+                mqtt_uploaded = AICAM_TRUE;
             } else {
                 LOG_SVC_ERROR("[TIMING] Chunked upload failed: %d (upload duration: %lu ms)", 
                              mqtt_result, (unsigned long)upload_duration);
@@ -3477,19 +3692,83 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
         }
         step_end_time = rtc_get_uptime_ms();
         step_duration = step_end_time - step_start_time;
-        LOG_SVC_INFO("[TIMING] Step 4 COMPLETED: MQTT upload finished (duration: %lu ms)", 
+        LOG_SVC_INFO("[TIMING] Step 4 COMPLETED: MQTT upload finished (duration: %lu ms)",
                      (unsigned long)step_duration);
-    } 
-                
-        
+    } else {
+        step_end_time = rtc_get_uptime_ms();
+        step_duration = step_end_time - step_start_time;
+        LOG_SVC_INFO("[TIMING] Step 4 SKIPPED: MQTT not available (duration: %lu ms)",
+                     (unsigned long)step_duration);
+    }
+
+    // Step 4.5: Webhook push (non-blocking, fire-and-forget)
+    {
+        aicam_bool_t wh_enabled = webhook_service_is_enabled();
+        LOG_SVC_INFO("[TIMING] Step 4.5: webhook enabled=%d, jpeg_buffer=%p, jpeg_copy=%p",
+                     wh_enabled, (void *)jpeg_buffer, (void *)jpeg_copy);
+
+        if (wh_enabled && jpeg_buffer) {
+            /* Webhook task uses buffer_free() to release jpeg_data, so the buffer
+             * must be a buffer_calloc allocation.  If jpeg_buffer is still the
+             * camera driver's buffer (jpeg_copy == NULL), make a heap copy and
+             * return the camera buffer immediately. */
+            if (!jpeg_copy) {
+                LOG_SVC_INFO("[TIMING] Step 4.5: copying jpeg (%d bytes) for webhook push", jpeg_size);
+                uint8_t *wh_buf = buffer_calloc(1, jpeg_size);
+                if (wh_buf) {
+                    memcpy(wh_buf, jpeg_buffer, jpeg_size);
+                    device_service_camera_free_jpeg_buffer(jpeg_buffer);
+                    jpeg_buffer = wh_buf;
+                    jpeg_copy = wh_buf;
+                } else {
+                    LOG_SVC_WARN("Webhook: failed to copy jpeg for push (size=%d)", jpeg_size);
+                }
+            }
+
+            // Only push if buffer is confirmed to be a buffer_calloc allocation
+            LOG_SVC_INFO("[TIMING] Step 4.5: buffer check: jpeg_buffer=%p, jpeg_copy=%p, equal=%d",
+                         (void *)jpeg_buffer, (void *)jpeg_copy,
+                         (jpeg_buffer && jpeg_copy && jpeg_buffer == jpeg_copy));
+            if (jpeg_buffer && jpeg_copy && jpeg_buffer == jpeg_copy) {
+                aicam_result_t wh_ret = webhook_service_push_capture(
+                    jpeg_buffer, (uint32_t)jpeg_size, &metadata, ai_result_ptr);
+                LOG_SVC_INFO("[TIMING] Step 4.5: push_capture returned %d", wh_ret);
+                if (wh_ret == AICAM_OK) {
+                    // Ownership transferred to webhook task — skip cleanup in Step 5
+                    jpeg_buffer = NULL;
+                    upload_result = AICAM_OK;
+                    webhook_succeeded = AICAM_TRUE;
+                }
+            }
+        } else {
+            LOG_SVC_INFO("[TIMING] Step 4.5 SKIPPED: enabled=%d, jpeg_buffer=%p",
+                         wh_enabled, (void *)jpeg_buffer);
+        }
+    }
+
+    // Step 4.6: Wait for webhook push to complete (needed for sleep wake-up)
+    if (!jpeg_buffer && webhook_service_is_enabled()) {
+        step_start_time = rtc_get_uptime_ms();
+        /* Worst case: 10s network wait + 15s HTTP timeout = 25s */
+        aicam_result_t wh_wait = webhook_service_wait_pending(30000);
+        step_end_time = rtc_get_uptime_ms();
+        step_duration = step_end_time - step_start_time;
+        LOG_SVC_INFO("[TIMING] Step 4.6: Webhook wait %s (duration: %lu ms)",
+                     wh_wait == AICAM_OK ? "completed" : "timed out",
+                     (unsigned long)step_duration);
+    } else if (jpeg_buffer) {
+        LOG_SVC_INFO("[TIMING] Step 4.6 SKIPPED: push was not queued (jpeg_buffer=%p)", (void *)jpeg_buffer);
+    }
 
     // Step 5: Cleanup
     step_start_time = rtc_get_uptime_ms();
     LOG_SVC_INFO("[TIMING] Step 5: Cleaning up...");
-    if (jpeg_copy && jpeg_buffer == jpeg_copy) {
-        buffer_free(jpeg_buffer);
-    } else {
-        device_service_camera_free_jpeg_buffer(jpeg_buffer);
+    if (jpeg_buffer) {
+        if (jpeg_copy && jpeg_buffer == jpeg_copy) {
+            buffer_free(jpeg_buffer);
+        } else {
+            device_service_camera_free_jpeg_buffer(jpeg_buffer);
+        }
     }
     jpeg_buffer = NULL;
     jpeg_copy = NULL;
@@ -3498,8 +3777,8 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
     LOG_SVC_INFO("[TIMING] Step 5 COMPLETED: Cleanup finished (duration: %lu ms)", 
                  (unsigned long)step_duration);
 
-    // Step 6: Wait for publish confirmation (if upload was successful)
-    if (upload_result == AICAM_OK) {
+    // Step 6: Wait for MQTT publish confirmation (only if MQTT upload was performed)
+    if (mqtt_uploaded) {
         step_start_time = rtc_get_uptime_ms();
         LOG_SVC_INFO("[TIMING] Step 6: Waiting for publish confirmation...");
 
@@ -3513,7 +3792,9 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
 
         if(mqtt_service_wait_for_event(MQTT_EVENT_PUBLISHED, AICAM_TRUE, puback_timeout) != AICAM_OK){
             LOG_SVC_ERROR("[TIMING] Step 6 FAILED: Wait for published event failed");
-            upload_result = AICAM_ERROR;
+            if (!webhook_succeeded) {
+                upload_result = AICAM_ERROR;
+            }
         } else {
             step_end_time = rtc_get_uptime_ms();
             step_duration = step_end_time - step_start_time;
@@ -3538,10 +3819,9 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
                      (unsigned long)total_duration, total_duration / 1000.0f);
     }
 
+    g_capture_in_progress = AICAM_FALSE;
     return upload_result;
 }
-
-/* ==================== PIR Debug Commands ==================== */
 
 /**
  * @brief PIR status command: Show PIR sensor status and configuration

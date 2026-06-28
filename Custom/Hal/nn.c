@@ -9,14 +9,17 @@
 #include "debug.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "ll_aton_runtime.h"
 #include "ll_aton_reloc_network.h"
 #include "pp.h"
 #include "nn.h"
 #include "cJSON.h"
+#include "gauge_reading.h"
 #include "mpool.h"
 #include "camera.h"
 #include "mem_map.h"
+#include "storage.h"
 
 /* ==================== internal data structure ==================== */
 
@@ -85,15 +88,19 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
         return -1;
     }
 
+    storage_lock();
+
     nn_package_header_t *header = (nn_package_header_t *)file_ptr;
 
     if (header->magic != MODEL_PACKAGE_MAGIC) {
         LOG_DRV_ERROR("Invalid model package magic number\r\r\n");
+        storage_unlock();
         return -1;
     }
 
     if (header->version != MODEL_PACKAGE_VERSION) {
         LOG_DRV_ERROR("Incompatible model package version 0X%lx\r\r\n", header->version);
+        storage_unlock();
         return -1;
     }
 
@@ -107,6 +114,7 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
     cJSON *root = cJSON_Parse((const char *)info->config_ptr);
     if (root == NULL) {
         LOG_DRV_ERROR("load_info: JSON parse failed\r\r\n");
+        storage_unlock();
         return -1;
     }
 
@@ -149,6 +157,7 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
         cJSON *data_type = cJSON_GetObjectItemCaseSensitive(json, "data_type");
         if (cJSON_IsString(data_type)) {
             strncpy(info->input_data_type, data_type->valuestring, sizeof(info->input_data_type) - 1);
+            info->is_int8_input = (strcmp(data_type->valuestring, "int8") == 0);
         }
         cJSON *color_format = cJSON_GetObjectItemCaseSensitive(json, "color_format");
         if (cJSON_IsString(color_format)) {
@@ -183,6 +192,7 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
     root = cJSON_Parse((const char *)info->metadata_ptr);
     if (root == NULL) {
         LOG_DRV_ERROR("load_info: JSON parse failed\r\r\n");
+        storage_unlock();
         return -1;
     }
     /* Creation time */
@@ -203,9 +213,11 @@ static int load_info(const uintptr_t file_ptr, nn_model_info_t *info)
 
     if (strstr(info->stedgeai_version, MODEL_STEDGEAI_VERSION_SUPPORTED) == NULL) {
         LOG_DRV_ERROR("ST Edge AI version not supported, supported: %s, current: %s\r\r\n", MODEL_STEDGEAI_VERSION_SUPPORTED, info->stedgeai_version);
+        storage_unlock();
         return -1;
     }
 
+    storage_unlock();
     return 0;
 }
 
@@ -224,6 +236,8 @@ static int model_init(const uintptr_t model_ptr, nn_t *nn)
         return -1;
     }
 
+    storage_lock();
+
     /* Print model information */
     ll_aton_reloc_log_info(model_ptr);
 
@@ -232,6 +246,7 @@ static int model_init(const uintptr_t model_ptr, nn_t *nn)
     int res = ll_aton_reloc_get_info(model_ptr, &rt);
     if (res != 0) {
         LOG_DRV_ERROR("ll_aton_reloc_get_info failed %d\r\r\n", res);
+        storage_unlock();
         return -1;
     }
     /* Create and install an instance of the relocatable model */
@@ -241,6 +256,7 @@ static int model_init(const uintptr_t model_ptr, nn_t *nn)
     nn->ext_ram_addr = hal_mem_alloc_large(rt.ext_ram_sz);
     if (nn->exec_ram_addr == NULL || nn->ext_ram_addr == NULL) {
         LOG_DRV_ERROR("model_init: OOM\r\r\n");
+        storage_unlock();
         return -1;
     }
     config.exec_ram_addr = (uintptr_t)nn->exec_ram_addr;
@@ -259,6 +275,7 @@ static int model_init(const uintptr_t model_ptr, nn_t *nn)
     nn->nn_inst = (NN_Instance_TypeDef *)hal_mem_alloc_any(sizeof(NN_Instance_TypeDef));
     if (nn->nn_inst == NULL) {
         LOG_DRV_ERROR("model_init: OOM\r\r\n");
+        storage_unlock();
         return -1;
     }
 
@@ -267,8 +284,11 @@ static int model_init(const uintptr_t model_ptr, nn_t *nn)
         LOG_DRV_ERROR("ll_aton_reloc_install failed %d\r\r\n", res);
         hal_mem_free(nn->nn_inst);
         nn->nn_inst = NULL;
+        storage_unlock();
         return -1;
     }
+
+    storage_unlock();
 
     const LL_Buffer_InfoTypeDef *ll_buffer = NULL;
     while (nn->input_buffer_count < NN_MAX_INPUT_BUFFER) {
@@ -437,23 +457,28 @@ static int validate_model(const uintptr_t file_ptr)
         return -1;
     }
 
+    storage_lock();
+
     nn_package_header_t *header = (nn_package_header_t *)file_ptr;
 
     /* Check magic number */
     if (header->magic != MODEL_PACKAGE_MAGIC) {
         LOG_DRV_ERROR("Invalid model package magic number\r\r\n");
+        storage_unlock();
         return NN_ERROR_INVALID_PACKAGE;
     }
 
     /* Check version */
     if (header->version != MODEL_PACKAGE_VERSION) {
         LOG_DRV_ERROR("Incompatible model package version 0X%lx\r\r\n", header->version);
+        storage_unlock();
         return NN_ERROR_INCOMPATIBLE;
     }
 
     /* Quick size validation */
     if (header->package_size == 0 || header->relocatable_model_size == 0) {
         LOG_DRV_ERROR("Invalid package size\r\r\n");
+        storage_unlock();
         return NN_ERROR_INVALID_PACKAGE;
     }
 
@@ -461,6 +486,7 @@ static int validate_model(const uintptr_t file_ptr)
     const uint32_t *model_magic = (const uint32_t *)(file_ptr + header->relocatable_model_offset);
     if (*model_magic != MODEL_RELOCATABLE_MAGIC) {
         LOG_DRV_ERROR("Invalid relocatable model magic number\r\r\n");
+        storage_unlock();
         return NN_ERROR_INVALID_MODEL;
     }
 
@@ -468,6 +494,7 @@ static int validate_model(const uintptr_t file_ptr)
     uint32_t checksum = generic_crc32((const uint8_t *)header, offsetof(nn_package_header_t, header_checksum));
     if (checksum != header->header_checksum) {
         LOG_DRV_ERROR("Invalid header checksum\r\r\n");
+        storage_unlock();
         return NN_ERROR_INVALID_CHECKSUM;
     }
 
@@ -476,6 +503,7 @@ static int validate_model(const uintptr_t file_ptr)
                              header->relocatable_model_size);
     if (checksum != header->model_checksum) {
         LOG_DRV_ERROR("Invalid relocatable model checksum\r\r\n");
+        storage_unlock();
         return NN_ERROR_INVALID_CHECKSUM;
     }
 
@@ -483,9 +511,11 @@ static int validate_model(const uintptr_t file_ptr)
     checksum = generic_crc32((const uint8_t *)(file_ptr + header->model_config_offset), header->model_config_size);
     if (checksum != header->config_checksum) {
         LOG_DRV_ERROR("Invalid config checksum\r\r\n");
+        storage_unlock();
         return NN_ERROR_INVALID_CHECKSUM;
     }
 
+    storage_unlock();
     return NN_ERROR_OK;
 }
 
@@ -669,12 +699,27 @@ int nn_instance_inference_frame(nn_handle_t handle, uint8_t *input_data, uint32_
     }
 
     osMutexAcquire(nn->mtx_id, osWaitForever);
-    if (nn->input_buffer_size[0] != input_size) {
+
+    /* Convert camera uint8 to model input: float32, int8, or uint8 passthrough */
+    if (nn->input_buffer_size[0] == input_size * 4) {
+        /* uint8 → float32: (pixel - 127.5) * (1/127.5) → [-1, 1] */
+        float *dst = (float *)nn->input_buffer[0];
+        for (uint32_t i = 0; i < input_size; i++) {
+            dst[i] = ((float)input_data[i] - 127.5f) * 0.00784313725f;
+        }
+    } else if (nn->input_buffer_size[0] != input_size) {
         LOG_DRV_ERROR("input_buffer_size[0] != input_size\r\r\n");
         osMutexRelease(nn->mtx_id);
         return -1;
+    } else if (nn->model.is_int8_input) {
+        int8_t *dst = (int8_t *)nn->input_buffer[0];
+        for (uint32_t i = 0; i < input_size; i++) {
+            dst[i] = (int8_t)((int)input_data[i] - 128);
+        }
+    } else {
+        memcpy(nn->input_buffer[0], input_data, input_size);
     }
-    memcpy(nn->input_buffer[0], input_data, input_size);
+
     int ret = model_run(nn, result, false);
     osMutexRelease(nn->mtx_id);
 
@@ -795,7 +840,26 @@ static cJSON* create_detection_json(const od_detect_t* detection, int index) {
     cJSON_AddNumberToObject(detection_json, "y", detection->y);
     cJSON_AddNumberToObject(detection_json, "width", detection->width);
     cJSON_AddNumberToObject(detection_json, "height", detection->height);
-    
+
+    return detection_json;
+}
+
+/**
+ * @brief Create ISEG segment detection JSON
+ */
+static cJSON* create_iseg_detection_json(const iseg_detect_t* detection, int index) {
+    cJSON* detection_json = cJSON_CreateObject();
+    if (!detection_json) return NULL;
+
+    cJSON_AddNumberToObject(detection_json, "index", index);
+    cJSON_AddStringToObject(detection_json, "class_name", detection->class_name);
+    cJSON_AddNumberToObject(detection_json, "confidence", detection->conf);
+    cJSON_AddNumberToObject(detection_json, "x", detection->x);
+    cJSON_AddNumberToObject(detection_json, "y", detection->y);
+    cJSON_AddNumberToObject(detection_json, "width", detection->width);
+    cJSON_AddNumberToObject(detection_json, "height", detection->height);
+    cJSON_AddNumberToObject(detection_json, "mask_size", detection->mask_size);
+
     return detection_json;
 }
 
@@ -812,6 +876,29 @@ static cJSON* create_keypoint_json(const keypoint_t* keypoint, int index) {
     cJSON_AddNumberToObject(keypoint_json, "confidence", keypoint->conf);
     
     return keypoint_json;
+}
+
+/**
+ * @brief Find a keypoint by name and copy its geometry into out.
+ * @retval 1 found, out filled.
+ * @retval 0 not found (or no name table).
+ */
+static int find_keypoint_by_name(const mpe_detect_t* detection, const char* name, gauge_point_t* out)
+{
+    uint32_t i;
+
+    if ((detection == NULL) || (name == NULL) || (out == NULL) || (detection->keypoint_names == NULL)) {
+        return 0;
+    }
+    for (i = 0; i < detection->nb_keypoints; i++) {
+        if ((detection->keypoint_names[i] != NULL) && (strcmp(detection->keypoint_names[i], name) == 0)) {
+            out->x    = detection->keypoints[i].x;
+            out->y    = detection->keypoints[i].y;
+            out->conf = detection->keypoints[i].conf;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /**
@@ -845,22 +932,47 @@ static cJSON* create_mpe_detection_json(const mpe_detect_t* detection, int index
         cJSON_AddItemToObject(detection_json, "keypoints", keypoints_array);
     }
     cJSON_AddNumberToObject(detection_json, "keypoint_count", detection->nb_keypoints);
+
+    {
+        gauge_point_t g_center;
+        gauge_point_t g_min;
+        gauge_point_t g_max;
+        gauge_point_t g_tip;
+        gauge_reading_t gr;
+
+        if (find_keypoint_by_name(detection, "center", &g_center) &&
+            find_keypoint_by_name(detection, "min", &g_min) &&
+            find_keypoint_by_name(detection, "max", &g_max) &&
+            find_keypoint_by_name(detection, "tip", &g_tip) &&
+            (gauge_reading_compute(&g_center, &g_min, &g_max, &g_tip,
+                                   0.0f, 100.0f, 0.0f, &gr) == 0)) {
+            cJSON* reading_json = cJSON_CreateObject();
+            if (reading_json != NULL) {
+                cJSON_AddNumberToObject(reading_json, "value",
+                    (double)(roundf(gr.value * 100.0f) / 100.0f));
+                cJSON_AddNumberToObject(reading_json, "ratio",
+                    (double)(roundf(gr.ratio * 10000.0f) / 10000.0f));
+                cJSON_AddStringToObject(reading_json, "direction", gr.direction);
+                cJSON_AddItemToObject(detection_json, "reading", reading_json);
+            }
+        }
+    }
     
     // Add connections array if available
     if (detection->keypoint_connections && detection->num_connections > 0) {
         cJSON* connections_array = cJSON_CreateArray();
         if (connections_array) {
-            for (uint8_t i = 0; i < detection->num_connections; i += 2) {
+            for (uint8_t i = 0; i < detection->num_connections; i++) {
                 cJSON* connection_json = cJSON_CreateObject();
                 if (connection_json) {
-                    cJSON_AddNumberToObject(connection_json, "from", detection->keypoint_connections[i]);
-                    cJSON_AddNumberToObject(connection_json, "to", detection->keypoint_connections[i + 1]);
+                    cJSON_AddNumberToObject(connection_json, "from", detection->keypoint_connections[i * 2]);
+                    cJSON_AddNumberToObject(connection_json, "to", detection->keypoint_connections[i * 2 + 1]);
                     cJSON_AddItemToArray(connections_array, connection_json);
                 }
             }
             cJSON_AddItemToObject(detection_json, "connections", connections_array);
         }
-        cJSON_AddNumberToObject(detection_json, "connection_count", detection->num_connections / 2);
+        cJSON_AddNumberToObject(detection_json, "connection_count", detection->num_connections);
     }
     
     return detection_json;
@@ -910,7 +1022,26 @@ cJSON* nn_create_ai_result_json(const nn_result_t* ai_result) {
         // Add empty detection results for consistency
         cJSON_AddItemToObject(result_json, "detections", cJSON_CreateArray());
         cJSON_AddNumberToObject(result_json, "detection_count", 0);
-        
+
+    } else if (ai_result->type == PP_TYPE_ISEG && ai_result->iseg.nb_detect > 0) {
+        /* Instance Segmentation results */
+        cJSON* segments_array = cJSON_CreateArray();
+        if (segments_array) {
+            for (int i = 0; i < ai_result->iseg.nb_detect; i++) {
+                cJSON* seg = create_iseg_detection_json(&ai_result->iseg.detects[i], i);
+                if (seg) {
+                    cJSON_AddItemToArray(segments_array, seg);
+                }
+            }
+            cJSON_AddItemToObject(result_json, "segments", segments_array);
+        }
+        cJSON_AddNumberToObject(result_json, "segment_count", ai_result->iseg.nb_detect);
+
+        cJSON_AddItemToObject(result_json, "detections", cJSON_CreateArray());
+        cJSON_AddNumberToObject(result_json, "detection_count", 0);
+        cJSON_AddItemToObject(result_json, "poses", cJSON_CreateArray());
+        cJSON_AddNumberToObject(result_json, "pose_count", 0);
+
     } else {
         // No results or unsupported type
         cJSON_AddItemToObject(result_json, "detections", cJSON_CreateArray());

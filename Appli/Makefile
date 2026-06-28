@@ -47,6 +47,7 @@ C_SOURCES += ../Custom/Core/core_init.c
 
 # Custom - Core/Data
 C_SOURCES += ../Custom/Core/Data/buffer_mgr.c
+C_SOURCES += ../Custom/Core/Data/gauge_reading.c
 
 # Custom - Core/Example
 C_SOURCES += ../Custom/Core/Example/core_example.c
@@ -95,6 +96,10 @@ C_SOURCES += ../Custom/Hal/codec.c
 C_SOURCES += ../Custom/Hal/draw.c
 C_SOURCES += ../Custom/Hal/image_utils.c
 C_SOURCES += ../Custom/Hal/driver_core.c
+C_SOURCES += ../Custom/Hal/Quick_Bootstrap/quick_bootstrap.c
+C_SOURCES += ../Custom/Hal/Quick_Bootstrap/quick_network.c
+C_SOURCES += ../Custom/Hal/Quick_Bootstrap/quick_snapshot.c
+C_SOURCES += ../Custom/Hal/Quick_Bootstrap/quick_storage.c
 C_SOURCES += ../Custom/Hal/drtc.c
 C_SOURCES += ../Custom/Hal/enc.c
 C_SOURCES += ../Custom/Hal/exti.c
@@ -174,6 +179,11 @@ C_SOURCES += ../Custom/Services/Device/device_service.c
 C_SOURCES += ../Custom/Services/MQTT/mqtt_service.c
 C_SOURCES += ../Custom/Services/OTA/ota_service.c
 C_SOURCES += ../Custom/Services/RTMP/rtmp_service.c
+C_SOURCES += ../Custom/Services/RTSP/rtsp_service.c
+C_SOURCES += ../Custom/Services/RTSP/rtsp_server.c
+C_SOURCES += ../Custom/Services/RTSP/rtsp_rtp.c
+C_SOURCES += ../Custom/Services/RTSP/rtsp_digest_auth.c
+C_SOURCES += ../Custom/Services/Webhook/webhook_service.c
 C_SOURCES += ../Custom/Services/System/system_service.c
 # video_stream_hub moved to Core/Video
 
@@ -191,6 +201,8 @@ C_SOURCES += ../Custom/Services/Web/api/api_mqtt_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_network_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_ota_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_rtmp_module.c
+C_SOURCES += ../Custom/Services/Web/api/api_rtsp_module.c
+C_SOURCES += ../Custom/Services/Web/api/api_webhook_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_preview_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_work_mode_module.c
 C_SOURCES += ../Custom/Services/Web/api/api_business_error.c
@@ -207,6 +219,8 @@ C_SOURCES += ../Custom/Common/Utils/generic_key.c
 C_SOURCES += ../Custom/Common/Utils/generic_led.c
 C_SOURCES += ../Custom/Common/Utils/generic_log.c
 C_SOURCES += ../Custom/Common/Utils/generic_math.c
+C_SOURCES += ../Custom/Common/Utils/rcc_ic_auto.c
+C_SOURCES += ../Custom/Common/Utils/fsbl_app_common.c
 C_SOURCES += ../Custom/Common/Utils/generic_utils.c
 C_SOURCES += ../Custom/Common/Utils/generic_ymodem.c
 
@@ -631,7 +645,7 @@ C_DEFS += -DLL_ATON_SW_FALLBACK
 C_DEFS += -DLL_ATON_EB_DBG_INFO
 C_DEFS += -DLL_ATON_DBG_BUFFER_INFO_EXCLUDED=1
 C_DEFS += -DLL_ATON_RT_RELOC
-C_DEFS += -DAI_RELOC_LOG_ENABLE=1
+C_DEFS += -DAI_RELOC_LOG_ENABLE=0
 
 # ThreadX
 C_DEFS += -DFEAT_THREADX
@@ -761,6 +775,7 @@ C_INCLUDES += -I../Custom/Core/Video
 
 # Custom - HAL
 C_INCLUDES += -I../Custom/Hal
+C_INCLUDES += -I../Custom/Hal/Quick_Bootstrap
 C_INCLUDES += -I../Custom/Hal/SensorExt/vl53l1x
 C_INCLUDES += -I../Custom/Hal/SensorExt/vl53l1x/API/platform
 C_INCLUDES += -I../Custom/Hal/SensorExt/vl53l1x/API/core
@@ -826,6 +841,8 @@ C_INCLUDES += -I../Custom/Common/Lib/ms_bridging
 C_INCLUDES += -I../Custom/Hal/Network/rtmp_push_client
 C_INCLUDES += -I../Custom/Common/Lib/rtmpdump
 C_INCLUDES += -I../Custom/Common/Lib/rtmpdump/librtmp
+C_INCLUDES += -I../Custom/Services/RTSP
+C_INCLUDES += -I../Custom/Services/Webhook
 
 # Drivers - HAL & CMSIS
 C_INCLUDES += -I../Drivers/STM32N6xx_HAL_Driver/Inc
@@ -909,7 +926,12 @@ ASFLAGS += -mcmse
 # Linker Configuration
 ######################################
 # Linker script
+# Match root COMMON_DEFS: -DBOARD_PSRAM_SIZE=64 vs 32 (no separate Make variable required)
+ifneq ($(filter -DBOARD_PSRAM_SIZE=64,$(COMMON_DEFS)),)
 LDSCRIPT = STM32N657L0HXQ_LRUN.ld
+else
+LDSCRIPT = STM32N657L0HXQ_LRUN_32MB.ld
+endif
 
 # Libraries (in correct order for linking)
 LIBS = -lc -lm -lnosys

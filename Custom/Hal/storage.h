@@ -13,17 +13,14 @@
 #include "generic_file.h"
 #include "nvs.h"
 #include "mem_map.h"
+#include "fsbl_app_common.h"
 
 #define FLASH_BLOCK_SIZE  4096
 #define FS_BASE_MEM_START  FLASH_BASE
 
 #define FS_FLASH_BLK    FLASH_BLOCK_SIZE
 #define FS_FLASH_OFFSET  0x2000000
-#ifdef STM32N6_DK_BOARD
-#define FS_FLASH_SIZE   (16 * 1024 * 1024)
-#else
 #define FS_FLASH_SIZE   (64 * 1024 * 1024)
-#endif
 #define FS_BLK_OFFSET   (FS_FLASH_OFFSET / FS_FLASH_BLK)
 
 #define NVS_FLASH_BLK    FLASH_BLOCK_SIZE
@@ -52,6 +49,13 @@ typedef enum
     NVS_FACTORY = 0,            /*!< Factory NVS storage                           */
     NVS_USER,                   /*!< User NVS storage                              */
 } NVS_Type_t;
+
+typedef struct {
+    bool mounted;
+    uint32_t total_KBytes;
+    uint32_t free_KBytes;
+    char fs_type[8]; // "littlefs"
+} storage_disk_info_t;
 
 typedef struct {
     uint32_t start_addr;
@@ -85,25 +89,6 @@ typedef struct {
     bool is_open;
 } lfs_dir_handle_t;
 
-// NVS cache configuration
-#define NVS_CACHE_SIZE 32
-#define NVS_CACHE_MAX_DATA_SIZE 128
-
-typedef struct {
-    char key[24];                      // NVS_KEY_SIZE = 24
-    uint8_t data[NVS_CACHE_MAX_DATA_SIZE];
-    size_t len;
-    bool dirty;
-    bool valid;
-    uint32_t last_access_tick;
-} nvs_cache_entry_t;
-
-typedef struct {
-    nvs_cache_entry_t entries[NVS_CACHE_SIZE];
-    bool has_dirty;
-    osMutexId_t cache_mutex;
-} nvs_cache_t;
-
 typedef struct {
     bool is_init;
     device_t *dev;
@@ -114,10 +99,6 @@ typedef struct {
     osSemaphoreId_t sem_id;
     osThreadId_t storage_processId;
     int file_ops_handle;
-    nvs_cache_t nvs_user_cache;        // User NVS cache
-    osThreadId_t nvs_sync_thread;      // NVS sync background thread
-    osSemaphoreId_t nvs_sync_sem;      // Semaphore to wake up sync thread
-    osTimerId_t nvs_sync_timer;        // Periodic timer to trigger sync
 } storage_t;
 
 void *flash_lfs_fopen(const char *path, const char *mode);
@@ -140,19 +121,14 @@ int storage_nvs_delete(NVS_Type_t type, const char *key);
 int storage_nvs_clear(NVS_Type_t type);
 void storage_nvs_dump(NVS_Type_t type);
 
-// NVS cache related functions
-int storage_nvs_write_cached(NVS_Type_t type, const char *key, const void *data, size_t len);
-int storage_nvs_read_cached(NVS_Type_t type, const char *key, void *data, size_t len);
-int storage_nvs_flush(NVS_Type_t type);
-int storage_nvs_flush_all(void);
-void storage_nvs_sync_trigger(void);  // Trigger async sync (wake up background thread)
-
 int storage_flash_write(uint32_t offset, void *data, size_t size);
 int storage_flash_read(uint32_t offset, void *data, size_t size);
 int storage_flash_erase(uint32_t offset, size_t num_blk);
+int storage_get_disk_info(storage_disk_info_t *info);
 void storage_lock(void);
 void storage_unlock(void);
 void storage_format(void);
 int storage_file_ops_switch(void);
 void storage_register(void);
+
 #endif

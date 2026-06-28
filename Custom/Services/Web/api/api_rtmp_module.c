@@ -5,6 +5,7 @@
 
 #include "api_rtmp_module.h"
 #include "rtmp_service.h"
+#include "rtsp_service.h"
 #include "web_api.h"
 #include "web_server.h"
 #include "cJSON.h"
@@ -90,6 +91,13 @@ static aicam_result_t rtmp_config_set_handler(http_handler_context_t* ctx)
     cJSON *enable = cJSON_GetObjectItem(request, "enable");
     if (enable && cJSON_IsBool(enable)) {
         vs_config.rtmp_enable = cJSON_IsTrue(enable) ? AICAM_TRUE : AICAM_FALSE;
+        /* Mutual exclusion: enabling RTMP disables RTSP */
+        if (vs_config.rtmp_enable) {
+            if (vs_config.rtsp_enable) {
+                vs_config.rtsp_enable = AICAM_FALSE;
+                rtsp_service_stop();
+            }
+        }
     }
 
     cJSON *url = cJSON_GetObjectItem(request, "url");

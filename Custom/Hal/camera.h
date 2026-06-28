@@ -8,6 +8,12 @@
 #include "aicam_error.h"
 #include "isp_services.h"
 
+/** ISP IQ preset for built-in tuning profiles (see image_config_t.isp_mode on device side). */
+typedef enum {
+    CAM_IQ_SCENE_INDOOR = 0,
+    CAM_IQ_SCENE_OUTDOOR = 1,
+} cam_iq_scene_t;
+
 /* Define sensor info */
 #define SENSOR_IMX335_WIDTH 2592
 #define SENSOR_IMX335_HEIGHT 1944
@@ -92,6 +98,8 @@ typedef enum {
     CAM_CMD_RETURN_PIPE2_BUFFER,
     CAM_CMD_SET_STARTUP_SKIP_FRAMES,    // Set frames to skip on startup for stabilization
     CAM_CMD_GET_STARTUP_SKIP_FRAMES,    // Get current startup skip frames setting
+    CAM_CMD_UNSHARE_PIPE1_BUFFER,
+    CAM_CMD_UNSHARE_PIPE2_BUFFER,
 } CAM_CMD_E;
 
 typedef enum {
@@ -190,6 +198,8 @@ typedef struct {
 } camera_t;
 
 int camera_register(void);
+int camera_deinit_but_not_unregister(void);
+void camera_free_unshared_buffer(uint8_t *buffer);
 int camera_unregister(void);
 
 /**
@@ -197,5 +207,12 @@ int camera_unregister(void);
  * @return ISP handle pointer, or NULL if not initialized
  */
 ISP_HandleTypeDef* camera_get_isp_handle(void);
+
+/**
+ * @brief Fill ISP IQ parameters for a built-in scene (indoor vs outdoor stock).
+ * @param scene CAM_IQ_SCENE_INDOOR applies IQTune contrast + stat region (OS04C10); outdoor uses sensor defaults only.
+ * @param out_iq Output buffer (must not be NULL).
+ */
+void camera_fill_isp_iq_scene(cam_iq_scene_t scene, ISP_IQParamTypeDef *out_iq);
 
 #endif

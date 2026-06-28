@@ -1,18 +1,22 @@
 #include <assert.h>
+#include <stdint.h>
 #include "cmw_camera.h"
 #include "camera.h"
 #include "common_utils.h"
 #include "debug.h"
 #include "mem.h"
 #include "stm32n6xx_hal.h"
+#include "rcc_ic_auto.h"
 #include "isp_param_conf.h"
 #include "isp_api.h"
+#include "isp_core.h"
 
 // Constant definitions
-#define CAMERA_TASK_DELAY_MS            1000
+#define CAMERA_TASK_DELAY_MS            0
+#define CAMERA_ISP_SEM_TIMEOUT_MS       50
 #define CAMERA_BUFFER_TIMEOUT_MS        50
 #define CAMERA_MEMORY_ALIGNMENT         32
-#define CAMERA_DEINIT_DELAY_MS          20
+#define CAMERA_DEINIT_DELAY_MS          10
 #define CAMERA_MAX_READY_BUFFERS        8
 #define CAMERA_DEFAULT_STARTUP_SKIP_FRAMES  10   // Default frames to skip on startup for stabilization
 
@@ -22,7 +26,7 @@ static int pipe_buffer_release(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_p
 static camera_t g_camera = {0};
 const osThreadAttr_t cameraTask_attributes = {
     .name = "cameraTask",
-    .priority = (osPriority_t) osPriorityNormal,
+    .priority = (osPriority_t) osPriorityRealtime,
     .stack_size = 4 * 1024
 };
 
@@ -531,6 +535,60 @@ pipe_buffer_t* buffer_get_latest_ready(pipe_buffer_t *bufs, int nb, camera_dq_t 
 }
 
 
+static void camera_copy_default_isp_iq(CMW_Sensor_Name_t sensor_id, ISP_IQParamTypeDef *dst)
+{
+    if (!dst) {
+        return;
+    }
+    switch (sensor_id) {
+        case CMW_IMX335_Sensor:
+            memcpy(dst, &ISP_IQParamCacheInit_IMX335, sizeof(ISP_IQParamTypeDef));
+            break;
+        case CMW_VD66GY_Sensor:
+            memcpy(dst, &ISP_IQParamCacheInit_VD66GY, sizeof(ISP_IQParamTypeDef));
+            break;
+        case CMW_OS04C10_Sensor:
+            memcpy(dst, &ISP_IQParamCacheInit_OS04C10, sizeof(ISP_IQParamTypeDef));
+            break;
+        default:
+            memcpy(dst, &ISP_IQParamCacheInit_OS04C10, sizeof(ISP_IQParamTypeDef));
+            break;
+    }
+}
+
+void camera_fill_isp_iq_scene(cam_iq_scene_t scene, ISP_IQParamTypeDef *out_iq)
+{
+    if (!out_iq) {
+        return;
+    }
+    CMW_Sensor_Name_t sensor = CMW_UNKNOWN_Sensor;
+    if (CMW_CAMERA_GetSensorName(&sensor) != CMW_ERROR_NONE) {
+        memset(out_iq, 0, sizeof(ISP_IQParamTypeDef));
+        return;
+    }
+    camera_copy_default_isp_iq(sensor, out_iq);
+    /* Indoor: IQTune snapshot — contrast curve + statistic region (OS04C10 full frame). */
+    if (scene == CAM_IQ_SCENE_INDOOR) {
+        out_iq->contrast.enable = 1;
+        /* Contrast strength: IQT unit x100 (e.g. 100 = 1.0), from IQTune "Contrast 1" / INDOOR */
+        out_iq->contrast.coeff.LUM_0 = 50;
+        out_iq->contrast.coeff.LUM_32 = 80;
+        out_iq->contrast.coeff.LUM_64 = 94;
+        out_iq->contrast.coeff.LUM_96 = 100;
+        out_iq->contrast.coeff.LUM_128 = 100;
+        out_iq->contrast.coeff.LUM_160 = 102;
+        out_iq->contrast.coeff.LUM_192 = 110;
+        out_iq->contrast.coeff.LUM_224 = 112;
+        out_iq->contrast.coeff.LUM_256 = 120;
+        if (sensor == CMW_OS04C10_Sensor) {
+            out_iq->statAreaStatic.X0 = 109U;
+            out_iq->statAreaStatic.Y0 = 92U;
+            out_iq->statAreaStatic.XSize = 2418U;
+            out_iq->statAreaStatic.YSize = 1329U;
+        }
+    }
+}
+
 static void CAM_setSensorInfo(CMW_Sensor_Name_t sensor, camera_t *camera)
 {
     CMW_Sensor_Name_t sensor_id = sensor;
@@ -571,22 +629,8 @@ static void CAM_setSensorInfo(CMW_Sensor_Name_t sensor, camera_t *camera)
     LOG_DRV_DEBUG("Sensor Image: %dx%d, MirrorFlip: %d ",
     camera->sensor_param.width, camera->sensor_param.height, camera->sensor_param.mirror_flip);
 
-    // Initialize ISP IQ parameters based on detected sensor
-    switch (sensor_id) {
-        case CMW_IMX335_Sensor:
-            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_IMX335, sizeof(ISP_IQParamTypeDef));
-            break;
-        case CMW_VD66GY_Sensor:
-            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_VD66GY, sizeof(ISP_IQParamTypeDef));
-            break;
-        case CMW_OS04C10_Sensor:
-            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_OS04C10, sizeof(ISP_IQParamTypeDef));
-            break;
-        default:
-            // Use OS04C10 as default
-            memcpy(&camera->isp_iq_param, &ISP_IQParamCacheInit_OS04C10, sizeof(ISP_IQParamTypeDef));
-            break;
-    }
+    // Initialize ISP IQ parameters based on detected sensor (stock / indoor profile)
+    camera_copy_default_isp_iq(sensor_id, &camera->isp_iq_param);
 }
 
 /* Keep display output aspect ratio using crop area */
@@ -609,27 +653,7 @@ HAL_StatusTypeDef MX_DCMIPP_ClockConfig(DCMIPP_HandleTypeDef *hdcmipp)
 
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_DCMIPP|RCC_PERIPHCLK_CSI;
     PeriphClkInitStruct.DcmippClockSelection = RCC_DCMIPPCLKSOURCE_IC17;
-#if CPU_CLK_USE_400MHZ
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockDivider = 1;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockDivider = 15;
-#elif CPU_CLK_USE_200MHZ
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockDivider = 1;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockDivider = 15;
-#elif CPU_CLK_USE_HSI_800MHZ
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockDivider = 3;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockDivider = 45;
-#else // CPU_CLK_USE_800MHZ
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC17].ClockDivider = 3;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockSelection = RCC_ICCLKSOURCE_PLL3;
-    PeriphClkInitStruct.ICSelection[RCC_IC18].ClockDivider = 45;
-#endif
+    RCC_IC_FillDCMIPP_PLL3_IC17_IC18(&PeriphClkInitStruct);
     ret = HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct);
     if (ret)
         return ret;
@@ -762,12 +786,6 @@ int CAM_Init(camera_t *camera)
     }
     CAM_setSensorInfo(sensor, camera);
 
-#ifndef ISP_MW_TUNING_TOOL_SUPPORT
-    // Set ISP initialization parameters before starting camera
-    CMW_CAMERA_SetISPInitParam(&camera->isp_iq_param);
-#endif
-
-    CMW_CAMERA_SetMirrorFlip(camera->sensor_param.mirror_flip);
     DCMIPP_IpPlugInit(CMW_CAMERA_GetDCMIPPHandle());
     DCMIPP_Pipe1Init(camera);
     DCMIPP_Pipe2Init(camera);
@@ -1085,7 +1103,7 @@ static int camera_start(void *priv)
     camera_t *camera = (camera_t *)priv;
     int ret;
     if(!camera->is_init){
-        if (osSemaphoreAcquire(camera->sem_init, 2000) != osOK || !camera->is_init) {
+        if (camera->sem_init == NULL || osSemaphoreAcquire(camera->sem_init, 2000) != osOK || !camera->is_init) {
             return AICAM_ERROR_NOT_FOUND;
         }
     }
@@ -1098,6 +1116,11 @@ static int camera_start(void *priv)
         osMutexRelease(camera->mtx_id);
         return AICAM_OK;
     }
+
+#ifndef ISP_MW_TUNING_TOOL_SUPPORT
+    // Set ISP initialization parameters before starting camera
+    CMW_CAMERA_SetISPInitParam(&camera->isp_iq_param);
+#endif
 
     if((camera->device_ctrl_pipe & CAMERA_CTRL_PIPE1_BIT) != 0){
         ret = pipe1_start(camera);
@@ -1157,9 +1180,12 @@ static void cameraProcess(void *argument)
 {
     camera_t *camera = (camera_t *)argument;
     int ret;
-    LOG_DRV_DEBUG("cameraProcess start");
+
+#if CAMERA_TASK_DELAY_MS > 0
     osDelay(CAMERA_TASK_DELAY_MS);
+#endif
     ret = CAM_Init(camera);
+    // printf("camera init end, %lu ms\r\n", HAL_GetTick());
     if(ret != CMW_ERROR_NONE){
         pwr_manager_release(camera->pwr_handle);
         LOG_DRV_ERROR("camera init failed \r\n");
@@ -1169,7 +1195,7 @@ static void cameraProcess(void *argument)
     camera->is_init = true;
     osSemaphoreRelease(camera->sem_init);
     while (camera->is_init) {
-        if (osSemaphoreAcquire(camera->sem_isp, CAMERA_TASK_DELAY_MS) == osOK) {
+        if (osSemaphoreAcquire(camera->sem_isp, CAMERA_ISP_SEM_TIMEOUT_MS) == osOK) {
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT
             if (isp_is_start) {
             #ifdef ISP_ENABLE_UVC
@@ -1215,11 +1241,12 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
     camera_t *camera = (camera_t *)priv;
     CAM_CMD_E cam_cmd = (CAM_CMD_E)cmd;
     pipe_buffer_t *buffer = NULL;
+    uint8_t *new_buffer = NULL; // buffer to replace the unshared buffer
     int ret = AICAM_OK;
     int i = 0;
 
     if(!camera->is_init){
-        if (osSemaphoreAcquire(camera->sem_init, 2000) != osOK || !camera->is_init) {
+        if (camera->sem_init == NULL || osSemaphoreAcquire(camera->sem_init, 2000) != osOK || !camera->is_init) {
             return AICAM_ERROR_NOT_FOUND;
         }
     }
@@ -1264,6 +1291,9 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
             }
             memcpy(&camera->isp_iq_param, ubuf, sizeof(ISP_IQParamTypeDef));
             ret = AICAM_OK;
+            // #include "crc.h"
+            // uint32_t crc32 = HAL_CRC_Calculate(&hcrc, (uint32_t *)ubuf, sizeof(ISP_IQParamTypeDef));
+            // printf("isp crc32: 0x%08lX\r\n", crc32);
             break;
 
         case CAM_CMD_GET_ISP_PARAM:
@@ -1609,6 +1639,46 @@ static int camera_ioctl(void *priv, unsigned int cmd, unsigned char* ubuf, unsig
             ret = AICAM_OK;
             break;
 
+        case CAM_CMD_UNSHARE_PIPE1_BUFFER:
+            if(camera->state.pipe1_state != PIPE_START){
+                ret = AICAM_ERROR_NOT_SUPPORTED;
+                break;
+            }
+            ret = AICAM_ERROR_NOT_FOUND;
+            for (i = 0; i < camera->pipe1_param.buffer_nb; ++i) {
+                if (camera->pipe1_buffer[i].data == ubuf && camera->pipe1_buffer[i].state == BUFFER_IN_USE && camera->pipe1_buffer[i].owner_count == 1 && camera->pipe1_buffer[i].owner_list[0] == osThreadGetId()) {
+                    new_buffer = hal_mem_alloc_aligned(g_camera.pipe1_param.width * g_camera.pipe1_param.height * g_camera.pipe1_param.bpp, CAMERA_MEMORY_ALIGNMENT, MEM_LARGE);
+                    if(new_buffer == NULL){
+                        ret = AICAM_ERROR_OUT_OF_MEMORY;
+                        break;
+                    }
+                    camera->pipe1_buffer[i].data = new_buffer;
+                    buffer_release_isr(&camera->pipe1_buffer[i], &camera->pipe1_dq);
+                    ret = AICAM_OK;
+                    break;
+                }
+            }
+            break;
+        case CAM_CMD_UNSHARE_PIPE2_BUFFER:
+            if(camera->state.pipe2_state != PIPE_START){
+                ret = AICAM_ERROR_NOT_SUPPORTED;
+                break;
+            }
+            ret = AICAM_ERROR_NOT_FOUND;
+            for (i = 0; i < camera->pipe2_param.buffer_nb; ++i) {
+                if (camera->pipe2_buffer[i].data == ubuf && camera->pipe2_buffer[i].state == BUFFER_IN_USE && camera->pipe2_buffer[i].owner_count == 1 && camera->pipe2_buffer[i].owner_list[0] == osThreadGetId()) {
+                    new_buffer = hal_mem_alloc_aligned(g_camera.pipe2_param.width * g_camera.pipe2_param.height * g_camera.pipe2_param.bpp, CAMERA_MEMORY_ALIGNMENT, MEM_LARGE);
+                    if(new_buffer == NULL){
+                        ret = AICAM_ERROR_OUT_OF_MEMORY;
+                        break;
+                    }
+                    camera->pipe2_buffer[i].data = new_buffer;
+                    buffer_release_isr(&camera->pipe2_buffer[i], &camera->pipe2_dq);
+                    ret = AICAM_OK;
+                    break;
+                }
+            }
+            break;
         default:
             ret = AICAM_ERROR_NOT_SUPPORTED;
             break;
@@ -1657,8 +1727,7 @@ static int pipe_buffer_release(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_p
         return 0;
     }
     for (int i = 0; i < pipe_param->buffer_nb; i++) {
-        if (pipe_buffer[i].data) {
-            LOG_DRV_DEBUG("pipe buffer release address 0x%x \r\n", pipe_buffer[i].data);
+        if (pipe_buffer[i].data != NULL) {
             hal_mem_free(pipe_buffer[i].data);
         }
     }
@@ -1667,7 +1736,7 @@ static int pipe_buffer_release(pipe_buffer_t *pipe_buffer, pipe_params_t *pipe_p
 }
 static int camera_init(void *priv)
 {
-    LOG_DRV_DEBUG("camera_init \r\n");
+    // printf("camera init start, %lu ms\r\n", HAL_GetTick());
     camera_t *camera = (camera_t *)priv;
     camera->pwr_handle = pwr_manager_get_handle(PWR_SENSOR_NAME);
     pwr_manager_acquire(camera->pwr_handle);
@@ -1718,6 +1787,9 @@ static int camera_deinit(void *priv)
 {
     camera_t *camera = (camera_t *)priv;
 
+    if (camera->is_init == false) {
+        return AICAM_OK;
+    }
     CMW_CAMERA_DeInit();
     camera->is_init = false;
     pwr_manager_release(camera->pwr_handle);
@@ -1827,6 +1899,20 @@ int camera_unregister(void)
         g_camera.dev = NULL;
     }
     return AICAM_OK;
+}
+
+/* This function is used to deinit the camera but not unregister */
+int camera_deinit_but_not_unregister(void)
+{
+    return camera_deinit(&g_camera);
+}
+
+void camera_free_unshared_buffer(uint8_t *buffer)
+{
+    if(buffer == NULL){
+        return;
+    }
+    hal_mem_free(buffer);
 }
 
 #ifdef ISP_MW_TUNING_TOOL_SUPPORT

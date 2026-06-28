@@ -9,6 +9,7 @@
  #include "json_config_internal.h" // Includes all necessary headers
  #include "buffer_mgr.h"
  #include "version.h"              // Centralized version info
+ #include "fsbl_app_common.h"
 
  /* ==================== Internal Data Structures and Variables ==================== */
  
@@ -73,7 +74,12 @@
          },
          .video_stream_mode = {
              .enable = AICAM_FALSE,
-             .rtsp_server_url = "rtsp://server.example.com/live"
+             .rtsp_server_url = "rtsp://server.example.com/live",
+             .rtsp_enable = AICAM_FALSE,
+             .rtsp_port = 554,
+             .rtsp_auth_mode = "none",
+             .rtsp_username = "",
+             .rtsp_password = ""
          },
          .io_trigger = {
              {   // IO trigger 0
@@ -122,10 +128,13 @@
              .horizontal_flip = AICAM_FALSE,
              .vertical_flip = AICAM_FALSE,
              .aec = 1,  // Auto exposure enabled
+             .isp_mode = IMAGE_ISP_MODE_OUTDOOR,
              .startup_skip_frames = 10,  // Default frames to skip for camera stabilization
              .fast_capture_skip_frames = 10,
              .fast_capture_resolution = 0,   // 0: 1280x720
-             .fast_capture_jpeg_quality = 60
+             .fast_capture_jpeg_quality = 60,
+             .capture_disable_comm = AICAM_FALSE,
+             .capture_storage_ai = AICAM_FALSE
          },
          .light_config = {
              .connected = AICAM_FALSE,
@@ -611,6 +620,13 @@
      // Free memory
      buffer_free(config);
 
+     if (result == AICAM_OK) {
+         sys_clk_config_t sc = {0};
+         if (fsbl_app_write_sys_clk_config(&sc) != 0) {
+             LOG_CORE_WARN("Failed to clear persisted boot sys_clk profile during config reset to default");
+         }
+     }
+
      return result;
  }
 
@@ -712,6 +728,48 @@
          return result;
      }
 
+     return AICAM_OK;
+ }
+
+ aicam_result_t json_config_sync_ai_pipe_nvs_from_input_size(uint32_t input_width, uint32_t input_height)
+ {
+     if (input_width == 0U || input_height == 0U)
+     {
+         return AICAM_ERROR_INVALID_PARAM;
+     }
+
+     uint32_t nvs_w = 0U;
+     uint32_t nvs_h = 0U;
+     aicam_result_t rw = json_config_nvs_read_uint32(NVS_KEY_AI_PIPE_WIDTH, &nvs_w);
+     aicam_result_t rh = json_config_nvs_read_uint32(NVS_KEY_AI_PIPE_HEIGHT, &nvs_h);
+     if (rw == AICAM_OK && rh == AICAM_OK && nvs_w == input_width && nvs_h == input_height)
+     {
+         return AICAM_OK;
+     }
+
+     aicam_result_t wret = json_config_nvs_write_uint32(NVS_KEY_AI_PIPE_WIDTH, input_width);
+     if (wret != AICAM_OK)
+     {
+         LOG_CORE_ERROR("Failed to write AI pipe width to NVS: %d", wret);
+         return wret;
+     }
+     wret = json_config_nvs_write_uint32(NVS_KEY_AI_PIPE_HEIGHT, input_height);
+     if (wret != AICAM_OK)
+     {
+         LOG_CORE_ERROR("Failed to write AI pipe height to NVS: %d", wret);
+         return wret;
+     }
+
+     if (rw == AICAM_OK && rh == AICAM_OK)
+     {
+         LOG_CORE_INFO("NVS AI pipe size updated from %ux%u to %ux%u",
+                       (unsigned)nvs_w, (unsigned)nvs_h,
+                       (unsigned)input_width, (unsigned)input_height);
+     }
+     else
+     {
+         LOG_CORE_INFO("NVS AI pipe size set to %ux%u", (unsigned)input_width, (unsigned)input_height);
+     }
      return AICAM_OK;
  }
 
@@ -964,12 +1022,19 @@
 
  aicam_result_t json_config_set_device_service_image_config(const image_config_t *image_config)
  {
-     if (!image_config)
-     {
-         return AICAM_ERROR_INVALID_PARAM;
-     }
-     
-     if(image_config != &g_json_config_ctx.current_config.device_service.image_config)
+    if (!image_config)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+
+    if (image_config->isp_mode != IMAGE_ISP_MODE_INDOOR &&
+        image_config->isp_mode != IMAGE_ISP_MODE_OUTDOOR &&
+        image_config->isp_mode != IMAGE_ISP_MODE_CUSTOM)
+    {
+        return AICAM_ERROR_INVALID_PARAM;
+    }
+    
+    if(image_config != &g_json_config_ctx.current_config.device_service.image_config)
      {
          memcpy(&g_json_config_ctx.current_config.device_service.image_config, image_config, sizeof(image_config_t));
      }
@@ -1477,3 +1542,19 @@ const char* poe_status_code_to_string(poe_status_code_t status)
 
 // Note: json_config_get_video_stream_mode and json_config_set_video_stream_mode
 // are implemented in json_config_nvs.c for direct NVS access
+
+aicam_result_t json_config_get_webhook_config(webhook_config_t *config)
+{
+    if (!config) return AICAM_ERROR_INVALID_PARAM;
+    return json_config_load_webhook_from_nvs(config);
+}
+
+aicam_result_t json_config_set_webhook_config(const webhook_config_t *config)
+{
+    if (!config) return AICAM_ERROR_INVALID_PARAM;
+    aicam_result_t result = json_config_save_webhook_config_to_nvs(config);
+    if (result == AICAM_OK) {
+        memcpy(&g_json_config_ctx.current_config.webhook_config, config, sizeof(webhook_config_t));
+    }
+    return result;
+}

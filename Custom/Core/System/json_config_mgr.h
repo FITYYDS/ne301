@@ -76,6 +76,8 @@ typedef struct {
      uint32_t time_node_count;
      uint32_t time_node[10]; // 10 time nodes
      uint8_t weekdays[10]; // 0: all days, 1: Monday, 2: Tuesday, 3: Wednesday, 4: Thursday, 5: Friday, 6: Saturday, 7: Sunday
+     aicam_timer_interval_mode_t interval_mode; // 0=normal (immediate), 1=scheduled (from start_time)
+     uint32_t start_time;                       // Seconds since midnight, only for scheduled mode
  } timer_trigger_config_t;
 
  typedef struct {
@@ -102,6 +104,13 @@ typedef struct {
     aicam_bool_t rtmp_enable;               // RTMP streaming enable
     char rtmp_url[256];                     // RTMP server URL
     char rtmp_stream_key[128];              // Stream key
+
+    // RTSP server configuration
+    aicam_bool_t rtsp_enable;               // RTSP service enable
+    uint16_t rtsp_port;                     // RTSP listen port (default 554)
+    char rtsp_auth_mode[16];                // Auth mode: "none" or "digest"
+    char rtsp_username[64];                 // Auth username
+    char rtsp_password[64];                 // Auth password
 } video_stream_mode_config_t;
  
 // Work mode configuration structure
@@ -330,6 +339,10 @@ typedef struct {
     uint32_t heartbeat_interval_ms;              // Heartbeat interval (ms)
 } mqtt_service_config_t;
 
+/** Stored in image_config_t.isp_mode — built-in profiles vs NVS-backed custom IQ. */
+#define IMAGE_ISP_MODE_OUTDOOR  0u   /* default */
+#define IMAGE_ISP_MODE_INDOOR   1u
+#define IMAGE_ISP_MODE_CUSTOM   255u   /* 0xFF: use isp_config_t from NVS when valid */
 
 //device service configuration structure
 typedef struct {
@@ -337,11 +350,14 @@ typedef struct {
     uint32_t contrast;                       // image contrast (0-100)
     aicam_bool_t horizontal_flip;            // image horizontal flip
     aicam_bool_t vertical_flip;              // image vertical flip
+    uint32_t isp_mode;                       // IMAGE_ISP_MODE_OUTDOOR(0) / INDOOR(1) / CUSTOM
     uint32_t aec;                            // image auto exposure control (0=manual, 1=auto)
     uint32_t startup_skip_frames;            // frames to skip on camera startup for stabilization (1-300)
     uint32_t fast_capture_skip_frames;       // frames to skip for fast capture (number of skipped frames for snapshot capture)
     uint32_t fast_capture_resolution;       // 0: 1280x720, 1: 1920x1080, 2: 2688x1520
     uint32_t fast_capture_jpeg_quality;     // fast capture JPEG encoding quality (0-100)
+    aicam_bool_t capture_disable_comm;      // after capture: local storage only (no comm upload)
+    aicam_bool_t capture_storage_ai;        // capture extra save draw AI result picture to storage switch
 } image_config_t;
 
 /**
@@ -481,6 +497,18 @@ typedef struct {
     char admin_password[64];                           // Admin password (default: "hicamthink")
 } auth_mgr_config_t;
 
+/* ==================== Webhook Configuration ==================== */
+
+#define WEBHOOK_URL_MAX_LEN     256
+#define WEBHOOK_SECRET_MAX_LEN  128
+
+typedef struct {
+    aicam_bool_t enable;                          // Webhook enable switch
+    char url[WEBHOOK_URL_MAX_LEN];                // HTTP(S) push URL
+    char auth_type[16];                           // "none" | "bearer" | "basic" | "custom"
+    char secret[WEBHOOK_SECRET_MAX_LEN];          // Auth token/credentials
+} webhook_config_t;
+
 // RTMP config is now part of video_stream_mode_config_t
 // These macros are kept for compatibility
 #define RTMP_CONFIG_MAX_URL_LENGTH         256
@@ -502,6 +530,7 @@ typedef struct {
     network_service_config_t network_service;
     mqtt_service_config_t mqtt_service;
     auth_mgr_config_t auth_mgr;
+    webhook_config_t webhook_config;
     // RTMP config is now in work_mode_config.video_stream_mode
  } aicam_global_config_t;
  
@@ -737,6 +766,14 @@ aicam_bool_t json_config_get_ai_1_active(void);
  */
 aicam_result_t json_config_set_ai_1_active(aicam_bool_t ai_1_active);
 
+/**
+ * @brief Persist AI pipe input size to NVS when it differs from stored values
+ * @param input_width Model input width (must be non-zero)
+ * @param input_height Model input height (must be non-zero)
+ * @return aicam_result_t AICAM_OK if already matching or write succeeded
+ */
+aicam_result_t json_config_sync_ai_pipe_nvs_from_input_size(uint32_t input_width, uint32_t input_height);
+
 /* ==================== Power Mode Configuration API ==================== */
 
 /**
@@ -910,7 +947,36 @@ aicam_result_t json_config_get_video_stream_mode(video_stream_mode_config_t *con
  * @return aicam_result_t Operation result
  */
 aicam_result_t json_config_set_video_stream_mode(const video_stream_mode_config_t *config);
- 
+
+/**
+ * @brief Get webhook configuration
+ */
+aicam_result_t json_config_get_webhook_config(webhook_config_t *config);
+
+/**
+ * @brief Set webhook configuration
+ */
+aicam_result_t json_config_set_webhook_config(const webhook_config_t *config);
+
+/**
+ * @brief Get webhook custom CA certificate (from LittleFS file)
+ * @param cert_data Output buffer (caller must free with buffer_free). NULL if no cert.
+ * @param cert_len Output length (0 if no cert)
+ */
+aicam_result_t json_config_get_webhook_ca_cert(char **cert_data, size_t *cert_len);
+
+/**
+ * @brief Save webhook custom CA certificate to LittleFS, store path in NVS
+ * @param cert_data PEM data
+ * @param cert_len Length of PEM data
+ */
+aicam_result_t json_config_set_webhook_ca_cert(const char *cert_data, size_t cert_len);
+
+/**
+ * @brief Delete webhook custom CA certificate (file + NVS path)
+ */
+aicam_result_t json_config_delete_webhook_ca_cert(void);
+
  /* ==================== Convenient Access Macro Definitions ==================== */
  
 // Macros for quick access to debug configuration

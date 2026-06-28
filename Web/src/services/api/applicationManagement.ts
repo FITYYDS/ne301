@@ -49,11 +49,32 @@ export interface SetMqttConfigReq {
   status: MqttStatus;
 }
 
+export interface WebhookConfig {
+  enable: boolean;
+  url: string;
+  auth_type: 'none' | 'bearer' | 'basic' | 'custom';
+  secret: string;
+  has_custom_ca?: boolean;
+  ca_cert_length?: number;
+}
+
+export interface WebhookCaCertResponse {
+  ca_cert_data: string;
+  ca_cert_length: number;
+}
+
 const applicationManagement = {
   getMqttConfigReq: () => request.get('/api/v1/apps/mqtt/config'),
   setMqttConfigReq: (data: SetMqttConfigReq) => request.post('/api/v1/apps/mqtt/config', data),
   connectMqttReq: () => request.post('/api/v1/apps/mqtt/connect'),
   disconnectMqttReq: () => request.post('/api/v1/apps/mqtt/disconnect'),
+
+  getWebhookConfigReq: () => request.get('/api/v1/apps/webhook/config'),
+  setWebhookConfigReq: (data: WebhookConfig) => request.post('/api/v1/apps/webhook/config', data),
+  testWebhookReq: () => request.post('/api/v1/apps/webhook/test'),
+  getWebhookCaCertReq: () => request.get('/api/v1/apps/webhook/ca-cert'),
+  setWebhookCaCertReq: (data: { ca_cert_data: string }) => request.post('/api/v1/apps/webhook/ca-cert', data),
+  deleteWebhookCaCertReq: () => request.delete('/api/v1/apps/webhook/ca-cert'),
 };
 
 export default applicationManagement;

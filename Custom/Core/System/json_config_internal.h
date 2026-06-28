@@ -54,6 +54,11 @@
  // AI Debug configuration key names
  #define NVS_KEY_AI_ENABLE           "ai_enabled"
  #define NVS_KEY_AI_1_ACTIVE         "ai_1_active"
+ /* AI pipeline input resolution (stored in NVS). If reading fails or the value is invalid/placeholder,
+  * do not guess a resolution. Wait until the model is loaded and obtain the input size from
+  * nn_model_info_t (or an equivalent interface) before configuring the AI pipeline. */
+ #define NVS_KEY_AI_PIPE_WIDTH       "ai_pipe_width"
+ #define NVS_KEY_AI_PIPE_HEIGHT      "ai_pipe_height"
  #define NVS_KEY_CONFIDENCE          "confidence"
  #define NVS_KEY_NMS_THRESHOLD       "nms_thresh"
  
@@ -90,10 +95,14 @@
  #define NVS_KEY_IMAGE_HFLIP             "img_hflip"
  #define NVS_KEY_IMAGE_VFLIP             "img_vflip"
  #define NVS_KEY_IMAGE_AEC               "img_aec"
+ #define NVS_KEY_IMAGE_ISP_MODE          "img_isp_mode"
  #define NVS_KEY_IMAGE_SKIP_FRAMES       "img_skip"
  #define NVS_KEY_IMAGE_FAST_SKIP_FRAMES  "img_fast_skip"
  #define NVS_KEY_IMAGE_FAST_RESOLUTION   "img_fast_res"
  #define NVS_KEY_IMAGE_FAST_JPEG_QUALITY "img_fast_jq"
+ #define NVS_KEY_CAPTURE_DISABLE_COMM    "capture_un_comm"
+ #define NVS_KEY_CAPTURE_STORAGE_AI      "capture_stor_ai"
+ #define NVS_KEY_CAPTURE_QUICK_MODE      "capture_qmode"
  #define NVS_KEY_LIGHT_CONNECTED         "light_conn"
  #define NVS_KEY_LIGHT_MODE              "light_mode"
  #define NVS_KEY_LIGHT_START_HOUR        "light_s_h"
@@ -308,10 +317,27 @@
  #define NVS_KEY_TIMER_NODE_COUNT    "timer_node_count"
  #define NVS_KEY_TIMER_NODE_PREFIX   "timer_node_"
  #define NVS_KEY_TIMER_WEEKDAYS_PREFIX "timer_weekdays_"
+ #define NVS_KEY_TIMER_INTERVAL_MODE  "timer_iv_mode"
+ #define NVS_KEY_TIMER_START_TIME     "timer_start_t"
  // Video Stream
  #define NVS_KEY_RTSP_URL            "rtsp_url"
- 
- 
+ #define NVS_KEY_RTSP_ENABLE         "rtsp_en"
+ #define NVS_KEY_RTSP_PORT           "rtsp_port"
+ #define NVS_KEY_RTSP_AUTH_MODE      "rtsp_auth"
+ #define NVS_KEY_RTSP_USERNAME       "rtsp_user"
+ #define NVS_KEY_RTSP_PASSWORD       "rtsp_pass"
+
+// UI preferences
+#define NVS_KEY_PREF_STREAM_TAB     "pref_stab"
+
+// Webhook configuration key names
+#define NVS_KEY_WEBHOOK_ENABLE      "wh_enable"
+#define NVS_KEY_WEBHOOK_URL         "wh_url"
+#define NVS_KEY_WEBHOOK_AUTH_TYPE   "wh_auth"
+#define NVS_KEY_WEBHOOK_SECRET      "wh_secret"
+#define NVS_KEY_WEBHOOK_CA_CERT_PATH "wh_ca_path"
+
+
  /* ==================== Internal Function Prototypes ==================== */
  
  /* --- From json_config_nvs.c --- */
@@ -329,6 +355,8 @@ aicam_result_t json_config_load_poe_config_from_nvs(poe_config_persist_t *config
 aicam_result_t json_config_save_mqtt_service_config_to_nvs(const mqtt_service_config_t *config);
 // RTMP config now part of video_stream_mode, use json_config_get/set_video_stream_mode()
 aicam_result_t json_config_save_auth_mgr_config_to_nvs(const auth_mgr_config_t *config);
+aicam_result_t json_config_save_webhook_config_to_nvs(const webhook_config_t *config);
+aicam_result_t json_config_load_webhook_from_nvs(webhook_config_t *config);
  aicam_result_t json_config_save_to_nvs(const aicam_global_config_t *config);
  aicam_result_t json_config_load_from_nvs(aicam_global_config_t *config);
  

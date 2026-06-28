@@ -351,6 +351,9 @@ aicam_result_t system_controller_unregister_trigger(system_controller_t *control
 
 /* ==================== Simplified System Service ==================== */
 
+aicam_result_t system_controller_get_next_capture_at(
+    system_controller_t *controller, uint64_t *next_capture_at);
+
 /**
  * @brief System service context handle
  */
@@ -674,6 +677,12 @@ aicam_result_t system_service_capture_and_upload_mqtt(aicam_bool_t enable_ai,
  */
 aicam_result_t system_service_capture_request(const system_capture_request_t *request,
                                               system_capture_response_t *response);
+
+/**
+ * @brief Check if a capture operation is currently in progress
+ * @return AICAM_TRUE if capture is running, AICAM_FALSE otherwise
+ */
+aicam_bool_t system_service_capture_in_progress(void);
 
 /**
  * @brief Register PIR debug commands

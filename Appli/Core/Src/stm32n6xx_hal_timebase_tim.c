@@ -70,32 +70,17 @@ void TimeBase_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim);
   */
 HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
 {
-  RCC_ClkInitTypeDef    clkconfig;
   uint32_t              uwTimclock;
-  uint32_t              uwAPB1Prescaler;
   uint32_t              uwPrescalerValue;
   HAL_StatusTypeDef     Status;
 
   /* Enable TIM2 clock */
   __HAL_RCC_TIM2_CLK_ENABLE();
 
-  /* Get clock configuration */
-  HAL_RCC_GetClockConfig(&clkconfig);
-
-  /* Get APB1 prescaler */
-  uwAPB1Prescaler = clkconfig.APB1CLKDivider;
-
-  /* Compute TIM2 clock */
-  if (uwAPB1Prescaler == RCC_HCLK_DIV1)
-  {
-    uwTimclock = HAL_RCC_GetPCLK1Freq();
-  }
-  else
-  {
-    uwTimclock = 2UL * HAL_RCC_GetPCLK1Freq();
-  }
-
-  uwTimclock = 2UL * uwTimclock;
+  /* Compute timer kernel clock.
+   * On STM32N6, timers are fed by the TIMG kernel clock (configured via RCC TIM prescaler),
+   * which is not reliably derived from PCLK1 using the "x2 when APB prescaler != 1" rule. */
+  uwTimclock = HAL_RCCEx_GetTIMGFreq();
 
   /* Compute the prescaler value to have TIM2 counter clock equal to TIM_CNT_FREQ */
   uwPrescalerValue = (uint32_t)((uwTimclock / TIM_CNT_FREQ) - 1U);

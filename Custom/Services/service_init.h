@@ -153,6 +153,8 @@ aicam_result_t service_get_registered_modules(const char **names, uint32_t max_c
 #define MQTT_NET_CONNECTED             (1UL << 9)   // MQTT network connected
 #define SERVICE_READY_RTMP             (1UL << 10)  // RTMP service ready
 #define SERVICE_READY_VIDEO_HUB        (1UL << 11)  // Video Hub ready
+#define SERVICE_READY_RTSP             (1UL << 12)  // RTSP service ready
+#define SERVICE_READY_WEBHOOK          (1UL << 13)  // Webhook service ready
 
 
 // Combined flags

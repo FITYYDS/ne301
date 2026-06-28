@@ -10,6 +10,7 @@ import sys
 import re
 import glob
 import struct
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -470,11 +471,14 @@ def main():
     if not build_dir.exists():
         print(f"[ERROR] build directory does not exist: {build_dir}")
         return 1
+
+    pack_date = datetime.now().strftime('%Y%m%d')
+    out_suffix = f'_{pack_date}'
     
     # Check whether WakeCore should be packed
     if len(sys.argv) > 1 and sys.argv[1] == '--wakecore':
         # Pack WakeCore into a separate HEX file
-        output_file = build_dir / 'ne301_WakeCore.hex'
+        output_file = build_dir / f'ne301_WakeCore{out_suffix}.hex'
         if len(sys.argv) > 2:
             output_file = Path(sys.argv[2])
             if not output_file.is_absolute():
@@ -489,10 +493,10 @@ def main():
         project_root = script_dir.parent
         
         # Output file for main firmware (without WiFi)
-        output_file_main = build_dir / 'ne301_Main.hex'
+        output_file_main = build_dir / f'ne301_Main{out_suffix}.hex'
         
         # Output file for main firmware (with WiFi)
-        output_file_main_wifi = build_dir / 'ne301_Main_WiFi.hex'
+        output_file_main_wifi = build_dir / f'ne301_Main_WiFi{out_suffix}.hex'
         
         # If an output file argument is provided, pack only one file
         if len(sys.argv) > 1:

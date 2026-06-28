@@ -17,6 +17,8 @@
 #include "device_service.h"
 #include "ota_service.h"
 #include "rtmp_service.h"
+#include "rtsp_service.h"
+#include "webhook_service.h"
 #include "Services/Video/video_stream_hub.h"
 #include "cmsis_os2.h"
 
@@ -222,6 +224,36 @@ static const service_module_t g_service_registry[] = {
         .required_in_low_power = AICAM_FALSE,  // RTMP streaming not needed in low power mode
         .depends_on = {"communication_service"},
         .depends_count = 1
+    },
+    {
+        .name = "rtsp_service",
+        .state = SERVICE_STATE_UNINITIALIZED,
+        .init_func = rtsp_service_init,
+        .start_func = rtsp_service_start,
+        .stop_func = rtsp_service_stop,
+        .deinit_func = rtsp_service_deinit,
+        .get_state_func = rtsp_service_get_state,
+        .config = NULL,
+        .auto_start = AICAM_TRUE,
+        .init_priority = 9,
+        .required_in_low_power = AICAM_FALSE,
+        .depends_on = {"communication_service"},
+        .depends_count = 1
+    },
+    {
+        .name = "webhook_service",
+        .state = SERVICE_STATE_UNINITIALIZED,
+        .init_func = webhook_service_init,
+        .start_func = webhook_service_start,
+        .stop_func = webhook_service_stop,
+        .deinit_func = webhook_service_deinit,
+        .get_state_func = webhook_service_get_state,
+        .config = NULL,
+        .auto_start = AICAM_TRUE,
+        .init_priority = 10,
+        .required_in_low_power = AICAM_TRUE,
+        .depends_on = {"communication_service"},
+        .depends_count = 1
     }
 };
 
@@ -258,6 +290,10 @@ static uint32_t get_service_ready_flag(const char *name)
         return SERVICE_READY_RTMP;
     } else if (strcmp(name, "video_hub") == 0) {
         return SERVICE_READY_VIDEO_HUB;
+    } else if (strcmp(name, "rtsp_service") == 0) {
+        return SERVICE_READY_RTSP;
+    } else if (strcmp(name, "webhook_service") == 0) {
+        return SERVICE_READY_WEBHOOK;
     }
 
     return 0;

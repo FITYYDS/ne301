@@ -260,9 +260,12 @@ static void parse_device_service(cJSON *json, device_service_config_t *cfg)
         json_get_bool(img_cfg, "horizontal_flip", &cfg->image_config.horizontal_flip);
         json_get_bool(img_cfg, "vertical_flip", &cfg->image_config.vertical_flip);
         json_get_uint32(img_cfg, "aec", &cfg->image_config.aec);
+        json_get_uint32(img_cfg, "isp_mode", &cfg->image_config.isp_mode);
         json_get_uint32(img_cfg, "fast_capture_skip_frames", &cfg->image_config.fast_capture_skip_frames);
         json_get_uint32(img_cfg, "fast_capture_resolution", &cfg->image_config.fast_capture_resolution);
         json_get_uint32(img_cfg, "fast_capture_jpeg_quality", &cfg->image_config.fast_capture_jpeg_quality);
+        json_get_bool(img_cfg, "capture_disable_comm", &cfg->image_config.capture_disable_comm);
+        json_get_bool(img_cfg, "capture_storage_ai", &cfg->image_config.capture_storage_ai);
     }
 
     cJSON *light_cfg = cJSON_GetObjectItem(json, "light_config");
@@ -801,9 +804,12 @@ static cJSON *serialize_device_service(const device_service_config_t *cfg)
     cJSON_AddBoolToObject(img_cfg, "horizontal_flip", cfg->image_config.horizontal_flip);
     cJSON_AddBoolToObject(img_cfg, "vertical_flip", cfg->image_config.vertical_flip);
     cJSON_AddNumberToObject(img_cfg, "aec", cfg->image_config.aec);
+    cJSON_AddNumberToObject(img_cfg, "isp_mode", cfg->image_config.isp_mode);
     cJSON_AddNumberToObject(img_cfg, "fast_capture_skip_frames", cfg->image_config.fast_capture_skip_frames);
     cJSON_AddNumberToObject(img_cfg, "fast_capture_resolution", cfg->image_config.fast_capture_resolution);
     cJSON_AddNumberToObject(img_cfg, "fast_capture_jpeg_quality", cfg->image_config.fast_capture_jpeg_quality);
+    cJSON_AddBoolToObject(img_cfg, "capture_disable_comm", cfg->image_config.capture_disable_comm);
+    cJSON_AddBoolToObject(img_cfg, "capture_storage_ai", cfg->image_config.capture_storage_ai);
     cJSON_AddItemToObject(json, "image_config", img_cfg);
 
     cJSON *light_cfg = cJSON_CreateObject();

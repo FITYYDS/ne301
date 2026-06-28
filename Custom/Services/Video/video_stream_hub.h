@@ -73,6 +73,7 @@ typedef int32_t video_hub_subscriber_id_t;
 typedef enum {
     VIDEO_HUB_SUBSCRIBER_WEBSOCKET = 0,
     VIDEO_HUB_SUBSCRIBER_RTMP,
+    VIDEO_HUB_SUBSCRIBER_RTSP,
     VIDEO_HUB_SUBSCRIBER_RECORD,
     VIDEO_HUB_SUBSCRIBER_CUSTOM
 } video_hub_subscriber_type_t;
